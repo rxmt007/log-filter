@@ -18,6 +18,7 @@ pub struct Session {
     source: MmapSource,
     indexer: Indexer,
     filtered: Vec<u64>,
+    filter_active: bool,
     search_matches: Vec<u64>,
 }
 
@@ -28,6 +29,7 @@ impl Session {
             source,
             indexer: Indexer::new(),
             filtered: Vec::new(),
+            filter_active: false,
             search_matches: Vec::new(),
         })
     }
@@ -61,6 +63,11 @@ impl Session {
     }
 
     pub fn set_filter(&mut self, spec: &FilterSpec) -> Result<usize, FilterError> {
+        if !spec.is_active() {
+            self.filtered.clear();
+            self.filter_active = false;
+            return Ok(self.total_lines());
+        }
         let matcher = FilterMatcher::new(spec)?;
         let frontier = self.indexed_frontier();
         let mut matches = Vec::new();
@@ -73,11 +80,16 @@ impl Session {
         }
         let count = matches.len();
         self.filtered = matches;
+        self.filter_active = true;
         Ok(count)
     }
 
     pub fn filtered_count(&self) -> usize {
-        self.filtered.len()
+        if self.filter_active {
+            self.filtered.len()
+        } else {
+            self.total_lines()
+        }
     }
 
     pub fn search(&mut self, spec: &SearchSpec) -> Result<SearchSummary, SearchError> {
@@ -118,14 +130,19 @@ impl Session {
         // 索引进行中时,最后一行尚未见到换行,真实结尾未知;用已索引前沿(cursor)兜底,
         // 避免把"尚未索引的整段剩余"当成一行(会违反"只传可见窗口"铁律)。
         let frontier = self.indexed_frontier();
-        let view_len = match view {
+        let effective_view = if view == RowsView::Filtered && !self.filter_active {
+            RowsView::All
+        } else {
+            view
+        };
+        let view_len = match effective_view {
             RowsView::All => self.indexer.offsets().len(),
             RowsView::Filtered => self.filtered.len(),
         };
         let end = start.saturating_add(count).min(view_len);
         let mut out = Vec::with_capacity(end.saturating_sub(start));
         for view_idx in start..end {
-            let source_idx = match view {
+            let source_idx = match effective_view {
                 RowsView::All => view_idx,
                 RowsView::Filtered => self.filtered[view_idx] as usize,
             };
@@ -231,6 +248,22 @@ mod tests {
         assert_eq!(rows[0].1.message, "GET /home ok");
         assert_eq!(rows[1].0, 3);
         assert_eq!(rows[1].1.message, "slow request");
+    }
+
+    #[test]
+    fn default_filter_does_not_materialize_all_line_numbers() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+
+        assert_eq!(s.set_filter(&FilterSpec::default()).unwrap(), 4);
+        assert_eq!(s.filtered_count(), 4);
+        assert_eq!(s.filtered.len(), 0);
+
+        let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].0, 1);
+        assert_eq!(rows[3].0, 4);
     }
 
     #[test]

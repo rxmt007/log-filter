@@ -68,7 +68,7 @@ export const useSession = create<SessionState>()((set) => ({
   selectedLine: null,
   // 索引进度事件用它更新状态(不换 session)。
   setStatus: (status) =>
-    set((s) => (status.generation >= s.status.generation ? { status } : s)),
+    set((s) => (status.generation >= s.status.generation ? { status } : {})),
   // 打开新文件时用它:更新状态并自增 sessionId。
   beginSession: (status) =>
     set((s) => ({

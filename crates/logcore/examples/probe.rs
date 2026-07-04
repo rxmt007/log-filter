@@ -23,6 +23,9 @@ fn main() {
     let read_us = t1.elapsed().as_micros();
     println!("read 6 rows (head+tail) in {read_us}us");
     for (no, e) in head.iter().chain(tail.iter()) {
-        println!("  #{no} {} {}({}/{}) {}", e.time, e.tag, e.pid, e.tid, e.message);
+        println!(
+            "  #{no} {} {}({}/{}) {}",
+            e.time, e.tag, e.pid, e.tid, e.message
+        );
     }
 }

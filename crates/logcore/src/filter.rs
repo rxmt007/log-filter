@@ -89,6 +89,10 @@ impl FilterField {
             regex: true,
         }
     }
+
+    pub fn is_active(&self) -> bool {
+        self.enabled && !self.pattern.trim().is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +117,18 @@ impl Default for FilterSpec {
             word_include: FilterField::default(),
             word_exclude: FilterField::default(),
         }
+    }
+}
+
+impl FilterSpec {
+    pub fn is_active(&self) -> bool {
+        !self.levels.is_all()
+            || self.pid.is_active()
+            || self.tid.is_active()
+            || self.tag_include.is_active()
+            || self.tag_exclude.is_active()
+            || self.word_include.is_active()
+            || self.word_exclude.is_active()
     }
 }
 

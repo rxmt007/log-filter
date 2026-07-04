@@ -39,10 +39,7 @@ pub fn parse_threadtime(line: &str) -> Option<LogEntry> {
             tail[colon + 1..].trim_start().to_string(),
         )
     } else if let Some(ws) = tail.find(char::is_whitespace) {
-        (
-            tail[..ws].to_string(),
-            tail[ws..].trim_start().to_string(),
-        )
+        (tail[..ws].to_string(), tail[ws..].trim_start().to_string())
     } else {
         (tail.to_string(), String::new())
     };
@@ -62,7 +59,8 @@ pub fn parse_time(line: &str) -> Option<LogEntry> {
     let mut it = line.split_whitespace();
     let date = it.next()?;
     let time = it.next()?;
-    let rest = rest_after_tokens(line, 2)?; // "D/LightsService(  139): BKL : 106"
+    // Example tail: "D/LightsService(  139): BKL : 106"
+    let rest = rest_after_tokens(line, 2)?;
     // 用 char 边界安全地取"级别 + 斜杠",避免多字节(中文/emoji)行 byte 切片 panic。
     let mut chars = rest.char_indices();
     let (_, level_ch) = chars.next()?;
