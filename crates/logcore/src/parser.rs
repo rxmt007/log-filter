@@ -33,9 +33,19 @@ pub fn parse_threadtime(line: &str) -> Option<LogEntry> {
     }
     // tag+message 部分,保留原始间隔:跳过前 5 个 token
     let tail = rest_after_tokens(line, 5)?;
-    let colon = tail.find(':')?;
-    let tag = tail[..colon].to_string();
-    let message = tail[colon + 1..].trim_start().to_string();
+    let (tag, message) = if let Some(colon) = tail.find(':') {
+        (
+            tail[..colon].to_string(),
+            tail[colon + 1..].trim_start().to_string(),
+        )
+    } else if let Some(ws) = tail.find(char::is_whitespace) {
+        (
+            tail[..ws].to_string(),
+            tail[ws..].trim_start().to_string(),
+        )
+    } else {
+        (tail.to_string(), String::new())
+    };
     Some(LogEntry {
         date: date.to_string(),
         time: time.to_string(),
@@ -112,6 +122,19 @@ mod tests {
         assert_eq!(e.level, "D");
         assert_eq!(e.tag, "BatteryService");
         assert_eq!(e.message, "update start");
+    }
+
+    #[test]
+    fn parses_threadtime_without_colon() {
+        let line = "04-20 12:06:02.125   146   179 E NoColonTag message without delimiter";
+        let e = parse_threadtime(line).expect("should parse threadtime fields");
+        assert_eq!(e.date, "04-20");
+        assert_eq!(e.time, "12:06:02.125");
+        assert_eq!(e.pid, "146");
+        assert_eq!(e.tid, "179");
+        assert_eq!(e.level, "E");
+        assert_eq!(e.tag, "NoColonTag");
+        assert_eq!(e.message, "message without delimiter");
     }
 
     #[test]
