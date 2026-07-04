@@ -1,0 +1,3 @@
+[workspace]
+members = ["src-tauri", "crates/logcore"]
+resolver = "2"
