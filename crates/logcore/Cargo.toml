@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 memmap2 = "0.9"
 memchr = "2"
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"
