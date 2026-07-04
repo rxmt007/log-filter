@@ -48,12 +48,18 @@ impl Session {
 
     /// 取 [start, start+count) 行(按已建索引裁剪),返回 (行号1-indexed, 解析结果)。
     pub fn get_rows(&self, start: usize, count: usize) -> Vec<(u64, LogEntry)> {
-        let total = self.source.len();
+        // 索引进行中时,最后一行尚未见到换行,真实结尾未知;用已索引前沿(cursor)兜底,
+        // 避免把"尚未索引的整段剩余"当成一行(会违反"只传可见窗口"铁律)。
+        let frontier = if self.is_indexing_done() {
+            self.source.len()
+        } else {
+            self.indexer.cursor()
+        };
         let offsets = self.indexer.offsets();
         let end = start.saturating_add(count).min(offsets.len());
         let mut out = Vec::with_capacity(end.saturating_sub(start));
         for i in start..end {
-            let (s, e) = line_span(offsets, i, total).expect("i in range");
+            let (s, e) = line_span(offsets, i, frontier).expect("i in range");
             let text = String::from_utf8_lossy(&self.source.bytes()[s..e]);
             out.push((i as u64 + 1, parse_line(&text)));
         }
@@ -97,5 +103,24 @@ mod tests {
         let rows = s.get_rows(2, 100);
         assert_eq!(rows.len(), 1); // 仅第 3 行
         assert_eq!(rows[0].0, 3);
+    }
+
+    #[test]
+    fn frontier_row_not_spanning_to_eof_while_indexing() {
+        // C2 回归:索引未完成时,前沿那一行不能把"未索引的整段剩余"吞成一行。
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for _ in 0..2000 {
+            writeln!(f, "04-20 12:06:02.125   146   179 D T: msg").unwrap();
+        }
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_step(100); // 只索引一小段,未完成
+        assert!(!s.is_indexing_done());
+        let n = s.total_lines();
+        let rows = s.get_rows(n.saturating_sub(1), 1); // 前沿那一行
+        assert!(
+            rows[0].1.message.len() < 1024,
+            "frontier row leaked {} bytes",
+            rows[0].1.message.len()
+        );
     }
 }

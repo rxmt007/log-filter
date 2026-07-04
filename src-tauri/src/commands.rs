@@ -1,6 +1,7 @@
 use crate::dto::{Row, Status};
 use crate::state::AppState;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
 
 const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
@@ -20,11 +21,17 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
     let session =
         logcore::session::Session::open(&PathBuf::from(&path)).map_err(|e| e.to_string())?;
     let status = status_from(&session);
+    // 递增代号:上一个文件遗留的索引线程会在下一次循环检测到并自退。
+    let my_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     *state.session.lock().unwrap() = Some(session);
 
     // 后台索引:小预算步进,步间释放锁,保证浏览不被阻塞。
     let session_arc = state.session.clone();
+    let gen_arc = state.generation.clone();
     std::thread::spawn(move || loop {
+        if gen_arc.load(Ordering::SeqCst) != my_gen {
+            break; // 已被更晚的 open 取代
+        }
         let snapshot = {
             let mut guard = session_arc.lock().unwrap();
             match guard.as_mut() {
@@ -32,7 +39,7 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
                     let done = s.index_step(INDEX_BUDGET);
                     Some((status_from(s), done))
                 }
-                None => None, // 会话被替换/清空,退出
+                None => None, // 会话被清空,退出
             }
         };
         match snapshot {
@@ -44,6 +51,7 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
             }
             None => break,
         }
+        std::thread::yield_now(); // 让出,减少与 get_rows 的锁争用
     });
 
     Ok(status)

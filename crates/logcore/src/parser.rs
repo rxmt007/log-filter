@@ -7,7 +7,11 @@ fn rest_after_tokens(line: &str, n: usize) -> Option<&str> {
         let ws = rest.find(char::is_whitespace)?;
         rest = rest[ws..].trim_start();
     }
-    if rest.is_empty() { None } else { Some(rest) }
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest)
+    }
 }
 
 fn is_all_ascii_digits(s: &str) -> bool {
@@ -49,14 +53,17 @@ pub fn parse_time(line: &str) -> Option<LogEntry> {
     let date = it.next()?;
     let time = it.next()?;
     let rest = rest_after_tokens(line, 2)?; // "D/LightsService(  139): BKL : 106"
-    if rest.len() < 2 {
+    // 用 char 边界安全地取"级别 + 斜杠",避免多字节(中文/emoji)行 byte 切片 panic。
+    let mut chars = rest.char_indices();
+    let (_, level_ch) = chars.next()?;
+    if !matches!(level_ch, 'V' | 'D' | 'I' | 'W' | 'E' | 'F') {
         return None;
     }
-    let level = &rest[..1];
-    if !"VDIWEF".contains(level) || &rest[1..2] != "/" {
+    let (slash_idx, slash_ch) = chars.next()?;
+    if slash_ch != '/' {
         return None;
     }
-    let after = &rest[2..]; // "LightsService(  139): BKL : 106"
+    let after = &rest[slash_idx + 1..]; // 斜杠为 ASCII,+1 是 char 边界
     let open = after.find('(')?;
     let close = after.find(')')?;
     if close < open {
@@ -71,7 +78,7 @@ pub fn parse_time(line: &str) -> Option<LogEntry> {
     Some(LogEntry {
         date: date.to_string(),
         time: time.to_string(),
-        level: level.to_string(),
+        level: level_ch.to_string(),
         pid,
         tid: String::new(),
         tag,
@@ -135,5 +142,14 @@ mod tests {
         let raw = parse_line("--------- beginning of main");
         assert_eq!(raw.message, "--------- beginning of main");
         assert_eq!(raw.tag, "");
+    }
+
+    #[test]
+    fn multibyte_line_does_not_panic() {
+        // 时间戳后紧跟多字节字符(中文),旧实现会 byte 切片 panic;必须安全回退。
+        let e = parse_line("01-01 00:00:00.000 中文消息 hello");
+        assert_eq!(e.message, "01-01 00:00:00.000 中文消息 hello");
+        // 级别位处即为多字节字符,也不能 panic。
+        let _ = parse_line("01-01 00:00:00.000 中/x(1): y");
     }
 }
