@@ -13,10 +13,21 @@ const cell = { padding: "0 4px" } as const;
 
 export function LogTable() {
   const total = useSession((s) => s.status.totalLines);
+  const sessionId = useSession((s) => s.sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
   const cache = useRef<Map<number, Row>>(new Map());
-  const loaded = useRef<Set<number>>(new Set()); // 已请求的 block 起点
+  const filled = useRef<Map<number, number>>(new Map()); // block 起点 -> 已缓存行数
+  const inflight = useRef<Set<number>>(new Set());
   const [, force] = useState(0);
+
+  // 切换文件(sessionId 变化)时清空缓存,避免残留上一个文件的行。
+  useEffect(() => {
+    cache.current.clear();
+    filled.current.clear();
+    inflight.current.clear();
+    parentRef.current?.scrollTo({ top: 0 });
+    force((x) => x + 1);
+  }, [sessionId]);
 
   const rv = useVirtualizer({
     count: total,
@@ -27,24 +38,29 @@ export function LogTable() {
 
   const items = rv.getVirtualItems();
 
-  const ensureBlock = useCallback(async (block: number) => {
-    if (loaded.current.has(block)) return;
-    loaded.current.add(block);
+  const ensureBlock = useCallback(async (block: number, totalNow: number) => {
+    const want = Math.min(WINDOW, totalNow - block); // 该块当前实际存在的行数
+    if (want <= 0) return;
+    if ((filled.current.get(block) ?? 0) >= want) return; // 已缓存全部可用行
+    if (inflight.current.has(block)) return;
+    inflight.current.add(block);
     try {
       const rows = await getRows("all", block, WINDOW);
       rows.forEach((r, i) => cache.current.set(block + i, r));
+      filled.current.set(block, rows.length);
       force((x) => x + 1);
-    } catch {
-      loaded.current.delete(block); // 失败允许重试
+    } finally {
+      inflight.current.delete(block);
     }
   }, []);
 
+  // items 或 total 变化时按可见范围取块;total 增长会让未满块重新取。
   useEffect(() => {
     if (items.length === 0) return;
     const first = items[0].index;
     const last = items[items.length - 1].index;
-    ensureBlock(Math.floor(first / WINDOW) * WINDOW);
-    ensureBlock(Math.floor(last / WINDOW) * WINDOW);
+    ensureBlock(Math.floor(first / WINDOW) * WINDOW, total);
+    ensureBlock(Math.floor(last / WINDOW) * WINDOW, total);
   }, [items, ensureBlock, total]);
 
   return (

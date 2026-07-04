@@ -2,9 +2,8 @@ import { useSession } from "@/store/session";
 
 export function StatusBar() {
   const status = useSession((s) => s.status);
-  const pct = status.totalBytes
-    ? Math.round((status.indexedBytes / status.totalBytes) * 100)
-    : 100;
+  const hasFile = status.totalBytes > 0;
+  const pct = hasFile ? Math.round((status.indexedBytes / status.totalBytes) * 100) : 0;
 
   return (
     <div
@@ -18,10 +17,16 @@ export function StatusBar() {
         color: "var(--muted-foreground, #888)",
       }}
     >
-      <span>已加载 {status.totalLines.toLocaleString()} 行</span>
-      <span>
-        索引 {pct}%{status.indexing ? "(进行中)" : ""}
-      </span>
+      {hasFile ? (
+        <>
+          <span>已加载 {status.totalLines.toLocaleString()} 行</span>
+          <span>
+            索引 {pct}%{status.indexing ? "(进行中)" : ""}
+          </span>
+        </>
+      ) : (
+        <span>未打开文件</span>
+      )}
     </div>
   );
 }

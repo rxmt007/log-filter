@@ -4,13 +4,13 @@ import { openFile } from "@/lib/ipc";
 import { useSession } from "@/store/session";
 
 export function Toolbar() {
-  const setStatus = useSession((s) => s.setStatus);
+  const beginSession = useSession((s) => s.beginSession);
 
   const onOpen = async () => {
     const path = await open({ multiple: false, directory: false });
     if (typeof path === "string") {
       const st = await openFile(path);
-      setStatus(st);
+      beginSession(st); // 换新文件:更新状态并自增 sessionId(触发表格清缓存)
     }
   };
 
