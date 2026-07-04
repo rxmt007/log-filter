@@ -27,7 +27,7 @@
 |---|---|
 | 后端引擎 | **Rust**,抽为独立 `logcore` crate(mmap + 索引 + 过滤/搜索),不依赖 UI |
 | 桌面壳 | **Tauri v2** |
-| 前端 | **Vite + React + TypeScript + Tailwind + shadcn/ui(Base UI)** |
+| 前端 | **Vite + React + TypeScript + Tailwind v4(CSS-first)+ shadcn/ui(Base UI)** |
 | 表格虚拟化 | **TanStack Virtual**(日志表格自研虚拟列表,**不用** shadcn Data Table,后者会为所有行建模) |
 | 前端状态 | zustand |
 | 配置格式 | TOML |

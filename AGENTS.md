@@ -11,7 +11,7 @@
 
 - **后端引擎**:Rust,独立 `logcore` crate(mmap + 索引 + 过滤 / 搜索),不依赖 UI
 - **桌面壳**:Tauri v2
-- **前端**:Vite + React + TypeScript + Tailwind + shadcn/ui(Base UI)
+- **前端**:Vite + React + TypeScript + **Tailwind v4(CSS-first;配置在 `src/index.css`,无 `tailwind.config.js`)** + shadcn/ui(Base UI · nova preset · Lucide 图标)
 - **表格虚拟化**:TanStack **Virtual**(自研虚拟列表;**不用** shadcn Data Table)
 - **前端状态**:zustand　**配置**:TOML
 
@@ -39,7 +39,7 @@ LogFilter/          原 Java 工程(只读参考,已忽略,将删除)
 - 引擎单测:`cargo test -p logcore`
 - 桌面 dev(**前期在本机调试**):`pnpm tauri dev`
 - 打包:`pnpm tauri build` → Windows `.msi`/`.exe`、macOS `.dmg`、Linux `.deb`(Debian / Ubuntu 较新 LTS)
-- 包管理器默认 pnpm(脚手架时最终确定)
+- 包管理器:pnpm(已确定;pnpm 11 的构建脚本审批记录在 `pnpm-workspace.yaml`)
 - **CI**:规划 GitHub Actions 三系统矩阵 + `tauri-action`;由用户择机推库并开启,当前不依赖 CI。
 
 ## 关键约定
