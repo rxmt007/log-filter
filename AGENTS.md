@@ -23,6 +23,11 @@
 4. **纯函数先行 TDD**:解析器、过滤器等为纯函数,先写测试再写实现。
 5. **不拷贝原始 Java 代码**:`./LogFilter` 仅作行为参考(带第三方版权、已 gitignore、成型后删除)。
 
+## UI 设计稿(实现基准)
+
+- **设计稿**:[`docs/design/LogFilter.dc.html`](docs/design/LogFilter.dc.html)(主界面 · 实现目标)、[`docs/design/LogWindow.dc.html`](docs/design/LogWindow.dc.html)(交互窗口稿)、`docs/design/support.js`(Claude Design 画布渲染器,离线查看用)。源:claude.ai/design 项目 `redacted-design-project-id`。
+- **实现规则(用户指定)**:后续迭代实现功能时,**若用户无其他要求,则严格按 UI 设计稿实现**;**当功能与 UI 设计冲突时,以功能为准,并明确告知用户**。
+
 ## 目录结构
 
 ```

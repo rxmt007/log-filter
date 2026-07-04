@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  .lw-scroll::-webkit-scrollbar{width:12px;height:12px}
+  .lw-scroll::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:6px;border:3px solid transparent;background-clip:padding-box}
+  .lw-scroll::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+<div ref="{{ rootRef }}" style="width:100%;height:100%;display:flex;flex-direction:column;background:var(--bg,#fff);color:var(--text,#1F2328);font-family:-apple-system,'Segoe UI',system-ui,'PingFang SC','Microsoft YaHei',sans-serif;font-size:13px;overflow:hidden;border:1px solid var(--border,#E5E7EB);border-radius:9px;box-shadow:0 20px 50px -18px rgba(15,20,30,.35);user-select:none;position:relative">
+
+  <!-- backdrop closes any open dropdown -->
+  <sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeMenu }}" style="position:absolute;inset:0;z-index:40"></div>
+  </sc-if>
+
+  <!-- ===== window title bar (Windows-style) ===== -->
+  <div style="height:34px;flex:none;display:flex;align-items:center;justify-content:space-between;background:var(--chrome);border-bottom:1px solid var(--border);padding-left:11px">
+    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+      <div style="width:15px;height:15px;border-radius:4px;background:linear-gradient(135deg,var(--accent),var(--accent-strong));display:flex;align-items:center;justify-content:center;flex:none">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 6h9M4 12h16M4 18h12"/></svg>
+      </div>
+      <span style="font-size:12px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">LogFilter — device-2604.log</span>
+    </div>
+    <div style="display:flex;height:34px">
+      <div style="width:44px;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-dim)" style-hover="background:var(--btn-hover)"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1"><line x1="1" y1="6" x2="11" y2="6"/></svg></div>
+      <div style="width:44px;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-dim)" style-hover="background:var(--btn-hover)"><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1"><rect x="1.5" y="1.5" width="9" height="9"/></svg></div>
+      <div style="width:44px;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-dim)" style-hover="background:#E81123;color:#fff"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1"><line x1="1.5" y1="1.5" x2="10.5" y2="10.5"/><line x1="10.5" y1="1.5" x2="1.5" y2="10.5"/></svg></div>
+    </div>
+  </div>
+
+  <!-- ===== toolbar ===== -->
+  <div style="flex:none;display:flex;flex-direction:column;background:var(--panel);border-bottom:1px solid var(--border);position:relative;z-index:50">
+    <!-- Row A: 来源 / 设备 / 命令 -->
+    <div style="display:flex;align-items:center;gap:8px;padding:9px 10px 0">
+    <!-- 来源 ▾ -->
+    <div style="position:relative;flex:none;width:152px">
+      <button onClick="{{ onSourceMenu }}" style="{{ srcBtnStyle }}">
+        <span style="display:flex;align-items:center;gap:7px;min-width:0"><svg width="13" height="13" style="flex:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h5l2 3h9v12H4z"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">来源:文件</span></span><span style="color:var(--text-faint);font-size:9px;flex:none">▾</span>
+      </button>
+      <sc-if value="{{ sourceOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="{{ menuStyle }}">
+          <div onClick="{{ closeMenu }}" style="{{ itemStyle }}" style-hover="background:var(--btn-hover)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h6l2 2.5h10V19H3z"/></svg>打开文件…<span style="{{ kbd }}">Ctrl O</span></div>
+          <div onClick="{{ closeMenu }}" style="{{ itemStyle }}" style-hover="background:var(--btn-hover)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="18" x2="14" y2="18"/></svg>从设备实时抓取</div>
+          <div onClick="{{ closeMenu }}" style="{{ itemStyle }}" style-hover="background:var(--btn-hover)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="8" y="4" width="12" height="14" rx="2"/><path d="M16 4V2H4v14h2"/></svg>粘贴文本导入</div>
+          <div style="{{ mDiv }}"></div>
+          <div style="{{ mLabel }}">最近文件</div>
+          <sc-for list="{{ recentFiles }}" as="rf" hint-placeholder-count="3">
+            <div onClick="{{ rf.onClick }}" style="{{ rf.style }}" style-hover="background:var(--btn-hover)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.6"><path d="M6 2h9l4 4v16H6z"/><path d="M15 2v4h4"/></svg>
+              <div style="display:flex;flex-direction:column;line-height:1.25;min-width:0"><span style="font-size:12px;color:var(--text)">{{ rf.name }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-faint)">{{ rf.sub }}</span></div>
+              <sc-if value="{{ rf.sel }}" hint-placeholder-val="{{ false }}"><svg style="margin-left:auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2"><path d="M5 12l5 5L20 6"/></svg></sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+
+    <!-- 设备 ▾ -->
+    <div style="position:relative;flex:5 1 0;min-width:0">
+      <button onClick="{{ onDeviceMenu }}" style="{{ deviceBtnStyle }}">
+        <span style="display:flex;align-items:center;gap:7px;min-width:0"><svg width="13" height="13" style="flex:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="18" x2="14" y2="18"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ device }}</span></span><span style="color:var(--text-faint);font-size:9px;flex:none">▾</span>
+      </button>
+      <sc-if value="{{ deviceOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="{{ menuStyle }}">
+          <div style="{{ mLabel }}">ADB 设备</div>
+          <sc-for list="{{ deviceItems }}" as="dv" hint-placeholder-count="3">
+            <div onClick="{{ dv.onClick }}" style="{{ dv.style }}" style-hover="background:var(--btn-hover)">
+              <span style="{{ dv.dotStyle }}"></span>
+              <div style="display:flex;flex-direction:column;line-height:1.25;min-width:0"><span style="font-size:12px;color:var(--text)">{{ dv.name }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-faint)">{{ dv.id }}</span></div>
+              <sc-if value="{{ dv.sel }}" hint-placeholder-val="{{ false }}"><svg style="margin-left:auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2"><path d="M5 12l5 5L20 6"/></svg></sc-if>
+            </div>
+          </sc-for>
+          <div style="{{ mDiv }}"></div>
+          <div onClick="{{ closeMenu }}" style="{{ itemStyle }}" style-hover="background:var(--btn-hover)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/></svg>刷新设备列表</div>
+        </div>
+      </sc-if>
+    </div>
+
+    <!-- 命令 ▾ -->
+    <div style="position:relative;flex:8 1 0;min-width:0">
+      <button onClick="{{ onCommandMenu }}" style="{{ commandBtnStyle }}">
+        <span style="flex:none">命令</span>
+        <span style="flex:1;min-width:0;text-align:left;font-family:'JetBrains Mono',monospace;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-dim);background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:3px 8px">{{ command }}</span>
+        <span style="flex:none;color:var(--text-faint);font-size:9px">▾</span>
+      </button>
+      <sc-if value="{{ commandOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="{{ menuStyle }}">
+          <div style="{{ mLabel }}">采集命令</div>
+          <sc-for list="{{ commandItems }}" as="ci" hint-placeholder-count="5">
+            <div onClick="{{ ci.onClick }}" style="{{ ci.style }}" style-hover="background:var(--btn-hover)">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text)">{{ ci.cmd }}</span>
+              <sc-if value="{{ ci.sel }}" hint-placeholder-val="{{ false }}"><svg style="margin-left:auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2"><path d="M5 12l5 5L20 6"/></svg></sc-if>
+            </div>
+          </sc-for>
+          <div style="{{ mDiv }}"></div>
+          <div onClick="{{ closeMenu }}" style="{{ itemStyle }}" style-hover="background:var(--btn-hover)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>自定义命令…</div>
+        </div>
+      </sc-if>
+    </div>
+
+    </div>
+
+    <!-- Row B: 运行控制 / 文件 / 查找 / 主题 -->
+    <div style="display:flex;align-items:center;gap:6px;padding:8px 10px">
+
+    <!-- transport group -->
+    <button title="运行" onClick="{{ noop }}" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:var(--accent);border:1px solid var(--accent);border-radius:6px;cursor:pointer;color:#fff" style-hover="background:var(--accent-strong)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg>
+    </button>
+    <button title="暂停" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+    <button title="停止" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+    </button>
+    <button title="清空" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+    </button>
+
+    <div style="width:1px;height:20px;background:var(--border);margin:0 3px"></div>
+
+    <button title="打开" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h6l2 2.5h10V19H3z"/></svg>
+    </button>
+    <button title="导出" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg>
+    </button>
+    <button title="切分" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v18"/><path d="M5 8l-2 4 2 4M19 8l2 4-2 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 3px"></div>
+    <span style="font-size:11px;color:var(--text-faint);margin:0 1px">级别</span>
+    <div style="display:flex;gap:5px">
+      <sc-for list="{{ chips }}" as="chip" hint-placeholder-count="6">
+        <button onClick="{{ chip.onClick }}" style="{{ chip.style }}">
+          <span style="{{ chip.dotStyle }}"></span>
+          <span style="{{ chip.letterStyle }}">{{ chip.lv }}</span>
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="flex:1"></div>
+
+    <!-- 固化在工具栏的查找/定位框 -->
+    <div style="display:flex;align-items:center;gap:6px;height:28px;padding:0 4px 0 9px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg);width:296px">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.9" style="flex:none"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke-linecap="round"/></svg>
+      <span style="flex:1;min-width:0;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ findText }}</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-faint);white-space:nowrap">{{ findCount }}</span>
+      <span onClick="{{ onFindCase }}" title="区分大小写" style="{{ findCaseStyle }}">Aa</span>
+      <span onClick="{{ onFindRegex }}" title="正则匹配" style="{{ findRegexStyle }}">.*</span>
+      <div style="position:relative;display:flex;align-items:center;flex:none">
+        <span onClick="{{ onColorMenu }}" title="高亮颜色" style="{{ findColorSwStyle }}"></span>
+        <sc-if value="{{ colorMenuOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;top:27px;right:0;display:flex;gap:6px;padding:7px;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.22);z-index:60">
+            <sc-for list="{{ findColorOptions }}" as="c" hint-placeholder-count="5">
+              <span onClick="{{ c.onClick }}" style="{{ c.style }}"></span>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+      <div style="width:1px;height:16px;background:var(--border);flex:none"></div>
+      <button title="上一处" style="width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:4px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg></button>
+      <button title="下一处" style="width:20px;height:20px;flex:none;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:4px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+    </div>
+
+    <div style="width:1px;height:20px;background:var(--border);margin:0 3px"></div>
+
+    <button title="切换主题" onClick="{{ toggleTheme }}" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+      <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19" stroke-linecap="round"/></svg>
+      </sc-if>
+      <sc-if value="{{ isLight }}" hint-placeholder-val="{{ true }}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8 8 0 019.5 4a7 7 0 1010.5 10.5z" stroke-linejoin="round"/></svg>
+      </sc-if>
+    </button>
+    </div>
+  </div>
+
+  <!-- ===== filter bar (collapsible) ===== -->
+  <div style="flex:none;background:var(--panel2);border-bottom:1px solid var(--border)">
+    <sc-if value="{{ collapsed }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ toggleCollapse }}" style="display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;cursor:pointer;color:var(--text-dim);font-size:12px" style-hover="color:var(--text)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="transform:rotate(-90deg)"><path d="M6 9l6 6 6-6"/></svg>
+        <span>过滤栏已折叠</span>
+        <span style="color:var(--text-faint)">·</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-faint)">{{ activeSummary }}</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ expanded }}" hint-placeholder-val="{{ true }}">
+    <div style="padding:9px 12px 11px">
+      <!-- row 1: header -->
+      <div style="display:flex;align-items:center;gap:10px">
+        <button onClick="{{ toggleCollapse }}" title="折叠过滤栏" style="width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--border);border-radius:5px;cursor:pointer;color:var(--text-dim)" style-hover="background:var(--btn-hover);color:var(--text)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <span style="font-size:11px;font-weight:600;color:var(--text-dim)">过滤条件</span>
+        <div style="width:1px;height:14px;background:var(--border);margin:0 2px"></div>
+        <span style="font-size:11px;color:var(--text-faint)">绿「+」包含 → 收窄结果 · 红「−」屏蔽 → 剔除结果 · 每项独立启用</span>
+      </div>
+
+      <!-- row 2: fields — 每项撑满一行 -->
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:9px">
+        <sc-for list="{{ fields }}" as="f" hint-placeholder-count="7">
+          <div style="{{ f.wrapStyle }}">
+            <span onClick="{{ f.onToggle }}" style="{{ f.switchStyle }}"><span style="{{ f.knobStyle }}"></span></span>
+            <div style="width:100px;flex:none;display:flex;align-items:center;gap:6px">
+              <span style="{{ f.badgeStyle }}">{{ f.badgeChar }}</span>
+              <span style="font-size:11px;color:var(--text-dim);white-space:nowrap">{{ f.label }}</span>
+            </div>
+            <div style="{{ f.inputStyle }}">
+              <span style="{{ f.valueStyle }}">{{ f.value }}</span>
+              <sc-if value="{{ f.showRegex }}" hint-placeholder-val="{{ false }}">
+                <span onClick="{{ f.onRegex }}" title="正则匹配" style="{{ f.regexStyle }}">.*</span>
+              </sc-if>
+              <sc-if value="{{ f.showSwatch }}" hint-placeholder-val="{{ false }}">
+                <span style="width:11px;height:11px;flex:none;border-radius:3px;background:var(--hl-keyword);border:1px solid var(--border-strong)"></span>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+  </div>
+
+  <!-- ===== body: minimap + table ===== -->
+  <div style="flex:1;min-height:0;display:flex">
+    <!-- minimap -->
+    <div onClick="{{ onMinimap }}" style="width:26px;flex:none;position:relative;background:var(--minimap-bg);border-right:1px solid var(--border);cursor:pointer;overflow:hidden">
+      <sc-for list="{{ ticks }}" as="t" hint-placeholder-count="8">
+        <div style="{{ t.style }}"></div>
+      </sc-for>
+      <div style="{{ viewportStyle }}"></div>
+    </div>
+
+    <!-- table -->
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <!-- header -->
+      <div style="{{ headerRowStyle }}">
+        <sc-for list="{{ headers }}" as="h" hint-placeholder-count="9">
+          <div style="{{ h.style }}">{{ h.label }}</div>
+        </sc-for>
+      </div>
+      <!-- rows -->
+      <div ref="{{ tableRef }}" onScroll="{{ onScroll }}" class="lw-scroll" style="flex:1;min-height:0;overflow:auto;font-family:'JetBrains Mono',monospace">
+        <sc-for list="{{ rows }}" as="row" hint-placeholder-count="22">
+          <div onClick="{{ row.onClick }}" style="{{ row.style }}">
+            <div style="display:flex;align-items:center;justify-content:center">
+              <sc-if value="{{ row.marked }}" hint-placeholder-val="{{ false }}">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="var(--bookmark)" stroke="none"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg>
+              </sc-if>
+            </div>
+            <span style="{{ row.numStyle }}">{{ row.n }}</span>
+            <span style="{{ row.metaStyle }}">{{ row.date }}</span>
+            <span style="{{ row.metaStyle }}">{{ row.time }}</span>
+            <span style="{{ row.lvCellStyle }}">{{ row.lv }}</span>
+            <span style="{{ row.numMetaStyle }}">{{ row.pid }}</span>
+            <span style="{{ row.numMetaStyle }}">{{ row.tid }}</span>
+            <span style="{{ row.tagStyle }}">{{ row.tag }}</span>
+            <span style="{{ row.msgStyle }}">{{ row.pre }}<sc-if value="{{ row.isFind }}" hint-placeholder-val="{{ false }}"><span style="background:var(--hl-active-bg);color:var(--hl-active-fg);border-radius:2px;padding:0 1px">{{ row.hit }}</span></sc-if>{{ row.post }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== status bar ===== -->
+  <div style="height:26px;flex:none;display:flex;align-items:center;gap:0;padding:0 12px;background:var(--panel);border-top:1px solid var(--border);font-size:11px;color:var(--text-dim);font-family:'JetBrains Mono',monospace">
+    <sc-for list="{{ statusItems }}" as="s" hint-placeholder-count="6">
+      <span style="{{ s.style }}">{{ s.text }}</span>
+    </sc-for>
+    <div style="flex:1"></div>
+    <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:var(--lv-i)"></span>已连接</span>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1180,&quot;height&quot;:860},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;'light' | 'dark'&quot;}}">
+const THEMES = {
+  light: {
+    'bg':'#FFFFFF','panel':'#F7F7F8','panel2':'#FBFBFC','chrome':'#F1F2F4',
+    'border':'#E5E7EB','border-strong':'#D5D8DD',
+    'text':'#1F2328','text-dim':'#6B7280','text-faint':'#9AA1AC',
+    'accent':'#3B82F6','accent-strong':'#2563EB','accent-soft':'#EAF1FE','accent-border':'#BFD3F6',
+    'btn-hover':'#ECEDEF','minimap-bg':'#EEF0F3',
+    'viewport':'rgba(59,130,246,0.14)','viewport-border':'#3B82F6',
+    'header-bg':'#F3F4F6',
+    'lv-v':'#9AA1AC','lv-d':'#2563EB','lv-i':'#15A34A','lv-w':'#C2760B','lv-e':'#DC2626','lv-f':'#B21B1B',
+    'row-w-bg':'#FEFAF1','row-e-bg':'#FEF5F4','row-f-bg':'#FCEAEA',
+    'chip-v':'#F1F2F4','chip-d':'#E7F0FE','chip-i':'#E6F6ED','chip-w':'#FBF1E1','chip-e':'#FCEAEA','chip-f':'#FAE0E0',
+    'hl-keyword':'#FDE68A','hl-keyword-text':'#7A4E12','hl-find':'#F7B4B4','hl-find-text':'#7F1212',
+    'bookmark':'#3B82F6','error':'#DC2626','switch-off':'#CDD1D8','scroll':'#CDD1D8'
+  },
+  dark: {
+    'bg':'#101114','panel':'#17181B','panel2':'#131417','chrome':'#0C0D10',
+    'border':'#2A2C31','border-strong':'#3A3D44',
+    'text':'#E6E8EB','text-dim':'#8B93A1','text-faint':'#5C636E',
+    'accent':'#3B82F6','accent-strong':'#60A5FA','accent-soft':'#1B2740','accent-border':'#33517F',
+    'btn-hover':'#212327','minimap-bg':'#1A1B1F',
+    'viewport':'rgba(96,165,250,0.16)','viewport-border':'#60A5FA',
+    'header-bg':'#1A1B1F',
+    'lv-v':'#79808C','lv-d':'#60A5FA','lv-i':'#4ADE80','lv-w':'#FBBF24','lv-e':'#F87171','lv-f':'#FCA5A5',
+    'row-w-bg':'#211B0E','row-e-bg':'#241416','row-f-bg':'#2C1517',
+    'chip-v':'#22252B','chip-d':'#17263F','chip-i':'#14301F','chip-w':'#2C2410','chip-e':'#2E1618','chip-f':'#361619',
+    'hl-keyword':'#4D3B0A','hl-keyword-text':'#FCD34D','hl-find':'#7F1D1D','hl-find-text':'#FCA5A5',
+    'bookmark':'#60A5FA','error':'#F87171','switch-off':'#3A3D44','scroll':'#3A3D44'
+  }
+};
+
+// 可配置高亮色(查找命中底色),各主题一版 + 代表色
+const HL_COLORS = {
+  yellow: {light:{bg:'#FDE68A',fg:'#7A4E12'}, dark:{bg:'#4D3B0A',fg:'#FCD34D'}, sw:'#FADB5F'},
+  green:  {light:{bg:'#BBF7D0',fg:'#14532D'}, dark:{bg:'#0F3D22',fg:'#86EFAC'}, sw:'#4ADE80'},
+  blue:   {light:{bg:'#BFDBFE',fg:'#1E3A8A'}, dark:{bg:'#17314F',fg:'#93C5FD'}, sw:'#60A5FA'},
+  pink:   {light:{bg:'#FBCFE8',fg:'#9D174D'}, dark:{bg:'#48132F',fg:'#F9A8D4'}, sw:'#F472B6'},
+  orange: {light:{bg:'#FED7AA',fg:'#7C2D12'}, dark:{bg:'#3A2410',fg:'#FDBA74'}, sw:'#FB923C'}
+};
+
+const COLS = '22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr)';
+const HEADERS = ['','行号','日期','时间','级别','PID','TID','Tag','消息'];
+const LEVELS = ['V','D','I','W','E','F'];
+const LV_COUNTS = {V:198340,D:456120,I:389901,W:132455,E:87211,F:2043};
+
+const RAW = [
+  [1,'04-20','14:32:07.812','D','146','179','ActivityManager','Start proc 12043:com.example.shop/u0a221 for next-top-activity'],
+  [2,'04-20','14:32:07.844','I','146','214','ActivityTaskManager','START u0 {act=com.example.shop/.MainActivity} from uid 10221'],
+  [3,'04-20','14:32:07.901','V','12043','12043','zygote','Late-enabling -Xcheck:jni'],
+  [4,'04-20','14:32:08.012','D','12043','12043','应用启动','冷启动开始 savedInstanceState=null'],
+  [5,'04-20','14:32:08.180','I','12043','12088','网络请求','GET /api/v1/home 发起请求 traceId=8f3a2c'],
+  [6,'04-20','14:32:08.182','D','12043','12088','OkHttp','--> GET https://api.example.com/v1/home'],
+  [7,'04-20','14:32:08.240','V','12043','12051','dalvikvm','GC_CONCURRENT freed 2048K, 41% free 6144K/10240K'],
+  [8,'04-20','14:32:08.301','I','12043','12043','登录模块','检测到本地 token,尝试自动登录'],
+  [9,'04-20','14:32:08.322','D','12043','12088','网络请求','<-- 200 OK https://api.example.com/v1/home (142ms)'],
+  [10,'04-20','14:32:08.410','I','12043','12090','数据同步','首页数据同步完成,共 24 个卡片'],
+  [11,'04-20','14:32:08.688','W','12043','12088','网络请求','弱网环境,接口 /api/v1/feed 响应缓慢 (2130ms)'],
+  [12,'04-20','14:32:08.712','D','987','1002','PushService','推送长连接已建立 host=push.example.com:5223'],
+  [13,'04-20','14:32:08.760','I','987','1002','PushService','收到推送消息 type=promo id=90211'],
+  [14,'04-20','14:32:08.803','V','421','512','AudioFlinger','mixer(0xb400) throttle end: throttle time 0'],
+  [15,'04-20','14:32:09.001','D','146','179','BatteryService','update start seq=118 level=87 status=discharging'],
+  [16,'04-20','14:32:09.114','W','146','179','ActivityManager','Slow operation: 128ms so far, now at startProcess'],
+  [17,'04-20','14:32:09.302','I','12043','12095','支付模块','创建订单 orderId=SO202604200001 amount=￥199.00'],
+  [18,'04-20','14:32:09.305','D','12043','12095','OkHttp','--> POST https://pay.example.com/v1/order/create'],
+  [19,'04-20','14:32:11.440','W','12043','12095','网络请求','请求超时,重试第 1 次 /v1/order/create'],
+  [20,'04-20','14:32:13.512','E','12043','12095','网络请求','请求失败: 网络连接超时 (SocketTimeoutException)'],
+  [21,'04-20','14:32:13.520','E','12043','12095','支付模块','支付失败: 无法连接支付网关,请检查网络后重试'],
+  [22,'04-20','14:32:13.522','E','12043','12095','System.err','at com.example.shop.pay.PayManager.request(PayManager.java:88)'],
+  [23,'04-20','14:32:13.523','E','12043','12095','System.err','at com.example.shop.pay.PayManager.create(PayManager.java:52)'],
+  [24,'04-20','14:32:13.610','W','146','179','ActivityManager','Timeout executing service com.example.shop/.SyncService'],
+  [25,'04-20','14:32:13.688','I','12043','12090','数据同步','进入离线模式,使用本地缓存数据'],
+  [26,'04-20','14:32:13.912','D','12043','12088','网络请求','网络状态变化: WIFI -> MOBILE'],
+  [27,'04-20','14:32:14.220','I','12043','12088','网络请求','网络恢复,重新建立连接池 (size=4)'],
+  [28,'04-20','14:32:14.401','D','12043','12043','应用启动','首帧渲染完成 耗时 684ms'],
+  [29,'04-20','14:32:14.522','V','12043','12043','Choreographer','Skipped 3 frames! Application may be doing too much work on main thread'],
+  [30,'04-20','14:32:15.010','W','12043','12043','Choreographer','Skipped 42 frames! 主线程存在耗时操作'],
+  [31,'04-20','14:32:15.288','I','146','179','ActivityManager','Displayed com.example.shop/.MainActivity: +712ms'],
+  [32,'04-20','14:32:15.401','D','12043','12099','埋点上报','事件入队 event=page_view page=home'],
+  [33,'04-20','14:32:15.660','I','12043','12099','埋点上报','批量上报 12 条事件成功'],
+  [34,'04-20','14:32:15.712','V','12043','12043','chatty','uid=10221 com.example.shop identical 6 lines'],
+  [35,'04-20','14:32:16.004','D','12043','12051','GC','GC freed 3921(180KB) AllocSpace objects, 12% free'],
+  [36,'04-20','14:32:18.220','W','146','201','WindowManager','Failed to deliver inputEvent, window may be unresponsive'],
+  [37,'04-20','14:32:23.512','E','146','179','ActivityManager','ANR in com.example.shop (com.example.shop/.MainActivity)'],
+  [38,'04-20','14:32:23.611','F','146','179','ActivityManager','Force finishing activity com.example.shop/.MainActivity 主线程无响应'],
+  [39,'04-20','14:32:23.702','E','12043','12043','System.err','FATAL EXCEPTION: main'],
+  [40,'04-20','14:32:23.703','E','12043','12043','System.err','java.lang.NullPointerException: 尝试在空对象引用上调用虚方法'],
+  [41,'04-20','14:32:23.910','I','146','179','ActivityManager','Process com.example.shop (pid 12043) has died: fg TOP'],
+  [42,'04-20','14:32:24.120','D','987','1002','推送服务','长连接断开,准备重连 attempt=1'],
+  [43,'04-20','14:32:24.440','I','987','1002','推送服务','重连成功 耗时 320ms'],
+  [44,'04-20','14:32:24.688','V','987','995','dalvikvm','GC_FOR_ALLOC freed 512K, 38% free'],
+  [45,'04-20','14:32:25.001','D','146','179','BatteryService','update start seq=119 level=86 status=discharging'],
+  [46,'04-20','14:32:25.220','I','812','833','数据同步','后台同步任务调度 nextRun=+15min'],
+  [47,'04-20','14:32:25.410','W','421','512','AudioFlinger','write blocked for 82 ms, this is the first time'],
+  [48,'04-20','14:32:25.612','D','812','840','网络请求','预取下一页数据 /api/v1/feed?page=2'],
+  [49,'04-20','14:32:25.980','I','812','840','网络请求','预取完成,缓存 20 条'],
+  [50,'04-20','14:32:26.112','V','812','812','chatty','uid=10221 com.example.shop identical 3 lines'],
+  [51,'04-20','14:32:26.301','D','812','845','埋点上报','事件入队 event=click target=cart'],
+  [52,'04-20','14:32:26.520','I','146','179','系统','Low memory killer: 无操作,内存充足']
+];
+
+class Component extends DCLogic {
+  constructor(props){
+    super(props);
+    this.rootRef = React.createRef();
+    this.tableRef = React.createRef();
+    this.state = {
+      theme: (props && props.theme === 'dark') ? 'dark' : 'light',
+      levels: {V:true,D:true,I:true,W:true,E:true,F:true},
+      selected: 20,
+      collapsed: false,
+      marks: {17:true,20:true,38:true},
+      openMenu: null,                       // 'source' | 'device' | 'command' | 'findColor' | null
+      device: 'Pixel 7 · 2B151FDH2000XX',
+      command: 'logcat -v threadtime',
+      find: '网络', findCase: false, findRegex: false, findColor: 'yellow',   // 工具栏查找 + 可配色高亮
+      fieldOn: {tagShow:true, tagHide:false, pid:false, tid:false, cInc:false, cExc:false},
+      scrollTop: 0, viewH: 100, totalH: 1040
+    };
+  }
+  applyTheme(){
+    const el = this.rootRef.current; if(!el) return;
+    const t = THEMES[this.state.theme];
+    for(const k in t) el.style.setProperty('--'+k, t[k]);
+    el.style.colorScheme = this.state.theme;
+    this.applyHl();
+  }
+  applyHl(){
+    const el = this.rootRef.current; if(!el) return;
+    const c = HL_COLORS[this.state.findColor] || HL_COLORS.yellow;
+    const v = c[this.state.theme] || c.light;
+    el.style.setProperty('--hl-active-bg', v.bg);
+    el.style.setProperty('--hl-active-fg', v.fg);
+  }
+  componentDidMount(){
+    this._lastTheme = this.state.theme;
+    this._lastColor = this.state.findColor;
+    this.applyTheme();
+    this.measure();
+  }
+  componentDidUpdate(){
+    if(this._lastTheme !== this.state.theme){ this._lastTheme = this.state.theme; this.applyTheme(); }
+    else if(this._lastColor !== this.state.findColor){ this._lastColor = this.state.findColor; this.applyHl(); }
+  }
+  measure(){
+    const el = this.tableRef.current; if(!el) return;
+    this.setState({scrollTop: el.scrollTop, viewH: el.clientHeight, totalH: el.scrollHeight});
+  }
+  splitMsg(msg){
+    const {find} = this.state;
+    if(find){ const i=msg.indexOf(find); if(i>=0) return {pre:msg.slice(0,i),hit:find,post:msg.slice(i+find.length),has:true}; }
+    return {pre:msg,hit:'',post:'',has:false};
+  }
+  renderVals(){
+    const S = this.state;
+    const lvColor = { V:'var(--lv-v)',D:'var(--lv-d)',I:'var(--lv-i)',W:'var(--lv-w)',E:'var(--lv-e)',F:'var(--lv-f)' };
+    const rowBg = { W:'var(--row-w-bg)',E:'var(--row-e-bg)',F:'var(--row-f-bg)' };
+
+    // ---- rows ----
+    const visible = RAW.filter(r => S.levels[r[3]]);
+    const rows = visible.map(r => {
+      const [n,date,time,lv,pid,tid,tag,msg] = r;
+      const marked = !!S.marks[n];
+      const selected = S.selected === n;
+      const seg = this.splitMsg(msg);
+      const base = {
+        display:'grid', gridTemplateColumns:COLS, height:'20px', alignItems:'center',
+        whiteSpace:'nowrap', fontSize:'12px', lineHeight:'20px', boxSizing:'border-box',
+        borderLeft:'2px solid transparent', cursor:'default',
+        borderLeftColor: marked ? 'var(--bookmark)' : (selected ? 'var(--accent)' : 'transparent'),
+        background: selected ? 'var(--accent-soft)' : (rowBg[lv] || 'transparent'),
+        fontWeight: lv==='F' ? 700 : 400
+      };
+      const meta = {color:'var(--text-dim)', padding:'0 6px', overflow:'hidden', textOverflow:'ellipsis'};
+      const numMeta = {...meta, textAlign:'right'};
+      const lvC = lvColor[lv];
+      return {
+        n, date, time, lv, pid, tid, tag, marked, onClick: () => this.setState({selected:n}),
+        style: base,
+        numStyle: {color:'var(--text-faint)', padding:'0 6px', textAlign:'right'},
+        metaStyle: meta,
+        numMetaStyle: numMeta,
+        lvCellStyle: {color:lvC, textAlign:'center', fontWeight: lv==='F'?700:600},
+        tagStyle: {color:lvC, padding:'0 6px', overflow:'hidden', textOverflow:'ellipsis', fontWeight:500},
+        msgStyle: {color:lvC, padding:'0 6px', overflow:'hidden', textOverflow:'ellipsis', minWidth:0},
+        pre: seg.pre, hit: seg.hit, post: seg.post, isFind: seg.has
+      };
+    });
+
+    // ---- headers ----
+    const headers = HEADERS.map((label,i) => {
+      const isNum = (i===1||i===5||i===6);
+      return { label, style: {
+        padding: i===0?'0':'0 6px', fontSize:'11px', fontWeight:600, color:'var(--text-dim)',
+        letterSpacing:'.02em', textAlign: isNum?'right':'left',
+        borderRight: (i>0 && i<8) ? '1px solid var(--border)' : 'none',
+        overflow:'hidden', textOverflow:'ellipsis', lineHeight:'28px'
+      }};
+    });
+    const headerRowStyle = {
+      display:'grid', gridTemplateColumns:COLS, height:'28px', flex:'none',
+      background:'var(--header-bg)', borderBottom:'1px solid var(--border)', alignItems:'center'
+    };
+
+    // ---- level chips ----
+    const chips = LEVELS.map(lv => {
+      const on = S.levels[lv];
+      const c = lvColor[lv];
+      const chipBg = {V:'var(--chip-v)',D:'var(--chip-d)',I:'var(--chip-i)',W:'var(--chip-w)',E:'var(--chip-e)',F:'var(--chip-f)'}[lv];
+      return {
+        lv, onClick: () => this.setState(s => ({levels:{...s.levels,[lv]:!s.levels[lv]}})),
+        style: {
+          display:'flex', alignItems:'center', gap:'5px', height:'24px', padding:'0 9px 0 7px',
+          borderRadius:'6px', cursor:'pointer', fontFamily:'inherit',
+          border: on ? '1px solid '+c : '1px solid var(--border)',
+          background: on ? chipBg : 'transparent',
+          opacity: on ? 1 : .5
+        },
+        dotStyle: {width:'8px', height:'8px', borderRadius:'2px', background:c, flex:'none'},
+        letterStyle: {fontFamily:"'JetBrains Mono',monospace", fontSize:'12px', fontWeight:700, color: on ? c : 'var(--text-dim)'}
+      };
+    });
+
+    // ---- filter fields ----
+    const mkSwitch = (on) => ({
+      switchStyle:{width:'24px',height:'14px',borderRadius:'8px',flex:'none',cursor:'pointer',position:'relative',transition:'background .12s',background: on?'var(--accent)':'var(--switch-off)'},
+      knobStyle:{position:'absolute',top:'2px',left: on?'12px':'2px',width:'10px',height:'10px',borderRadius:'50%',background:'#fff',transition:'left .12s',boxShadow:'0 1px 2px rgba(0,0,0,.3)'}
+    });
+    const fieldWrap = (on) => ({
+      display:'flex',alignItems:'center',gap:'8px',width:'100%',height:'28px',padding:'0 8px',borderRadius:'6px',boxSizing:'border-box',
+      background:'var(--panel)',border:'1px solid var(--border)', opacity: on?1:.55
+    });
+    const inputBox = {display:'flex',alignItems:'center',gap:'6px',flex:'1',minWidth:0,height:'22px',padding:'0 8px',borderRadius:'4px',background:'var(--bg)',border:'1px solid var(--border)'};
+    const valStyle = (ph) => ({flex:'1',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:"'JetBrains Mono',monospace",fontSize:'11px',color: ph?'var(--text-faint)':'var(--text)'});
+    const regexStyle = (on) => ({fontFamily:"'JetBrains Mono',monospace",fontSize:'11px',fontWeight:700,cursor:'pointer',padding:'1px 4px',borderRadius:'3px',color: on?'#fff':'var(--text-faint)',background: on?'var(--accent)':'transparent',border:'1px solid '+(on?'var(--accent)':'var(--border)')});
+    // 包含(绿+) / 屏蔽(红−) 语义徽标
+    const badgeOf = (kind) => {
+      if(kind==='inc') return {badge:true, badgeChar:'+', badgeStyle:{width:'15px',height:'15px',flex:'none',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'4px',fontSize:'12px',fontWeight:700,lineHeight:1,background:'var(--chip-i)',color:'var(--lv-i)'}};
+      if(kind==='exc') return {badge:true, badgeChar:'−', badgeStyle:{width:'15px',height:'15px',flex:'none',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'4px',fontSize:'13px',fontWeight:700,lineHeight:1,background:'var(--chip-e)',color:'var(--lv-e)'}};
+      return {badge:true, badgeChar:'', badgeStyle:{width:'15px',height:'15px',flex:'none'}};
+    };
+
+    const fo = S.fieldOn;
+    const toggleF = (k) => () => this.setState(s => ({fieldOn:{...s.fieldOn,[k]:!s.fieldOn[k]}}));
+    const fields = [
+      {key:'tagShow', kind:'inc', label:'Tag 包含', value:'*Manager'},
+      {key:'tagHide', kind:'exc', label:'Tag 屏蔽', value:'chatty · GC'},
+      {key:'pid', kind:'neutral', label:'PID', value:'12043'},
+      {key:'tid', kind:'neutral', label:'TID', value:'—', ph:true},
+      {key:'cInc', kind:'inc', label:'内容包含', value:'network · 支付', regex:true},
+      {key:'cExc', kind:'exc', label:'内容屏蔽', value:'heartbeat', regex:true}
+    ].map(f => {
+      const on = fo[f.key];
+      const sw = mkSwitch(on);
+      const b = badgeOf(f.kind);
+      return {
+        label:f.label, value:f.value, wrapStyle:fieldWrap(on),
+        switchStyle:sw.switchStyle, knobStyle:sw.knobStyle, onToggle: toggleF(f.key),
+        hasBadge:b.badge, badgeChar:b.badgeChar, badgeStyle:b.badgeStyle,
+        inputStyle: inputBox, valueStyle: valStyle(!!f.ph),
+        showRegex: !!f.regex, showSwatch: !!f.swatch,
+        regexStyle: regexStyle(false), onRegex: this.state.noop
+      };
+    });
+
+    // ---- minimap ticks + viewport ----
+    const total = visible.length || 1;
+    const idxOf = {}; visible.forEach((r,i)=> idxOf[r[0]] = i);
+    const ticks = [];
+    visible.forEach((r,i) => {
+      const top = (i/total)*100;
+      if(S.marks[r[0]]) ticks.push({style:{position:'absolute',left:'2px',width:'9px',height:'3px',borderRadius:'1px',background:'var(--bookmark)',top:top+'%'}});
+      if(r[3]==='E'||r[3]==='F') ticks.push({style:{position:'absolute',right:'2px',width:'11px',height:'2px',background:'var(--error)',top:top+'%'}});
+    });
+    const vpTop = S.totalH ? (S.scrollTop/S.totalH)*100 : 0;
+    const vpH = S.totalH ? Math.max(8,(S.viewH/S.totalH)*100) : 40;
+    const viewportStyle = {position:'absolute',left:'1px',right:'1px',top:vpTop+'%',height:vpH+'%',background:'var(--viewport)',border:'1px solid var(--viewport-border)',borderRadius:'2px',boxSizing:'border-box',pointerEvents:'none'};
+
+    // ---- status bar ----
+    const M = LEVELS.reduce((a,lv)=> a + (S.levels[lv]?LV_COUNTS[lv]:0), 0);
+    const sep = {padding:'0 10px', color:'var(--text-faint)', borderRight:'1px solid var(--border)', marginRight:'0'};
+    const first = {...sep, paddingLeft:0};
+    const statusItems = [
+      {text:'已加载 1,284,502 行', style:{...first, color:'var(--text-dim)'}},
+      {text:'过滤后 '+M.toLocaleString()+' 行', style:{...sep, color:'var(--accent-strong)'}},
+      {text:'索引 100%', style:{...sep, color:'var(--text-dim)'}},
+      {text:'当前 第 '+(S.selected||1)+' 行', style:{...sep, color:'var(--text-dim)'}},
+      {text:'UTF-8', style:{...sep, color:'var(--text-dim)'}},
+      {text:'logcat · threadtime', style:{padding:'0 10px', color:'var(--text-dim)'}}
+    ];
+
+    const activeCount = LEVELS.filter(l=>S.levels[l]).length;
+
+    // ---- toolbar dropdowns ----
+    const ddBtn = (open) => ({display:'flex',alignItems:'center',justifyContent:'space-between',gap:'7px',width:'100%',height:'32px',padding:'0 12px',fontSize:'12.5px',whiteSpace:'nowrap',color:'var(--text)',border:'1px solid '+(open?'var(--accent)':'var(--border-strong)'),background:open?'var(--accent-soft)':'transparent',borderRadius:'7px',cursor:'pointer',fontFamily:'inherit'});
+    const cmdBtn = (open) => ({display:'flex',alignItems:'center',gap:'8px',width:'100%',height:'32px',padding:'0 8px 0 13px',fontSize:'12.5px',whiteSpace:'nowrap',color:'var(--text)',border:'1px solid '+(open?'var(--accent)':'var(--border-strong)'),background:open?'var(--accent-soft)':'transparent',borderRadius:'7px',cursor:'pointer',fontFamily:'inherit'});
+    const menuStyle = {position:'absolute',top:'calc(100% + 5px)',left:'0',minWidth:'222px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'8px',boxShadow:'0 12px 30px rgba(0,0,0,.22)',padding:'5px',zIndex:60};
+    const itemStyle = {display:'flex',alignItems:'center',gap:'9px',height:'30px',padding:'0 10px',borderRadius:'5px',fontSize:'12px',color:'var(--text)',cursor:'pointer',whiteSpace:'nowrap'};
+    const mLabel = {fontSize:'10.5px',letterSpacing:'.05em',textTransform:'uppercase',color:'var(--text-faint)',padding:'7px 10px 4px'};
+    const mDiv = {height:'1px',background:'var(--border)',margin:'4px 6px'};
+    const kbd = {marginLeft:'auto',fontFamily:"'JetBrains Mono',monospace",fontSize:'10px',color:'var(--text-faint)'};
+
+    const commandItems = ['logcat -v threadtime','logcat -v time','logcat -b radio -v time','logcat -b events -v time','shell cat /proc/kmsg'].map(cmd => ({
+      cmd, sel: S.command===cmd, style:itemStyle,
+      onClick: () => this.setState({command:cmd, openMenu:null})
+    }));
+    const deviceItems = [
+      {name:'Pixel 7', id:'2B151FDH2000XX', online:true},
+      {name:'Redmi Note 12', id:'a1b2c3d4e5', online:true},
+      {name:'Galaxy S22', id:'未授权 · offline', online:false}
+    ].map(d => ({
+      name:d.name, id:d.id, online:d.online, sel:S.device===d.name, style:{...itemStyle, opacity:d.online?1:.5},
+      dotStyle:{width:'7px',height:'7px',borderRadius:'50%',flex:'none',background:d.online?'var(--lv-i)':'var(--text-faint)'},
+      onClick: d.online ? () => this.setState({device:d.name, openMenu:null}) : () => {}
+    }));
+    const recentFiles = [
+      {name:'device-2604.log', sub:'~/logs · 412 MB', sel:true},
+      {name:'crash-repro-0419.txt', sub:'~/Desktop · 1.2 GB', sel:false},
+      {name:'pixel7-boot.log', sub:'~/logs · 88 MB', sel:false}
+    ].map(r => ({...r, style:itemStyle, onClick: () => this.setState({openMenu:null})}));
+
+    // ---- inline find (toolbar) ----
+    const findMatches = S.find ? visible.filter(r => r[7].indexOf(S.find) >= 0).length : 0;
+    const miniTgl = (on) => ({fontFamily:"'JetBrains Mono',monospace",fontSize:'11px',fontWeight:700,cursor:'pointer',minWidth:'22px',height:'20px',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'4px',color:on?'#fff':'var(--text-faint)',background:on?'var(--accent)':'transparent'});
+    const curSw = (HL_COLORS[S.findColor] || HL_COLORS.yellow).sw;
+    const findColorOptions = Object.keys(HL_COLORS).map(k => ({
+      key:k, sel:k===S.findColor,
+      style:{width:'22px',height:'22px',borderRadius:'5px',cursor:'pointer',background:HL_COLORS[k].sw,boxSizing:'border-box',border: k===S.findColor ? '2px solid var(--text)' : '2px solid transparent'},
+      onClick: () => this.setState({findColor:k, openMenu:null})
+    }));
+
+    return {
+      rootRef:this.rootRef, tableRef:this.tableRef,
+      isDark: S.theme==='dark', isLight: S.theme!=='dark',
+      toggleTheme: () => this.setState(s => ({theme: s.theme==='dark'?'light':'dark'})),
+      collapsed: S.collapsed, expanded: !S.collapsed,
+      toggleCollapse: () => { this.setState(s=>({collapsed:!s.collapsed})); setTimeout(()=>this.measure(),0); },
+      chips, fields, rows, headers, headerRowStyle,
+      ticks, viewportStyle,
+      onScroll: () => this.measure(),
+      onMinimap: (e) => {
+        const el=this.tableRef.current; if(!el) return;
+        const box = e.currentTarget.getBoundingClientRect();
+        const frac = (e.clientY - box.top)/box.height;
+        el.scrollTop = frac*el.scrollHeight - el.clientHeight/2;
+      },
+      statusItems,
+      activeSummary: activeCount+'/6 级别 · 查找「'+S.find+'」',
+      // dropdown menus
+      menuOpen: !!S.openMenu,
+      sourceOpen: S.openMenu==='source', deviceOpen: S.openMenu==='device', commandOpen: S.openMenu==='command',
+      onSourceMenu: () => this.setState(s => ({openMenu: s.openMenu==='source'?null:'source'})),
+      onDeviceMenu: () => this.setState(s => ({openMenu: s.openMenu==='device'?null:'device'})),
+      onCommandMenu: () => this.setState(s => ({openMenu: s.openMenu==='command'?null:'command'})),
+      closeMenu: () => this.setState({openMenu:null}),
+      srcBtnStyle: ddBtn(S.openMenu==='source'), deviceBtnStyle: ddBtn(S.openMenu==='device'), commandBtnStyle: cmdBtn(S.openMenu==='command'),
+      menuStyle, itemStyle, mLabel, mDiv, kbd,
+      device: S.device, command: S.command,
+      commandItems, deviceItems, recentFiles,
+      // inline find + 可配色高亮
+      findText: S.find, findEmpty: !S.find, hasFind: !!S.find,
+      findCount: S.find ? ('2 / ' + findMatches) : '0 / 0',
+      findCaseStyle: miniTgl(S.findCase), findRegexStyle: miniTgl(S.findRegex),
+      onFindCase: () => this.setState(s => ({findCase:!s.findCase})),
+      onFindRegex: () => this.setState(s => ({findRegex:!s.findRegex})),
+      findColorSwStyle: {width:'15px',height:'15px',flex:'none',borderRadius:'4px',cursor:'pointer',background:curSw,border:'1px solid var(--border-strong)'},
+      onColorMenu: () => this.setState(s => ({openMenu: s.openMenu==='findColor'?null:'findColor'})),
+      colorMenuOpen: S.openMenu==='findColor', findColorOptions,
+      noop: ()=>{}
+    };
+  }
+}
+</script>
+</body>
+</html>

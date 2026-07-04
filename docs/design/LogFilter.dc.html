@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#E7E9ED;font-family:-apple-system,'Segoe UI',system-ui,'PingFang SC','Microsoft YaHei',sans-serif}
+</style>
+</helmet>
+
+<div style="padding:64px 72px 96px;display:flex;flex-direction:column;align-items:center;gap:60px;min-width:1320px">
+
+  <!-- page header -->
+  <div style="width:1180px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px">
+    <div>
+      <div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#8A909B;font-weight:600">Desktop App · UI Design</div>
+      <div style="font-size:30px;font-weight:700;color:#15181D;margin-top:8px;letter-spacing:-.01em">LogFilter — Android logcat 大日志查看器</div>
+      <div style="font-size:14px;color:#5D636E;margin-top:7px;max-width:760px;line-height:1.55">面向开发者的桌面日志分析工具。日志表格是绝对主角,四周控件克制。以下为主界面(浅色 / 深色)、空态与组件细节稿。每个窗口均可交互:切换级别芯片、折叠过滤栏、点击行选中、点右上角图标切换主题。</div>
+    </div>
+    <div style="display:flex;gap:8px;flex:none">
+      <span style="font-size:12px;color:#5D636E;background:#fff;border:1px solid #D8DBE0;border-radius:20px;padding:6px 13px">8pt 栅格</span>
+      <span style="font-size:12px;color:#5D636E;background:#fff;border:1px solid #D8DBE0;border-radius:20px;padding:6px 13px">强调色 #3B82F6</span>
+      <span style="font-size:12px;color:#5D636E;background:#fff;border:1px solid #D8DBE0;border-radius:20px;padding:6px 13px">JetBrains Mono</span>
+    </div>
+  </div>
+
+  <!-- light window -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;background:#15181D;color:#fff;border-radius:5px;padding:4px 8px">主界面 · 浅色</span>
+      <span style="font-size:13px;color:#5D636E">默认视图 · 已打开一个 1.28M 行的 logcat</span>
+    </div>
+    <dc-import name="LogWindow" theme="light" hint-size="1180px,860px" style="width:1180px;height:860px"></dc-import>
+  </div>
+
+  <!-- dark window -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;background:#15181D;color:#fff;border-radius:5px;padding:4px 8px">主界面 · 深色</span>
+      <span style="font-size:13px;color:#5D636E">同一界面的深色主题 · 长时间盯屏更省眼</span>
+    </div>
+    <dc-import name="LogWindow" theme="dark" hint-size="1180px,860px" style="width:1180px;height:860px"></dc-import>
+  </div>
+
+  <!-- empty state -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;font-weight:700;font-family:'JetBrains Mono',monospace;background:#15181D;color:#fff;border-radius:5px;padding:4px 8px">空态 · 未打开文件</span>
+      <span style="font-size:13px;color:#5D636E">首次启动 / 关闭文件后 · 引导打开或拖入</span>
+    </div>
+    <div style="width:1180px;height:600px;display:flex;flex-direction:column;background:#fff;color:#1F2328;border:1px solid #E5E7EB;border-radius:9px;box-shadow:0 20px 50px -18px rgba(15,20,30,.35);overflow:hidden">
+      <!-- title bar -->
+      <div style="height:34px;flex:none;display:flex;align-items:center;justify-content:space-between;background:#F1F2F4;border-bottom:1px solid #E5E7EB;padding-left:11px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:15px;height:15px;border-radius:4px;background:linear-gradient(135deg,#3B82F6,#2563EB);display:flex;align-items:center;justify-content:center">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 6h9M4 12h16M4 18h12"/></svg>
+          </div>
+          <span style="font-size:12px;color:#6B7280">LogFilter</span>
+        </div>
+        <div style="display:flex;color:#6B7280">
+          <div style="width:44px;height:34px;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1"><line x1="1" y1="6" x2="11" y2="6"/></svg></div>
+          <div style="width:44px;height:34px;display:flex;align-items:center;justify-content:center"><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1"><rect x="1.5" y="1.5" width="9" height="9"/></svg></div>
+          <div style="width:44px;height:34px;display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1"><line x1="1.5" y1="1.5" x2="10.5" y2="10.5"/><line x1="10.5" y1="1.5" x2="1.5" y2="10.5"/></svg></div>
+        </div>
+      </div>
+      <!-- toolbar (two rows, dimmed transport) -->
+      <div style="flex:none;display:flex;flex-direction:column;background:#F7F7F8;border-bottom:1px solid #E5E7EB">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 10px 0">
+          <button style="display:flex;align-items:center;gap:7px;height:32px;padding:0 13px;font-size:12.5px;color:#1F2328;background:transparent;border:1px solid #D5D8DD;border-radius:7px;cursor:pointer;font-family:inherit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h5l2 3h9v12H4z"/></svg><span>来源</span><span style="color:#9AA1AC;font-size:9px">▾</span></button>
+          <button style="display:flex;align-items:center;gap:7px;height:32px;padding:0 13px;font-size:12.5px;color:#9AA1AC;background:transparent;border:1px solid #E5E7EB;border-radius:7px;font-family:inherit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2"/></svg><span>无设备</span><span style="font-size:9px">▾</span></button>
+          <div style="flex:1;display:flex;align-items:center;gap:8px;height:32px;padding:0 8px 0 13px;font-size:12.5px;color:#9AA1AC;background:transparent;border:1px solid #E5E7EB;border-radius:7px;min-width:0"><span style="flex:none">命令</span><span style="flex:1;text-align:left;font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1AC;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:3px 8px">logcat -v threadtime</span><span style="flex:none;font-size:9px">▾</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding:8px 10px">
+          <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:#3B82F6;border:1px solid #3B82F6;border-radius:6px;color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg></div>
+          <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#C7CBD1"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></div>
+          <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#C7CBD1"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></div>
+          <div style="width:1px;height:20px;background:#E5E7EB;margin:0 3px"></div>
+          <button style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:#6B7280;cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h6l2 2.5h10V19H3z"/></svg></button>
+          <div style="flex:1"></div>
+          <div style="display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border:1px solid #E5E7EB;border-radius:6px;background:#fff;width:236px;opacity:.6"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9AA1AC" stroke-width="1.9" style="flex:none"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke-linecap="round"/></svg><span style="flex:1;font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1AC">查找日志…</span></div>
+          <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8 8 0 019.5 4a7 7 0 1010.5 10.5z" stroke-linejoin="round"/></svg></div>
+        </div>
+      </div>
+      <!-- drop zone -->
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;background:#FBFBFC">
+        <div style="width:520px;display:flex;flex-direction:column;align-items:center;text-align:center">
+          <div style="width:96px;height:96px;border-radius:22px;background:#EAF1FE;display:flex;align-items:center;justify-content:center;margin-bottom:22px">
+            <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="1.4" stroke-linejoin="round"><path d="M3 7h5l2 2.5h11V19H3z"/><path d="M12 12v5M9.5 14.5L12 12l2.5 2.5" stroke-linecap="round"/></svg>
+          </div>
+          <div style="font-size:19px;font-weight:600;color:#15181D">打开 logcat 日志文件</div>
+          <div style="font-size:13px;color:#6B7280;margin-top:8px;line-height:1.6">将文件拖到此处,或点击下方按钮选择<br>支持 .log / .txt / 数 GB 级大文件,自动流式索引</div>
+          <div style="display:flex;gap:10px;margin-top:24px">
+            <button style="display:flex;align-items:center;gap:7px;height:36px;padding:0 18px;font-size:13px;font-weight:600;color:#fff;background:#3B82F6;border:1px solid #3B82F6;border-radius:7px;cursor:pointer;font-family:inherit"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h6l2 2.5h10V19H3z"/></svg>打开文件</button>
+            <button style="display:flex;align-items:center;gap:7px;height:36px;padding:0 16px;font-size:13px;color:#1F2328;background:#fff;border:1px solid #D5D8DD;border-radius:7px;cursor:pointer;font-family:inherit"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2"/></svg>从设备抓取</button>
+          </div>
+          <div style="width:100%;margin-top:34px;text-align:left">
+            <div style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#9AA1AC;text-transform:uppercase;margin-bottom:8px">最近打开</div>
+            <div style="display:flex;flex-direction:column;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #F0F1F3;cursor:pointer">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9AA1AC" stroke-width="1.6"><path d="M6 2h9l4 4v16H6z"/><path d="M15 2v4h4"/></svg>
+                <div style="flex:1;min-width:0"><div style="font-size:13px;color:#1F2328">device-2604.log</div><div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1AC">~/logs/device-2604.log · 412 MB</div></div>
+                <span style="font-size:11px;color:#9AA1AC">2 分钟前</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #F0F1F3;cursor:pointer">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9AA1AC" stroke-width="1.6"><path d="M6 2h9l4 4v16H6z"/><path d="M15 2v4h4"/></svg>
+                <div style="flex:1;min-width:0"><div style="font-size:13px;color:#1F2328">crash-repro-0419.txt</div><div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1AC">~/Desktop/crash-repro-0419.txt · 1.2 GB</div></div>
+                <span style="font-size:11px;color:#9AA1AC">昨天</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9AA1AC" stroke-width="1.6"><path d="M6 2h9l4 4v16H6z"/><path d="M15 2v4h4"/></svg>
+                <div style="flex:1;min-width:0"><div style="font-size:13px;color:#1F2328">pixel7-boot.log</div><div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1AC">~/logs/pixel7-boot.log · 88 MB</div></div>
+                <span style="font-size:11px;color:#9AA1AC">3 天前</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- status -->
+      <div style="height:26px;flex:none;display:flex;align-items:center;padding:0 12px;background:#F7F7F8;border-top:1px solid #E5E7EB;font-size:11px;color:#9AA1AC;font-family:'JetBrains Mono',monospace">未打开文件 · 就绪<div style="flex:1"></div><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#C7CBD1"></span>无设备</span></div>
+    </div>
+  </div>
+
+  <!-- ============ component detail sheets ============ -->
+  <div style="width:1180px;border-top:1px solid #D3D6DC;padding-top:44px;margin-top:8px">
+    <div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#8A909B;font-weight:600">Component details</div>
+    <div style="font-size:22px;font-weight:700;color:#15181D;margin-top:6px">组件细节稿</div>
+  </div>
+
+  <!-- sheet: toolbar anatomy -->
+  <div style="width:1180px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:18px">
+    <div style="font-size:15px;font-weight:600;color:#15181D">1 · 顶部工具栏</div>
+    <div style="display:flex;flex-direction:column;gap:8px;padding:8px 10px;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:8px">
+      <div style="display:flex;align-items:center;gap:8px">
+      <button style="flex:none;width:150px;display:flex;align-items:center;justify-content:space-between;gap:7px;height:32px;padding:0 12px;font-size:12.5px;color:#1F2328;background:transparent;border:1px solid #D5D8DD;border-radius:7px;font-family:inherit"><span style="display:flex;align-items:center;gap:7px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h5l2 3h9v12H4z"/></svg>来源:文件</span><span style="color:#9AA1AC;font-size:9px">▾</span></button>
+      <button style="flex:5 1 0;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:7px;height:32px;padding:0 12px;font-size:12.5px;color:#1F2328;background:transparent;border:1px solid #D5D8DD;border-radius:7px;font-family:inherit"><span style="display:flex;align-items:center;gap:7px;min-width:0"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="18" x2="14" y2="18"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Pixel 7 · 2B151FDH2000XX</span></span><span style="color:#9AA1AC;font-size:9px">▾</span></button>
+      <button style="flex:8 1 0;min-width:0;display:flex;align-items:center;gap:8px;height:32px;padding:0 8px 0 12px;font-size:12.5px;color:#1F2328;background:transparent;border:1px solid #D5D8DD;border-radius:7px;font-family:inherit"><span style="flex:none">命令</span><span style="flex:1;min-width:0;text-align:left;font-family:'JetBrains Mono',monospace;font-size:11px;color:#6B7280;background:#FBFBFC;border:1px solid #E5E7EB;border-radius:4px;padding:3px 8px">logcat -v threadtime</span><span style="flex:none;color:#9AA1AC;font-size:9px">▾</span></button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+      <button style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:#3B82F6;border:1px solid #3B82F6;border-radius:6px;color:#fff"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+      <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></div>
+      <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></div>
+      <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></div>
+      <div style="width:1px;height:20px;background:#E5E7EB;margin:0 3px"></div>
+      <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 6h6l2 2.5h10V19H3z"/></svg></div>
+      <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/></svg></div>
+      <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v18"/><path d="M5 8l-2 4 2 4M19 8l2 4-2 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div style="width:1px;height:20px;background:#E5E7EB;margin:0 3px"></div>
+      <span style="font-size:11px;color:#9AA1AC">级别</span>
+      <div style="display:flex;gap:5px">
+        <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 8px 0 6px;border-radius:6px;border:1px solid #9AA1AC;background:#F1F2F4"><span style="width:8px;height:8px;border-radius:2px;background:#9AA1AC"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#9AA1AC">V</span></div>
+        <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 8px 0 6px;border-radius:6px;border:1px solid #2563EB;background:#E7F0FE"><span style="width:8px;height:8px;border-radius:2px;background:#2563EB"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#2563EB">D</span></div>
+        <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 8px 0 6px;border-radius:6px;border:1px solid #15A34A;background:#E6F6ED"><span style="width:8px;height:8px;border-radius:2px;background:#15A34A"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#15A34A">I</span></div>
+        <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 8px 0 6px;border-radius:6px;border:1px solid #C2760B;background:#FBF1E1"><span style="width:8px;height:8px;border-radius:2px;background:#C2760B"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#C2760B">W</span></div>
+        <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 8px 0 6px;border-radius:6px;border:1px solid #DC2626;background:#FCEAEA"><span style="width:8px;height:8px;border-radius:2px;background:#DC2626"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#DC2626">E</span></div>
+        <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 8px 0 6px;border-radius:6px;border:1px solid #B21B1B;background:#FAE0E0"><span style="width:8px;height:8px;border-radius:2px;background:#B21B1B"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:#B21B1B">F</span></div>
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex;align-items:center;gap:6px;height:28px;padding:0 4px 0 9px;border:1px solid #D5D8DD;border-radius:6px;background:#fff;width:270px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9AA1AC" stroke-width="1.9" style="flex:none"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke-linecap="round"/></svg>
+        <span style="flex:1;font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328">网络</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#9AA1AC">2 / 128</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#9AA1AC;padding:0 4px">Aa</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#fff;background:#3B82F6;border-radius:4px;padding:2px 4px">.*</span>
+        <span title="高亮颜色" style="width:15px;height:15px;border-radius:4px;background:#FADB5F;border:1px solid #D5D8DD"></span>
+        <div style="width:1px;height:16px;background:#E5E7EB"></div>
+        <span style="color:#6B7280;display:flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg></span>
+        <span style="color:#6B7280;display:flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:#6B7280"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8 8 0 019.5 4a7 7 0 1010.5 10.5z" stroke-linejoin="round"/></svg></div>
+    </div>
+    <div style="display:flex;gap:36px;font-size:12px;color:#5D636E;line-height:1.5">
+      <div style="flex:1"><span style="font-weight:600;color:#15181D">第一行 · 来源</span><br>来源 / 设备(含设备号) / 命令各自一行;命令约占一行 55%,点开均为下拉。</div>
+      <div style="flex:1"><span style="font-weight:600;color:#15181D">操作行</span><br>运行(主按钮)·暂停·停止·清空 | 打开·导出·切分 | 级别芯片 V D I W E F。</div>
+      <div style="flex:1"><span style="font-weight:600;color:#15181D">操作行右侧 · 查找</span><br>常驻查找框:命中计数 · 上/下一处 · Aa · .* · 高亮配色(默认黄),末尾为主题切换。</div>
+    </div>
+  </div>
+
+  <!-- sheet: dropdown menus -->
+  <div style="width:1180px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:18px">
+    <div style="font-size:15px;font-weight:600;color:#15181D">2 · 工具栏下拉菜单 · 展开态</div>
+    <div style="display:flex;gap:44px;align-items:flex-start;flex-wrap:wrap">
+
+      <!-- 来源 -->
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <button style="align-self:flex-start;display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;font-size:12px;color:#2563EB;background:#EAF1FE;border:1px solid #3B82F6;border-radius:6px;font-family:inherit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h5l2 3h9v12H4z"/></svg>来源<span style="font-size:9px">▾</span></button>
+        <div style="width:232px;background:#fff;border:1px solid #E5E7EB;border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.12);padding:5px">
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;font-size:12px;color:#1F2328"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="1.7"><path d="M3 6h6l2 2.5h10V19H3z"/></svg>打开文件…<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC">Ctrl O</span></div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;font-size:12px;color:#1F2328"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="1.7"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="18" x2="14" y2="18"/></svg>从设备实时抓取</div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;font-size:12px;color:#1F2328"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="1.7"><rect x="8" y="4" width="12" height="14" rx="2"/><path d="M16 4V2H4v14h2"/></svg>粘贴文本导入</div>
+          <div style="height:1px;background:#E5E7EB;margin:4px 6px"></div>
+          <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#9AA1AC;padding:7px 10px 4px">最近文件</div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;background:#F5F7FA"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9AA1AC" stroke-width="1.6"><path d="M6 2h9l4 4v16H6z"/><path d="M15 2v4h4"/></svg><div style="display:flex;flex-direction:column;line-height:1.25"><span style="font-size:12px;color:#1F2328">device-2604.log</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC">~/logs · 412 MB</span></div><svg style="margin-left:auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2.2"><path d="M5 12l5 5L20 6"/></svg></div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9AA1AC" stroke-width="1.6"><path d="M6 2h9l4 4v16H6z"/><path d="M15 2v4h4"/></svg><div style="display:flex;flex-direction:column;line-height:1.25"><span style="font-size:12px;color:#1F2328">crash-repro-0419.txt</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC">~/Desktop · 1.2 GB</span></div></div>
+        </div>
+      </div>
+
+      <!-- 设备 -->
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <button style="align-self:flex-start;display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;font-size:12px;color:#2563EB;background:#EAF1FE;border:1px solid #3B82F6;border-radius:6px;font-family:inherit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="18" x2="14" y2="18"/></svg>Pixel 7<span style="font-size:9px">▾</span></button>
+        <div style="width:232px;background:#fff;border:1px solid #E5E7EB;border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.12);padding:5px">
+          <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#9AA1AC;padding:7px 10px 4px">ADB 设备</div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;background:#F5F7FA"><span style="width:7px;height:7px;border-radius:50%;background:#15A34A"></span><div style="display:flex;flex-direction:column;line-height:1.25"><span style="font-size:12px;color:#1F2328">Pixel 7</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC">2B151FDH2000XX</span></div><svg style="margin-left:auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2.2"><path d="M5 12l5 5L20 6"/></svg></div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px"><span style="width:7px;height:7px;border-radius:50%;background:#15A34A"></span><div style="display:flex;flex-direction:column;line-height:1.25"><span style="font-size:12px;color:#1F2328">Redmi Note 12</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC">a1b2c3d4e5</span></div></div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;opacity:.5"><span style="width:7px;height:7px;border-radius:50%;background:#9AA1AC"></span><div style="display:flex;flex-direction:column;line-height:1.25"><span style="font-size:12px;color:#1F2328">Galaxy S22</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC">未授权 · offline</span></div></div>
+          <div style="height:1px;background:#E5E7EB;margin:4px 6px"></div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;font-size:12px;color:#1F2328"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/></svg>刷新设备列表</div>
+        </div>
+      </div>
+
+      <!-- 命令 -->
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <button style="align-self:flex-start;display:flex;align-items:center;gap:7px;height:28px;padding:0 6px 0 9px;font-size:12px;color:#2563EB;background:#EAF1FE;border:1px solid #3B82F6;border-radius:6px;font-family:inherit">命令<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6B7280;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:2px 6px">logcat -v threadtime</span><span style="font-size:9px">▾</span></button>
+        <div style="width:236px;background:#fff;border:1px solid #E5E7EB;border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.12);padding:5px">
+          <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#9AA1AC;padding:7px 10px 4px">采集命令</div>
+          <div style="display:flex;align-items:center;height:30px;padding:0 10px;border-radius:5px;background:#F5F7FA"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328">logcat -v threadtime</span><svg style="margin-left:auto" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2.2"><path d="M5 12l5 5L20 6"/></svg></div>
+          <div style="display:flex;align-items:center;height:30px;padding:0 10px;border-radius:5px"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328">logcat -v time</span></div>
+          <div style="display:flex;align-items:center;height:30px;padding:0 10px;border-radius:5px"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328">logcat -b radio -v time</span></div>
+          <div style="display:flex;align-items:center;height:30px;padding:0 10px;border-radius:5px"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328">logcat -b events -v time</span></div>
+          <div style="display:flex;align-items:center;height:30px;padding:0 10px;border-radius:5px"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328">shell cat /proc/kmsg</span></div>
+          <div style="height:1px;background:#E5E7EB;margin:4px 6px"></div>
+          <div style="display:flex;align-items:center;gap:9px;height:30px;padding:0 10px;border-radius:5px;font-size:12px;color:#1F2328"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>自定义命令…</div>
+        </div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#5D636E;line-height:1.55">下拉在点击触发按钮后原位展开(非浮层遮罩),点击选项即选中并收起,点击空白处关闭。命令列表取自项目 <span style="font-family:'JetBrains Mono',monospace">LogFilterCmd.ini</span>。</div>
+  </div>
+
+  <!-- sheet: filter fields (include / exclude) -->
+  <div style="width:1180px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:18px">
+    <div style="font-size:15px;font-weight:600;color:#15181D">3 · 过滤字段 · 包含 / 屏蔽 分离</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;background:#F7F7F8;border:1px solid #E5E7EB"><span style="width:24px;height:14px;border-radius:8px;background:#3B82F6;position:relative"><span style="position:absolute;top:2px;left:12px;width:10px;height:10px;border-radius:50%;background:#fff"></span></span><span style="width:15px;height:15px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:12px;font-weight:700;background:#E6F6ED;color:#15A34A">+</span><span style="font-size:11px;color:#6B7280">Tag 包含</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:1px 6px">*Manager</span></div>
+      <div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;background:#F7F7F8;border:1px solid #E5E7EB;opacity:.55"><span style="width:24px;height:14px;border-radius:8px;background:#CDD1D8;position:relative"><span style="position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#fff"></span></span><span style="width:15px;height:15px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:13px;font-weight:700;background:#FCEAEA;color:#DC2626">−</span><span style="font-size:11px;color:#6B7280">Tag 屏蔽</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1AC;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:1px 6px">chatty · GC</span></div>
+      <div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;background:#F7F7F8;border:1px solid #E5E7EB;opacity:.55"><span style="width:24px;height:14px;border-radius:8px;background:#CDD1D8;position:relative"><span style="position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#fff"></span></span><span style="font-size:11px;color:#6B7280">PID</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:1px 6px">12043</span></div>
+      <div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;background:#F7F7F8;border:1px solid #E5E7EB;opacity:.55"><span style="width:24px;height:14px;border-radius:8px;background:#CDD1D8;position:relative"><span style="position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#fff"></span></span><span style="font-size:11px;color:#6B7280">TID</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#9AA1AC;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:1px 6px">—</span></div>
+      <div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;background:#F7F7F8;border:1px solid #E5E7EB"><span style="width:24px;height:14px;border-radius:8px;background:#3B82F6;position:relative"><span style="position:absolute;top:2px;left:12px;width:10px;height:10px;border-radius:50%;background:#fff"></span></span><span style="width:15px;height:15px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:12px;font-weight:700;background:#E6F6ED;color:#15A34A">+</span><span style="font-size:11px;color:#6B7280">内容包含</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:1px 6px">network · 支付</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC;border:1px solid #E5E7EB;border-radius:3px;padding:0 3px">.*</span></div>
+      <div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;background:#F7F7F8;border:1px solid #E5E7EB;opacity:.55"><span style="width:24px;height:14px;border-radius:8px;background:#CDD1D8;position:relative"><span style="position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#fff"></span></span><span style="width:15px;height:15px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-size:13px;font-weight:700;background:#FCEAEA;color:#DC2626">−</span><span style="font-size:11px;color:#6B7280">内容屏蔽</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#1F2328;background:#fff;border:1px solid #E5E7EB;border-radius:4px;padding:1px 6px">heartbeat</span><span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#9AA1AC;border:1px solid #E5E7EB;border-radius:3px;padding:0 3px">.*</span></div>
+    </div>
+    <div style="display:flex;gap:36px;font-size:12px;color:#5D636E;line-height:1.5">
+      <div style="flex:1"><span style="font-weight:600;color:#15A34A">+ 包含</span>(<span style="font-family:'JetBrains Mono',monospace">TAG_SHOW / WORD_FIND</span>)<br>只保留命中项,收窄结果集。</div>
+      <div style="flex:1"><span style="font-weight:600;color:#DC2626">− 屏蔽</span>(<span style="font-family:'JetBrains Mono',monospace">TAG_REMOVE / WORD_REMOVE</span>)<br>剔除命中项;与"包含"是相互独立的两个字段。</div>
+      <div style="flex:1"><span style="font-weight:600;color:#15181D">高亮 / 查找</span><br>已并入工具栏查找框:命中底色高亮(默认黄,可切换配色),不改变结果集。每项独立启用开关。</div>
+    </div>
+  </div>
+
+  <!-- sheet: level chips -->
+  <div style="width:1180px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:18px">
+    <div style="font-size:15px;font-weight:600;color:#15181D">4 · 级别芯片(已移入工具栏 · 兼作配色图例)</div>
+    <div style="display:flex;gap:48px;flex-wrap:wrap">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#9AA1AC;text-transform:uppercase">启用</div>
+        <div style="display:flex;gap:6px">
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #9AA1AC;background:#F1F2F4"><span style="width:8px;height:8px;border-radius:2px;background:#9AA1AC"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#9AA1AC">V</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #2563EB;background:#E7F0FE"><span style="width:8px;height:8px;border-radius:2px;background:#2563EB"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#2563EB">D</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #15A34A;background:#E6F6ED"><span style="width:8px;height:8px;border-radius:2px;background:#15A34A"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#15A34A">I</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #C2760B;background:#FBF1E1"><span style="width:8px;height:8px;border-radius:2px;background:#C2760B"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#C2760B">W</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #DC2626;background:#FCEAEA"><span style="width:8px;height:8px;border-radius:2px;background:#DC2626"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#DC2626">E</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #B21B1B;background:#FAE0E0"><span style="width:8px;height:8px;border-radius:2px;background:#B21B1B"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:800;color:#B21B1B">F</span></div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#9AA1AC;text-transform:uppercase">停用</div>
+        <div style="display:flex;gap:6px;opacity:.5">
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #E5E7EB"><span style="width:8px;height:8px;border-radius:2px;background:#9AA1AC"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#6B7280">V</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #E5E7EB"><span style="width:8px;height:8px;border-radius:2px;background:#2563EB"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#6B7280">D</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #E5E7EB"><span style="width:8px;height:8px;border-radius:2px;background:#15A34A"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#6B7280">I</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #E5E7EB"><span style="width:8px;height:8px;border-radius:2px;background:#C2760B"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#6B7280">W</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #E5E7EB"><span style="width:8px;height:8px;border-radius:2px;background:#DC2626"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#6B7280">E</span></div>
+          <div style="display:flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:6px;border:1px solid #E5E7EB"><span style="width:8px;height:8px;border-radius:2px;background:#B21B1B"></span><span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#6B7280">F</span></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:#5D636E">
+      <span style="display:flex;align-items:center;gap:6px;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:6px;padding:5px 9px"><span style="width:9px;height:9px;border-radius:2px;background:#9AA1AC"></span>V · Verbose 冗余</span>
+      <span style="display:flex;align-items:center;gap:6px;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:6px;padding:5px 9px"><span style="width:9px;height:9px;border-radius:2px;background:#2563EB"></span>D · Debug 调试</span>
+      <span style="display:flex;align-items:center;gap:6px;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:6px;padding:5px 9px"><span style="width:9px;height:9px;border-radius:2px;background:#15A34A"></span>I · Info 信息</span>
+      <span style="display:flex;align-items:center;gap:6px;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:6px;padding:5px 9px"><span style="width:9px;height:9px;border-radius:2px;background:#C2760B"></span>W · Warn 警告</span>
+      <span style="display:flex;align-items:center;gap:6px;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:6px;padding:5px 9px"><span style="width:9px;height:9px;border-radius:2px;background:#DC2626"></span>E · Error 错误</span>
+      <span style="display:flex;align-items:center;gap:6px;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:6px;padding:5px 9px"><span style="width:9px;height:9px;border-radius:2px;background:#B21B1B"></span>F · Fatal 致命(加粗)</span>
+    </div>
+  </div>
+
+  <!-- sheet: row states -->
+  <div style="width:1180px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:15px;font-weight:600;color:#15181D">5 · 表格行三态</div>
+    <div style="border:1px solid #E5E7EB;border-radius:8px;overflow:hidden;font-family:'JetBrains Mono',monospace;font-size:12px">
+      <!-- header -->
+      <div style="display:grid;grid-template-columns:22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr);height:28px;align-items:center;background:#F3F4F6;border-bottom:1px solid #E5E7EB;font-family:-apple-system,'Segoe UI',system-ui,sans-serif;font-size:11px;font-weight:600;color:#6B7280">
+        <div></div><div style="padding:0 6px;text-align:right">行号</div><div style="padding:0 6px">日期</div><div style="padding:0 6px">时间</div><div style="padding:0 6px">级别</div><div style="padding:0 6px;text-align:right">PID</div><div style="padding:0 6px;text-align:right">TID</div><div style="padding:0 6px">Tag</div><div style="padding:0 6px">消息</div>
+      </div>
+      <!-- normal -->
+      <div style="display:grid;grid-template-columns:22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr);height:24px;align-items:center;border-left:2px solid transparent;border-bottom:1px solid #F2F3F5">
+        <div></div><span style="padding:0 6px;text-align:right;color:#9AA1AC">10</span><span style="padding:0 6px;color:#6B7280">04-20</span><span style="padding:0 6px;color:#6B7280">14:32:08.4</span><span style="text-align:center;color:#15A34A;font-weight:600">I</span><span style="padding:0 6px;text-align:right;color:#6B7280">12043</span><span style="padding:0 6px;text-align:right;color:#6B7280">12090</span><span style="padding:0 6px;color:#15A34A;font-weight:500">数据同步</span><span style="padding:0 6px;color:#15A34A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">首页数据同步完成,共 24 个卡片</span>
+      </div>
+      <!-- highlight hit -->
+      <div style="display:grid;grid-template-columns:22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr);height:24px;align-items:center;border-left:2px solid transparent;border-bottom:1px solid #F2F3F5;background:#FEFAF1">
+        <div></div><span style="padding:0 6px;text-align:right;color:#9AA1AC">19</span><span style="padding:0 6px;color:#6B7280">04-20</span><span style="padding:0 6px;color:#6B7280">14:32:11.4</span><span style="text-align:center;color:#C2760B;font-weight:600">W</span><span style="padding:0 6px;text-align:right;color:#6B7280">12043</span><span style="padding:0 6px;text-align:right;color:#6B7280">12095</span><span style="padding:0 6px;color:#C2760B;font-weight:500">网络请求</span><span style="padding:0 6px;color:#C2760B;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">弱网环境,接口 /api/v1/feed 响应缓慢 · 命中 <span style="background:#FDE68A;color:#7A4E12;border-radius:2px;padding:0 1px">网络</span></span>
+      </div>
+      <!-- bookmark -->
+      <div style="display:grid;grid-template-columns:22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr);height:24px;align-items:center;border-left:2px solid #3B82F6;background:#FEF5F4">
+        <div style="display:flex;align-items:center;justify-content:center"><svg width="11" height="11" viewBox="0 0 24 24" fill="#3B82F6"><path d="M6 3h12v18l-6-4.5L6 21z"/></svg></div><span style="padding:0 6px;text-align:right;color:#9AA1AC">20</span><span style="padding:0 6px;color:#6B7280">04-20</span><span style="padding:0 6px;color:#6B7280">14:32:13.5</span><span style="text-align:center;color:#DC2626;font-weight:600">E</span><span style="padding:0 6px;text-align:right;color:#6B7280">12043</span><span style="padding:0 6px;text-align:right;color:#6B7280">12095</span><span style="padding:0 6px;color:#DC2626;font-weight:500">网络请求</span><span style="padding:0 6px;color:#DC2626;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">请求失败: <span style="background:#FDE68A;color:#7A4E12;border-radius:2px;padding:0 1px">网络</span>连接超时 (SocketTimeoutException)</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:36px;font-size:12px;color:#5D636E;line-height:1.5">
+      <div style="flex:1"><span style="font-weight:600;color:#15181D">普通</span><br>整行按级别着色;行号/日期/时间/PID/TID 保持中性灰以突出内容列。</div>
+      <div style="flex:1"><span style="font-weight:600;color:#15181D">命中高亮</span><br>查找命中以高亮底色标出(默认黄,可在查找框切换颜色);行背景仍随级别淡染。</div>
+      <div style="flex:1"><span style="font-weight:600;color:#15181D">书签</span><br>左侧 2px 强调边 + 书签图标;选中行则以强调边 + 浅蓝底表示。</div>
+    </div>
+  </div>
+
+  <!-- sheet: status bar -->
+  <div style="width:1180px;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:15px;font-weight:600;color:#15181D">6 · 底部状态栏</div>
+    <div style="height:26px;display:flex;align-items:center;background:#F7F7F8;border:1px solid #E5E7EB;border-radius:7px;font-size:11px;font-family:'JetBrains Mono',monospace">
+      <span style="padding:0 10px;color:#6B7280;border-right:1px solid #E5E7EB">已加载 1,284,502 行</span>
+      <span style="padding:0 10px;color:#2563EB;border-right:1px solid #E5E7EB">过滤后 1,266,070 行</span>
+      <span style="padding:0 10px;color:#6B7280;border-right:1px solid #E5E7EB">索引 100%</span>
+      <span style="padding:0 10px;color:#6B7280;border-right:1px solid #E5E7EB">当前 第 20 行</span>
+      <span style="padding:0 10px;color:#6B7280;border-right:1px solid #E5E7EB">UTF-8</span>
+      <span style="padding:0 10px;color:#6B7280">logcat · threadtime</span>
+      <div style="flex:1"></div>
+      <span style="padding:0 10px;display:flex;align-items:center;gap:5px;color:#6B7280"><span style="width:7px;height:7px;border-radius:50%;background:#15A34A"></span>已连接</span>
+    </div>
+    <div style="font-size:12px;color:#5D636E;line-height:1.55">从左到右:已加载总行数 · 过滤后行数(强调色)· 索引进度 · 当前光标行 · 文件编码 · 日志格式;右端为设备连接状态。分段以 1px hairline 分隔,全部使用等宽字体便于对齐数字。</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
