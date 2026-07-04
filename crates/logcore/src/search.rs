@@ -104,12 +104,28 @@ impl CompiledSearch {
     }
 }
 
+pub struct SearchMatcher(CompiledSearch);
+
+impl SearchMatcher {
+    pub fn new(spec: &SearchSpec) -> Result<Self, SearchError> {
+        Ok(Self(CompiledSearch::compile(spec)?))
+    }
+
+    pub fn is_match(&self, text: &str) -> bool {
+        self.0.is_match(text)
+    }
+
+    pub fn is_entry_match(&self, entry: &LogEntry) -> bool {
+        entry_matches(entry, &self.0)
+    }
+}
+
 pub fn search_entries(entries: &[LogEntry], spec: &SearchSpec) -> Result<Vec<u64>, SearchError> {
-    let compiled = CompiledSearch::compile(spec)?;
+    let matcher = SearchMatcher::new(spec)?;
     Ok(entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, entry)| entry_matches(entry, &compiled).then_some(idx as u64))
+        .filter_map(|(idx, entry)| matcher.is_entry_match(entry).then_some(idx as u64))
         .collect())
 }
 
@@ -117,10 +133,10 @@ pub fn search_texts<'a, I>(texts: I, spec: &SearchSpec) -> Result<Vec<u64>, Sear
 where
     I: IntoIterator<Item = (u64, &'a str)>,
 {
-    let compiled = CompiledSearch::compile(spec)?;
+    let matcher = SearchMatcher::new(spec)?;
     Ok(texts
         .into_iter()
-        .filter_map(|(idx, text)| compiled.is_match(text).then_some(idx))
+        .filter_map(|(idx, text)| matcher.is_match(text).then_some(idx))
         .collect())
 }
 

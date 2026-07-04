@@ -1,7 +1,7 @@
+pub mod filter;
+pub mod indexer;
+pub mod mmap_source;
 pub mod model;
 pub mod parser;
-pub mod mmap_source;
-pub mod indexer;
-pub mod session;
-pub mod filter;
 pub mod search;
+pub mod session;

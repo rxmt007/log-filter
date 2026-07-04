@@ -172,7 +172,8 @@ impl CompiledField {
     }
 }
 
-struct CompiledSpec {
+pub struct FilterMatcher {
+    spec: FilterSpec,
     pid: CompiledField,
     tid: CompiledField,
     tag_include: CompiledField,
@@ -181,9 +182,10 @@ struct CompiledSpec {
     word_exclude: CompiledField,
 }
 
-impl CompiledSpec {
-    fn compile(spec: &FilterSpec) -> Result<Self, FilterError> {
+impl FilterMatcher {
+    pub fn new(spec: &FilterSpec) -> Result<Self, FilterError> {
         Ok(Self {
+            spec: spec.clone(),
             pid: CompiledField::compile(&spec.pid)?,
             tid: CompiledField::compile(&spec.tid)?,
             tag_include: CompiledField::compile(&spec.tag_include)?,
@@ -192,37 +194,35 @@ impl CompiledSpec {
             word_exclude: CompiledField::compile(&spec.word_exclude)?,
         })
     }
+
+    pub fn is_match(&self, entry: &LogEntry) -> bool {
+        if !self.spec.levels.is_all() && !self.spec.levels.contains_level(&entry.level) {
+            return false;
+        }
+        if !include_exact(&self.pid, &entry.pid) || !include_exact(&self.tid, &entry.tid) {
+            return false;
+        }
+        if !include_contains(&self.tag_include, &entry.tag)
+            || exclude_contains(&self.tag_exclude, &entry.tag)
+        {
+            return false;
+        }
+        if !include_contains(&self.word_include, &entry.message)
+            || exclude_contains(&self.word_exclude, &entry.message)
+        {
+            return false;
+        }
+        true
+    }
 }
 
 pub fn filter_entries(entries: &[LogEntry], spec: &FilterSpec) -> Result<Vec<u64>, FilterError> {
-    let compiled = CompiledSpec::compile(spec)?;
+    let matcher = FilterMatcher::new(spec)?;
     Ok(entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, entry)| {
-            entry_matches(entry, spec, &compiled).then_some(idx as u64)
-        })
+        .filter_map(|(idx, entry)| matcher.is_match(entry).then_some(idx as u64))
         .collect())
-}
-
-fn entry_matches(entry: &LogEntry, spec: &FilterSpec, compiled: &CompiledSpec) -> bool {
-    if !spec.levels.is_all() && !spec.levels.contains_level(&entry.level) {
-        return false;
-    }
-    if !include_exact(&compiled.pid, &entry.pid) || !include_exact(&compiled.tid, &entry.tid) {
-        return false;
-    }
-    if !include_contains(&compiled.tag_include, &entry.tag)
-        || exclude_contains(&compiled.tag_exclude, &entry.tag)
-    {
-        return false;
-    }
-    if !include_contains(&compiled.word_include, &entry.message)
-        || exclude_contains(&compiled.word_exclude, &entry.message)
-    {
-        return false;
-    }
-    true
 }
 
 fn include_contains(field: &CompiledField, text: &str) -> bool {
