@@ -43,6 +43,53 @@ pub fn parse_threadtime(line: &str) -> Option<LogEntry> {
     })
 }
 
+/// `MM-DD HH:MM:SS.mmm L/Tag(  pid): message`
+pub fn parse_time(line: &str) -> Option<LogEntry> {
+    let mut it = line.split_whitespace();
+    let date = it.next()?;
+    let time = it.next()?;
+    let rest = rest_after_tokens(line, 2)?; // "D/LightsService(  139): BKL : 106"
+    if rest.len() < 2 {
+        return None;
+    }
+    let level = &rest[..1];
+    if !"VDIWEF".contains(level) || &rest[1..2] != "/" {
+        return None;
+    }
+    let after = &rest[2..]; // "LightsService(  139): BKL : 106"
+    let open = after.find('(')?;
+    let close = after.find(')')?;
+    if close < open {
+        return None;
+    }
+    let tag = after[..open].to_string();
+    let pid = after[open + 1..close].trim().to_string();
+    let message = after[close + 1..]
+        .trim_start_matches(':')
+        .trim_start()
+        .to_string();
+    Some(LogEntry {
+        date: date.to_string(),
+        time: time.to_string(),
+        level: level.to_string(),
+        pid,
+        tid: String::new(),
+        tag,
+        message,
+    })
+}
+
+/// 依次尝试 threadtime → time,失败则整行作为 message。
+pub fn parse_line(line: &str) -> LogEntry {
+    let line = line.trim_end_matches(['\r', '\n']);
+    parse_threadtime(line)
+        .or_else(|| parse_time(line))
+        .unwrap_or_else(|| LogEntry {
+            message: line.to_string(),
+            ..Default::default()
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,5 +111,29 @@ mod tests {
     fn rejects_non_threadtime() {
         let line = "04-17 09:01:18.910 D/LightsService(  139): BKL : 106";
         assert!(parse_threadtime(line).is_none());
+    }
+
+    #[test]
+    fn parses_time_line() {
+        let line = "04-17 09:01:18.910 D/LightsService(  139): BKL : 106";
+        let e = parse_time(line).expect("should parse");
+        assert_eq!(e.date, "04-17");
+        assert_eq!(e.time, "09:01:18.910");
+        assert_eq!(e.level, "D");
+        assert_eq!(e.tag, "LightsService");
+        assert_eq!(e.pid, "139");
+        assert_eq!(e.tid, "");
+        assert_eq!(e.message, "BKL : 106");
+    }
+
+    #[test]
+    fn parse_line_dispatches_and_falls_back() {
+        let tt = parse_line("04-20 12:06:02.125   146   179 D BatteryService: update start");
+        assert_eq!(tt.tag, "BatteryService");
+        let tm = parse_line("04-17 09:01:18.910 D/LightsService(  139): BKL : 106");
+        assert_eq!(tm.tag, "LightsService");
+        let raw = parse_line("--------- beginning of main");
+        assert_eq!(raw.message, "--------- beginning of main");
+        assert_eq!(raw.tag, "");
     }
 }
