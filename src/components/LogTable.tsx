@@ -1,60 +1,110 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { getRows } from "@/lib/ipc";
 import type { Row } from "@/types";
 import { useSession } from "@/store/session";
 
-const WINDOW = 200; // 每次向后端取的行数
+const WINDOW = 200;
 const ROW_H = 20;
-const COLS = "64px 60px 96px 22px 56px 56px 150px 1fr";
+const COLS = "22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr)";
+const HEADERS = ["", "行号", "日期", "时间", "级别", "PID", "TID", "Tag", "消息"];
 
-const dim = { color: "var(--muted-foreground, #888)", padding: "0 4px" } as const;
-const cell = { padding: "0 4px" } as const;
+function highlightText(text: string, query: string, regex: boolean, caseSensitive: boolean): ReactNode {
+  if (!query) return text;
+  try {
+    if (regex) {
+      const re = new RegExp(query, caseSensitive ? "g" : "gi");
+      const out: ReactNode[] = [];
+      let last = 0;
+      for (const match of text.matchAll(re)) {
+        const index = match.index ?? 0;
+        const hit = match[0];
+        if (!hit) continue;
+        if (index > last) out.push(text.slice(last, index));
+        out.push(
+          <mark className="lf-hit" key={`${index}-${hit}`}>
+            {hit}
+          </mark>,
+        );
+        last = index + hit.length;
+      }
+      if (last === 0) return text;
+      if (last < text.length) out.push(text.slice(last));
+      return out;
+    }
+    const haystack = caseSensitive ? text : text.toLowerCase();
+    const needle = caseSensitive ? query : query.toLowerCase();
+    const index = haystack.indexOf(needle);
+    if (index < 0) return text;
+    return (
+      <>
+        {text.slice(0, index)}
+        <mark className="lf-hit">{text.slice(index, index + query.length)}</mark>
+        {text.slice(index + query.length)}
+      </>
+    );
+  } catch {
+    return text;
+  }
+}
 
 export function LogTable() {
-  const total = useSession((s) => s.status.totalLines);
+  const status = useSession((s) => s.status);
+  const total = useSession((s) => (s.view === "filtered" ? s.status.filteredLines : s.status.totalLines));
+  const view = useSession((s) => s.view);
   const sessionId = useSession((s) => s.sessionId);
+  const search = useSession((s) => s.search);
+  const currentSearchLine = useSession((s) => s.currentSearchLine);
+  const selectedLine = useSession((s) => s.selectedLine);
+  const setSelectedLine = useSession((s) => s.setSelectedLine);
   const parentRef = useRef<HTMLDivElement>(null);
   const cache = useRef<Map<number, Row>>(new Map());
-  const filled = useRef<Map<number, number>>(new Map()); // block 起点 -> 已缓存行数
+  const filled = useRef<Map<number, number>>(new Map());
   const inflight = useRef<Set<number>>(new Set());
   const [, force] = useState(0);
 
-  // 切换文件(sessionId 变化)时清空缓存,避免残留上一个文件的行。
   useEffect(() => {
     cache.current.clear();
     filled.current.clear();
     inflight.current.clear();
     parentRef.current?.scrollTo({ top: 0 });
     force((x) => x + 1);
-  }, [sessionId]);
+  }, [sessionId, view]);
 
   const rv = useVirtualizer({
     count: total,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H,
-    overscan: 20,
+    overscan: 24,
   });
+
+  useEffect(() => {
+    if (!currentSearchLine || view !== "all") return;
+    rv.scrollToIndex(Math.max(0, currentSearchLine - 1), { align: "center" });
+  }, [currentSearchLine, rv, view]);
 
   const items = rv.getVirtualItems();
 
-  const ensureBlock = useCallback(async (block: number, totalNow: number) => {
-    const want = Math.min(WINDOW, totalNow - block); // 该块当前实际存在的行数
-    if (want <= 0) return;
-    if ((filled.current.get(block) ?? 0) >= want) return; // 已缓存全部可用行
-    if (inflight.current.has(block)) return;
-    inflight.current.add(block);
-    try {
-      const rows = await getRows("all", block, WINDOW);
-      rows.forEach((r, i) => cache.current.set(block + i, r));
-      filled.current.set(block, rows.length);
-      force((x) => x + 1);
-    } finally {
-      inflight.current.delete(block);
-    }
-  }, []);
+  const ensureBlock = useCallback(
+    async (block: number, totalNow: number) => {
+      const want = Math.min(WINDOW, totalNow - block);
+      if (want <= 0) return;
+      if ((filled.current.get(block) ?? 0) >= want) return;
+      if (inflight.current.has(block)) return;
+      inflight.current.add(block);
+      try {
+        const rows = await getRows(view, block, WINDOW);
+        rows.forEach((r, i) => cache.current.set(block + i, r));
+        filled.current.set(block, rows.length);
+        force((x) => x + 1);
+      } finally {
+        inflight.current.delete(block);
+      }
+    },
+    [view],
+  );
 
-  // items 或 total 变化时按可见范围取块;total 增长会让未满块重新取。
   useEffect(() => {
     if (items.length === 0) return;
     const first = items[0].index;
@@ -63,44 +113,63 @@ export function LogTable() {
     ensureBlock(Math.floor(last / WINDOW) * WINDOW, total);
   }, [items, ensureBlock, total]);
 
+  const emptyText = useMemo(() => {
+    if (!status.totalBytes) return "打开或拖入 logcat 文件后开始浏览";
+    if (view === "filtered") return "当前过滤条件没有命中行";
+    return "正在等待索引行";
+  }, [status.totalBytes, view]);
+
   return (
-    <div ref={parentRef} style={{ height: "100%", overflow: "auto", fontFamily: "monospace", fontSize: 12 }}>
-      <div style={{ height: rv.getTotalSize(), position: "relative" }}>
-        {items.map((vi) => {
-          const row = cache.current.get(vi.index);
-          return (
-            <div
-              key={vi.key}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: ROW_H,
-                transform: `translateY(${vi.start}px)`,
-                display: "grid",
-                gridTemplateColumns: COLS,
-                whiteSpace: "nowrap",
-                alignItems: "center",
-              }}
-            >
-              {row ? (
-                <>
-                  <span style={dim}>{row.lineNo}</span>
-                  <span style={dim}>{row.date}</span>
-                  <span style={dim}>{row.time}</span>
-                  <span style={cell}>{row.level}</span>
-                  <span style={dim}>{row.pid}</span>
-                  <span style={dim}>{row.tid}</span>
-                  <span style={cell}>{row.tag}</span>
-                  <span style={{ ...cell, overflow: "hidden", textOverflow: "ellipsis" }}>{row.message}</span>
-                </>
-              ) : (
-                <span style={{ gridColumn: "1 / -1", padding: "0 4px", color: "var(--muted-foreground, #aaa)" }}>…</span>
-              )}
-            </div>
-          );
-        })}
+    <div className="lf-table-shell">
+      <div className="lf-table-header" style={{ gridTemplateColumns: COLS }}>
+        {HEADERS.map((h, i) => (
+          <div key={`${h}-${i}`}>{h}</div>
+        ))}
+      </div>
+      <div ref={parentRef} className="lf-table-scroll">
+        {total === 0 ? (
+          <div className="lf-empty-state">{emptyText}</div>
+        ) : (
+          <div style={{ height: rv.getTotalSize(), position: "relative" }}>
+            {items.map((vi) => {
+              const row = cache.current.get(vi.index);
+              const selected = row?.lineNo === selectedLine || row?.lineNo === currentSearchLine;
+              return (
+                <div
+                  className="lf-table-row"
+                  data-level={row?.level || ""}
+                  data-selected={selected || undefined}
+                  key={vi.key}
+                  onClick={() => row && setSelectedLine(row.lineNo)}
+                  style={{
+                    gridTemplateColumns: COLS,
+                    transform: `translateY(${vi.start}px)`,
+                  }}
+                >
+                  {row ? (
+                    <>
+                      <span className="lf-bookmark-cell" />
+                      <span className="lf-num">{row.lineNo}</span>
+                      <span className="lf-meta">{row.date}</span>
+                      <span className="lf-meta">{row.time}</span>
+                      <span className="lf-level">{row.level}</span>
+                      <span className="lf-num">{row.pid}</span>
+                      <span className="lf-num">{row.tid}</span>
+                      <span className="lf-tag" title={row.tag}>
+                        {row.tag}
+                      </span>
+                      <span className="lf-message">
+                        {highlightText(row.message, search.query, search.regex, search.caseSensitive)}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="lf-loading-row">...</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

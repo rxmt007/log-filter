@@ -1,32 +1,264 @@
+import { useCallback, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FolderOpen,
+  Pause,
+  Play,
+  Search,
+  Split,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { openFile } from "@/lib/ipc";
-import { useSession } from "@/store/session";
+import { openFile, searchLogs, searchNext } from "@/lib/ipc";
+import { ALL_LEVELS, LEVEL_BITS, useSession } from "@/store/session";
+import type { FilterSpec } from "@/types";
+
+const LEVELS = [
+  ["V", LEVEL_BITS.V],
+  ["D", LEVEL_BITS.D],
+  ["I", LEVEL_BITS.I],
+  ["W", LEVEL_BITS.W],
+  ["E", LEVEL_BITS.E],
+  ["F", LEVEL_BITS.F],
+] as const;
+
+const FILTER_FIELDS: Array<{
+  key: keyof Omit<FilterSpec, "levels">;
+  label: string;
+  badge?: "+" | "-";
+  placeholder: string;
+}> = [
+  { key: "tagInclude", label: "Tag 包含", badge: "+", placeholder: "*Manager" },
+  { key: "tagExclude", label: "Tag 屏蔽", badge: "-", placeholder: "chatty|GC" },
+  { key: "pid", label: "PID", placeholder: "12043|146" },
+  { key: "tid", label: "TID", placeholder: "179|12095" },
+  { key: "wordInclude", label: "内容包含", badge: "+", placeholder: "network|支付" },
+  { key: "wordExclude", label: "内容屏蔽", badge: "-", placeholder: "heartbeat" },
+];
 
 export function Toolbar() {
   const beginSession = useSession((s) => s.beginSession);
+  const status = useSession((s) => s.status);
+  const filter = useSession((s) => s.filter);
+  const toggleLevel = useSession((s) => s.toggleLevel);
+  const setFilterField = useSession((s) => s.setFilterField);
+  const view = useSession((s) => s.view);
+  const setView = useSession((s) => s.setView);
+  const search = useSession((s) => s.search);
+  const setSearch = useSession((s) => s.setSearch);
+  const searchCount = useSession((s) => s.searchCount);
+  const currentSearchLine = useSession((s) => s.currentSearchLine);
+  const setSearchResult = useSession((s) => s.setSearchResult);
+  const setCurrentSearchLine = useSession((s) => s.setCurrentSearchLine);
 
   const onOpen = async () => {
     const path = await open({ multiple: false, directory: false });
     if (typeof path === "string") {
       const st = await openFile(path);
-      beginSession(st); // 换新文件:更新状态并自增 sessionId(触发表格清缓存)
+      beginSession(st);
     }
   };
 
+  useEffect(() => {
+    if (!status.totalBytes || !search.query.trim()) {
+      setSearchResult(0, null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      searchLogs(search)
+        .then((result) => setSearchResult(result.count, result.firstLine))
+        .catch((err) => {
+          console.error("search failed", err);
+          setSearchResult(0, null);
+        });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [search, status.totalBytes, setSearchResult]);
+
+  const jumpSearch = useCallback(
+    async (direction: "next" | "previous") => {
+      if (!searchCount) return;
+      const from = currentSearchLine ?? 0;
+      const line = await searchNext(from, direction);
+      setCurrentSearchLine(line);
+    },
+    [currentSearchLine, searchCount, setCurrentSearchLine],
+  );
+
+  const hasFiltered = status.filteredLines > 0 && status.filteredLines !== status.totalLines;
+  const countLabel = search.query ? `${currentSearchLine ?? "-"} / ${searchCount}` : "0 / 0";
+
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: 8,
-        borderBottom: "1px solid var(--border, #e5e5e5)",
-      }}
-    >
-      <Button size="sm" onClick={onOpen}>
-        打开
-      </Button>
+    <div className="lf-toolbar">
+      <div className="lf-toolbar-row lf-toolbar-row-top">
+        <button className="lf-select-button" type="button">
+          <FolderOpen />
+          <span>来源:文件</span>
+          <ChevronDown />
+        </button>
+        <button className="lf-select-button lf-device" type="button">
+          <span className="lf-device-dot" />
+          <span>{status.totalBytes ? "本地日志文件" : "无设备"}</span>
+          <ChevronDown />
+        </button>
+        <button className="lf-select-button lf-command" type="button">
+          <span>命令</span>
+          <code>logcat -v threadtime</code>
+          <ChevronDown />
+        </button>
+      </div>
+
+      <div className="lf-toolbar-row lf-toolbar-row-actions">
+        <Button size="icon-sm" className="lf-run-button" title="运行">
+          <Play />
+        </Button>
+        <Button size="icon-sm" variant="ghost" title="暂停">
+          <Pause />
+        </Button>
+        <Button size="icon-sm" variant="ghost" title="停止">
+          <Square />
+        </Button>
+        <Button size="icon-sm" variant="ghost" title="清空">
+          <Trash2 />
+        </Button>
+        <span className="lf-separator" />
+        <Button size="icon-sm" variant="ghost" title="打开" onClick={onOpen}>
+          <FolderOpen />
+        </Button>
+        <Button size="icon-sm" variant="ghost" title="导出">
+          <Download />
+        </Button>
+        <Button size="icon-sm" variant="ghost" title="切分">
+          <Split />
+        </Button>
+        <span className="lf-separator" />
+        <span className="lf-level-label">级别</span>
+        <div className="lf-level-chips">
+          {LEVELS.map(([level, bit]) => {
+            const on = (filter.levels & bit) !== 0;
+            return (
+              <button
+                key={level}
+                className="lf-level-chip"
+                data-level={level}
+                data-active={on}
+                type="button"
+                onClick={() => toggleLevel(bit)}
+              >
+                <span />
+                <b>{level}</b>
+              </button>
+            );
+          })}
+        </div>
+        <div className="lf-spacer" />
+        <div className="lf-search-box">
+          <Search />
+          <input
+            value={search.query}
+            onChange={(e) => setSearch({ query: e.target.value })}
+            placeholder="查找日志…"
+          />
+          <span className="lf-search-count">{countLabel}</span>
+          <button
+            className="lf-mini-toggle"
+            data-active={search.caseSensitive}
+            type="button"
+            title="区分大小写"
+            onClick={() => setSearch({ caseSensitive: !search.caseSensitive })}
+          >
+            Aa
+          </button>
+          <button
+            className="lf-mini-toggle"
+            data-active={search.regex}
+            type="button"
+            title="正则匹配"
+            onClick={() => setSearch({ regex: !search.regex })}
+          >
+            .*
+          </button>
+          <span className="lf-highlight-swatch" title="高亮颜色" />
+          <span className="lf-search-divider" />
+          <button type="button" title="上一处" onClick={() => jumpSearch("previous")}>
+            <ChevronUp />
+          </button>
+          <button type="button" title="下一处" onClick={() => jumpSearch("next")}>
+            <ChevronDown />
+          </button>
+        </div>
+      </div>
+
+      <div className="lf-filter-bar">
+        <div className="lf-filter-title">
+          <span>过滤条件</span>
+          <button
+            className="lf-view-toggle"
+            data-active={view === "filtered"}
+            type="button"
+            onClick={() => setView(view === "filtered" ? "all" : "filtered")}
+          >
+            {view === "filtered" ? "过滤视图" : hasFiltered ? "全部视图" : "全部视图"}
+          </button>
+          <button
+            className="lf-view-toggle"
+            data-active={filter.levels === ALL_LEVELS}
+            type="button"
+            onClick={() => useSession.getState().setFilter({ levels: ALL_LEVELS })}
+          >
+            全级别
+          </button>
+        </div>
+        <div className="lf-filter-fields">
+          {FILTER_FIELDS.map((field) => {
+            const value = filter[field.key];
+            return (
+              <label className="lf-filter-field" data-enabled={value.enabled} key={field.key}>
+                <button
+                  className="lf-switch"
+                  data-active={value.enabled}
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setFilterField(field.key, { enabled: !value.enabled });
+                  }}
+                >
+                  <span />
+                </button>
+                <span className={field.badge === "-" ? "lf-badge lf-badge-exclude" : "lf-badge"}>
+                  {field.badge ?? ""}
+                </span>
+                <span className="lf-filter-label">{field.label}</span>
+                <input
+                  value={value.pattern}
+                  placeholder={field.placeholder}
+                  onChange={(e) => setFilterField(field.key, { pattern: e.target.value })}
+                />
+                {(field.key === "tagInclude" ||
+                  field.key === "tagExclude" ||
+                  field.key === "wordInclude" ||
+                  field.key === "wordExclude") && (
+                  <button
+                    className="lf-mini-toggle"
+                    data-active={value.regex}
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setFilterField(field.key, { regex: !value.regex });
+                    }}
+                  >
+                    .*
+                  </button>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
