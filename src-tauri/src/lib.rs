@@ -15,7 +15,11 @@ pub fn run() {
             commands::set_filter,
             commands::get_filtered_count,
             commands::search,
-            commands::search_next
+            commands::search_next,
+            commands::toggle_bookmark,
+            commands::list_bookmarks,
+            commands::next_bookmark,
+            commands::get_minimap
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

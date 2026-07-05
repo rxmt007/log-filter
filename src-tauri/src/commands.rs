@@ -1,4 +1,4 @@
-use crate::dto::{FilterSpecDto, Row, SearchResult, SearchSpecDto, Status};
+use crate::dto::{FilterSpecDto, MinimapDto, Row, SearchResult, SearchSpecDto, Status};
 use crate::state::AppState;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -11,6 +11,8 @@ fn status_from(session: &logcore::session::Session, generation: u64) -> Status {
     Status {
         total_lines: session.total_lines(),
         filtered_lines: session.filtered_count(),
+        bookmark_lines: session.bookmark_count(),
+        error_lines: session.error_count(),
         indexed_bytes: session.indexed_bytes() as u64,
         total_bytes: session.total_bytes() as u64,
         indexing: !session.is_indexing_done(),
@@ -22,6 +24,8 @@ fn empty_status(generation: u64) -> Status {
     Status {
         total_lines: 0,
         filtered_lines: 0,
+        bookmark_lines: 0,
+        error_lines: 0,
         indexed_bytes: 0,
         total_bytes: 0,
         indexing: false,
@@ -85,6 +89,8 @@ pub fn get_rows(view: String, start: usize, count: usize, state: State<AppState>
     let view = match view.as_str() {
         "all" => logcore::session::RowsView::All,
         "filtered" => logcore::session::RowsView::Filtered,
+        "bookmarks" => logcore::session::RowsView::Bookmarks,
+        "errors" => logcore::session::RowsView::Errors,
         _ => return Vec::new(),
     };
     let count = count.min(MAX_ROWS);
@@ -102,7 +108,7 @@ pub fn get_rows(view: String, start: usize, count: usize, state: State<AppState>
                 tid: e.tid,
                 tag: e.tag,
                 message: e.message,
-                marked: false,
+                marked: s.is_bookmarked(line_no),
             })
             .collect(),
         None => Vec::new(),
@@ -152,4 +158,51 @@ pub fn search_next(from_line_no: u64, direction: String, state: State<AppState>)
     guard
         .as_ref()
         .and_then(|session| session.search_next(from_line_no, direction))
+}
+
+#[tauri::command]
+pub fn toggle_bookmark(line_no: u64, state: State<AppState>) -> Result<bool, String> {
+    let mut guard = state.lock_session();
+    let Some(session) = guard.as_mut() else {
+        return Ok(false);
+    };
+    session
+        .toggle_bookmark(line_no)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn list_bookmarks(state: State<AppState>) -> Vec<u64> {
+    let guard = state.lock_session();
+    guard
+        .as_ref()
+        .map_or_else(Vec::new, |session| session.list_bookmarks())
+}
+
+#[tauri::command]
+pub fn next_bookmark(from_line_no: u64, direction: String, state: State<AppState>) -> Option<u64> {
+    let direction = match direction.as_str() {
+        "previous" => logcore::bookmarks::BookmarkDirection::Previous,
+        _ => logcore::bookmarks::BookmarkDirection::Next,
+    };
+    let guard = state.lock_session();
+    guard
+        .as_ref()
+        .and_then(|session| session.next_bookmark(from_line_no, direction))
+}
+
+#[tauri::command]
+pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
+    let guard = state.lock_session();
+    let Some(session) = guard.as_ref() else {
+        return MinimapDto {
+            bookmarks: Vec::new(),
+            errors: Vec::new(),
+        };
+    };
+    let minimap = session.minimap(buckets);
+    MinimapDto {
+        bookmarks: minimap.bookmarks,
+        errors: minimap.errors,
+    }
 }

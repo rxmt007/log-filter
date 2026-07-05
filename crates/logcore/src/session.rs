@@ -99,6 +99,14 @@ impl Session {
         self.bookmarks.list()
     }
 
+    pub fn bookmark_count(&self) -> usize {
+        self.bookmark_source_lines().len()
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.error_lines.len()
+    }
+
     pub fn next_bookmark(&self, from_line_no: u64, direction: BookmarkDirection) -> Option<u64> {
         self.bookmarks.next(from_line_no, direction)
     }

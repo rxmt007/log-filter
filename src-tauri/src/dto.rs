@@ -21,6 +21,8 @@ pub struct Row {
 pub struct Status {
     pub total_lines: usize,
     pub filtered_lines: usize,
+    pub bookmark_lines: usize,
+    pub error_lines: usize,
     pub indexed_bytes: u64,
     pub total_bytes: u64,
     pub indexing: bool,
@@ -94,4 +96,11 @@ impl From<SearchSpecDto> for logcore::search::SearchSpec {
 pub struct SearchResult {
     pub count: usize,
     pub first_line: Option<u64>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MinimapDto {
+    pub bookmarks: Vec<usize>,
+    pub errors: Vec<usize>,
 }
