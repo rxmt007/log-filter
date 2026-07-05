@@ -34,3 +34,4 @@ desktop.ini
 
 # ── 日志 / 临时 ──
 *.log
+.superpowers/
