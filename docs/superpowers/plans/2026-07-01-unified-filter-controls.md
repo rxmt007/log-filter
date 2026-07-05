@@ -184,6 +184,8 @@ git commit -m "feat(logcore): add marked-only filter semantics"
 
 ### Task 2: 当前结果内导航与小地图
 
+> 性能约束:无筛选时小地图继续使用已维护的书签/错误源行索引映射,避免为 10GB+ 文件在每次绘制时逐行扫描;有筛选时才按当前结果集重新投影到 bucket。
+
 **Files:**
 - Modify: `crates/logcore/src/session.rs`
 
@@ -353,7 +355,7 @@ pub fn next_bookmark_in_current_result(
 
 - [ ] **Step 6: 改写 minimap 为当前结果坐标系**
 
-替换 `Session::minimap` 主体:
+替换 `Session::minimap` 主体。注意:无筛选时保留原来的源文件坐标快速路径,有筛选时才使用当前结果坐标:
 
 ```rust
 pub fn minimap(&self, buckets: usize) -> Minimap {
@@ -362,6 +364,20 @@ pub fn minimap(&self, buckets: usize) -> Minimap {
         return Minimap {
             bookmarks: Vec::new(),
             errors: Vec::new(),
+        };
+    }
+    if !self.filter_active {
+        return Minimap {
+            bookmarks: self
+                .bookmark_source_lines()
+                .into_iter()
+                .filter_map(|line_no| bucket_for_one_based(line_no, total, buckets))
+                .collect(),
+            errors: self
+                .error_lines
+                .iter()
+                .filter_map(|idx| bucket_for_zero_based(*idx as usize, total, buckets))
+                .collect(),
         };
     }
     let mut bookmarks = BTreeSet::new();
@@ -736,9 +752,10 @@ const fs = require('fs');
 const toolbar = fs.readFileSync('src/components/Toolbar.tsx', 'utf8');
 const css = fs.readFileSync('src/index.css', 'utf8');
 const failures = [];
-for (const text of ['>全部<', '>过滤<', '>书签<', '>错误<', '>全级别<']) {
+for (const text of ['>过滤<', '>书签<', '>错误<', '>全级别<']) {
   if (toolbar.includes(text)) failures.push(`old lower view button remains: ${text}`);
 }
+if (toolbar.includes('setView("all")')) failures.push('old 全部 view button path remains');
 if (!toolbar.includes('Bookmark')) failures.push('Toolbar must import/use Bookmark icon');
 if (!toolbar.includes('仅标记')) failures.push('Toolbar must render 仅标记');
 if (!toolbar.includes('setFilter({ levels: ALL_LEVELS })')) failures.push('Toolbar must render 全部 as level all-select');
