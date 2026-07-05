@@ -34,6 +34,7 @@ pub struct Session {
     indexer: Indexer,
     filtered: Vec<u64>,
     filter_active: bool,
+    filter_spec: FilterSpec,
     search_matches: Vec<u64>,
     bookmarks: BookmarkStore,
     error_lines: Vec<u64>,
@@ -50,6 +51,7 @@ impl Session {
             indexer: Indexer::new(),
             filtered: Vec::new(),
             filter_active: false,
+            filter_spec: FilterSpec::default(),
             search_matches: Vec::new(),
             bookmarks,
             error_lines: Vec::new(),
@@ -138,7 +140,8 @@ impl Session {
         Minimap { bookmarks, errors }
     }
 
-    pub fn export_view(&self, view: RowsView, output: &Path) -> io::Result<ExportSummary> {
+    pub fn export_view(&mut self, view: RowsView, output: &Path) -> io::Result<ExportSummary> {
+        self.prepare_file_tool()?;
         let mut writer = self.create_export_file(output)?;
         let frontier = self.indexed_frontier();
         let effective_view = if view == RowsView::Filtered && !self.filter_active {
@@ -193,11 +196,12 @@ impl Session {
     }
 
     pub fn export_range(
-        &self,
+        &mut self,
         start_line_no: u64,
         end_line_no: u64,
         output: &Path,
     ) -> io::Result<ExportSummary> {
+        self.prepare_file_tool()?;
         if start_line_no == 0 || end_line_no < start_line_no {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -222,6 +226,7 @@ impl Session {
     }
 
     pub fn set_filter(&mut self, spec: &FilterSpec) -> Result<usize, FilterError> {
+        self.filter_spec = spec.clone();
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
@@ -380,6 +385,20 @@ impl Session {
             (Ok(out), Ok(source)) => out == source,
             _ => false,
         }
+    }
+
+    fn prepare_file_tool(&mut self) -> io::Result<()> {
+        self.index_all();
+        if self.filter_spec.is_active() {
+            let spec = self.filter_spec.clone();
+            self.set_filter(&spec).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("cannot rebuild filter for export: {}", err.message),
+                )
+            })?;
+        }
+        Ok(())
     }
 
     fn refresh_error_lines(&mut self) {
