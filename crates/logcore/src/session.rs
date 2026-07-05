@@ -237,7 +237,8 @@ impl Session {
         let mut matches = Vec::new();
         for idx in 0..self.indexer.offsets().len() {
             if let Some((_, entry)) = self.parse_source_row(idx, frontier) {
-                if matcher.is_match(&entry) {
+                let marked = self.is_bookmarked(idx as u64 + 1);
+                if matcher.is_match_with_mark(&entry, marked) {
                     matches.push(idx as u64);
                 }
             }

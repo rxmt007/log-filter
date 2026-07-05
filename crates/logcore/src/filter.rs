@@ -98,6 +98,7 @@ impl FilterField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilterSpec {
     pub levels: LevelMask,
+    pub marked_only: bool,
     pub pid: FilterField,
     pub tid: FilterField,
     pub tag_include: FilterField,
@@ -110,6 +111,7 @@ impl Default for FilterSpec {
     fn default() -> Self {
         Self {
             levels: LevelMask::all(),
+            marked_only: false,
             pid: FilterField::default(),
             tid: FilterField::default(),
             tag_include: FilterField::default(),
@@ -123,6 +125,7 @@ impl Default for FilterSpec {
 impl FilterSpec {
     pub fn is_active(&self) -> bool {
         !self.levels.is_all()
+            || self.marked_only
             || self.pid.is_active()
             || self.tid.is_active()
             || self.tag_include.is_active()
@@ -212,6 +215,13 @@ impl FilterMatcher {
     }
 
     pub fn is_match(&self, entry: &LogEntry) -> bool {
+        self.is_match_with_mark(entry, false)
+    }
+
+    pub fn is_match_with_mark(&self, entry: &LogEntry, marked: bool) -> bool {
+        if self.spec.marked_only && !marked {
+            return false;
+        }
         if !self.spec.levels.is_all() && !self.spec.levels.contains_level(&entry.level) {
             return false;
         }
@@ -302,6 +312,33 @@ mod tests {
         };
         let matches = filter_entries(&sample(), &spec).expect("filter should compile");
         assert_eq!(matches, vec![2, 3]);
+    }
+
+    #[test]
+    fn empty_level_mask_matches_no_known_levels() {
+        let entries = vec![
+            entry("D", "100", "101", "Net", "debug"),
+            entry("E", "100", "101", "Net", "error"),
+        ];
+        let spec = FilterSpec {
+            levels: LevelMask::from_bits(0),
+            ..Default::default()
+        };
+
+        assert_eq!(filter_entries(&entries, &spec).unwrap(), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn marked_only_requires_marked_row() {
+        let matcher = FilterMatcher::new(&FilterSpec {
+            marked_only: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let entry = entry("I", "100", "101", "Tag", "message");
+
+        assert!(!matcher.is_match_with_mark(&entry, false));
+        assert!(matcher.is_match_with_mark(&entry, true));
     }
 
     #[test]
