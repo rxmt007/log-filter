@@ -1,3 +1,4 @@
+use crate::bookmarks::{BookmarkDirection, BookmarkStore};
 use crate::filter::{FilterError, FilterMatcher, FilterSpec};
 use crate::indexer::{line_span, Indexer};
 use crate::mmap_source::MmapSource;
@@ -6,31 +7,51 @@ use crate::parser::parse_line;
 use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
 };
+use std::collections::BTreeSet;
+use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowsView {
     All,
     Filtered,
+    Bookmarks,
+    Errors,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Minimap {
+    pub bookmarks: Vec<usize>,
+    pub errors: Vec<usize>,
 }
 
 pub struct Session {
+    source_path: PathBuf,
     source: MmapSource,
     indexer: Indexer,
     filtered: Vec<u64>,
     filter_active: bool,
     search_matches: Vec<u64>,
+    bookmarks: BookmarkStore,
+    error_lines: Vec<u64>,
+    error_scan_lines: usize,
 }
 
 impl Session {
     pub fn open(path: &Path) -> std::io::Result<Session> {
         let source = MmapSource::open(path)?;
+        let bookmarks = BookmarkStore::load_for_source(path).unwrap_or_default();
         Ok(Session {
+            source_path: path.to_path_buf(),
             source,
             indexer: Indexer::new(),
             filtered: Vec::new(),
             filter_active: false,
             search_matches: Vec::new(),
+            bookmarks,
+            error_lines: Vec::new(),
+            error_scan_lines: 0,
         })
     }
 
@@ -53,6 +74,7 @@ impl Session {
     /// 后台按预算步进索引;返回是否已完成。
     pub fn index_step(&mut self, budget: usize) -> bool {
         self.indexer.step(self.source.bytes(), budget);
+        self.refresh_error_lines();
         self.is_indexing_done()
     }
 
@@ -60,6 +82,50 @@ impl Session {
     pub fn index_all(&mut self) {
         let total = self.source.len();
         self.indexer.step(self.source.bytes(), total);
+        self.refresh_error_lines();
+    }
+
+    pub fn toggle_bookmark(&mut self, line_no: u64) -> io::Result<bool> {
+        let marked = self.bookmarks.toggle(line_no);
+        self.bookmarks.save_for_source(&self.source_path)?;
+        Ok(marked)
+    }
+
+    pub fn is_bookmarked(&self, line_no: u64) -> bool {
+        self.bookmarks.contains(line_no)
+    }
+
+    pub fn list_bookmarks(&self) -> Vec<u64> {
+        self.bookmarks.list()
+    }
+
+    pub fn next_bookmark(&self, from_line_no: u64, direction: BookmarkDirection) -> Option<u64> {
+        self.bookmarks.next(from_line_no, direction)
+    }
+
+    pub fn minimap(&self, buckets: usize) -> Minimap {
+        if buckets == 0 || self.total_lines() == 0 {
+            return Minimap {
+                bookmarks: Vec::new(),
+                errors: Vec::new(),
+            };
+        }
+        let total = self.total_lines();
+        let bookmarks = self
+            .bookmark_source_lines()
+            .into_iter()
+            .filter_map(|line| bucket_for_zero_based((line - 1) as usize, total, buckets))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let errors = self
+            .error_lines
+            .iter()
+            .filter_map(|idx| bucket_for_zero_based(*idx as usize, total, buckets))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Minimap { bookmarks, errors }
     }
 
     pub fn set_filter(&mut self, spec: &FilterSpec) -> Result<usize, FilterError> {
@@ -135,9 +201,16 @@ impl Session {
         } else {
             view
         };
+        let bookmark_lines = if effective_view == RowsView::Bookmarks {
+            self.bookmark_source_lines()
+        } else {
+            Vec::new()
+        };
         let view_len = match effective_view {
             RowsView::All => self.indexer.offsets().len(),
             RowsView::Filtered => self.filtered.len(),
+            RowsView::Bookmarks => bookmark_lines.len(),
+            RowsView::Errors => self.error_lines.len(),
         };
         let end = start.saturating_add(count).min(view_len);
         let mut out = Vec::with_capacity(end.saturating_sub(start));
@@ -145,6 +218,8 @@ impl Session {
             let source_idx = match effective_view {
                 RowsView::All => view_idx,
                 RowsView::Filtered => self.filtered[view_idx] as usize,
+                RowsView::Bookmarks => (bookmark_lines[view_idx] - 1) as usize,
+                RowsView::Errors => self.error_lines[view_idx] as usize,
             };
             if let Some(row) = self.parse_source_row(source_idx, frontier) {
                 out.push(row);
@@ -167,11 +242,41 @@ impl Session {
         let text = String::from_utf8_lossy(&self.source.bytes()[start..end]);
         Some((source_idx as u64 + 1, parse_line(&text)))
     }
+
+    fn refresh_error_lines(&mut self) {
+        let frontier = self.indexed_frontier();
+        let total = self.indexer.offsets().len();
+        for idx in self.error_scan_lines..total {
+            if let Some((_, entry)) = self.parse_source_row(idx, frontier) {
+                if matches!(entry.level.as_str(), "E" | "F") {
+                    self.error_lines.push(idx as u64);
+                }
+            }
+        }
+        self.error_scan_lines = total;
+    }
+
+    fn bookmark_source_lines(&self) -> Vec<u64> {
+        let max = self.total_lines() as u64;
+        self.bookmarks
+            .list()
+            .into_iter()
+            .filter(|line| *line > 0 && *line <= max)
+            .collect()
+    }
+}
+
+fn bucket_for_zero_based(index: usize, total: usize, buckets: usize) -> Option<usize> {
+    if total == 0 || buckets == 0 || index >= total {
+        return None;
+    }
+    Some(((index * buckets) / total).min(buckets - 1))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bookmarks::BookmarkDirection;
     use crate::filter::{FilterField, FilterSpec};
     use crate::search::{SearchDirection, SearchSpec};
     use std::io::Write;
@@ -278,6 +383,66 @@ mod tests {
         assert_eq!(s.search_next(2, SearchDirection::Next), Some(3));
         assert_eq!(s.search_next(3, SearchDirection::Next), Some(2));
         assert_eq!(s.search_next(2, SearchDirection::Previous), Some(3));
+    }
+
+    #[test]
+    fn bookmarks_persist_and_bookmark_view_uses_original_lines() {
+        let f = temp_filter_log();
+        {
+            let mut s = Session::open(f.path()).unwrap();
+            s.index_all();
+            assert!(s.toggle_bookmark(2).unwrap());
+            assert!(s.toggle_bookmark(4).unwrap());
+            assert_eq!(s.list_bookmarks(), vec![2, 4]);
+
+            let rows = s.get_rows_for_view(RowsView::Bookmarks, 0, 10);
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].0, 2);
+            assert_eq!(rows[0].1.tag, "Network");
+            assert_eq!(rows[1].0, 4);
+            assert_eq!(rows[1].1.tag, "Payment");
+        }
+
+        let mut reopened = Session::open(f.path()).unwrap();
+        reopened.index_all();
+        assert_eq!(reopened.list_bookmarks(), vec![2, 4]);
+    }
+
+    #[test]
+    fn next_bookmark_wraps_one_based_lines() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.toggle_bookmark(2).unwrap();
+        s.toggle_bookmark(4).unwrap();
+
+        assert_eq!(s.next_bookmark(2, BookmarkDirection::Next), Some(4));
+        assert_eq!(s.next_bookmark(4, BookmarkDirection::Next), Some(2));
+        assert_eq!(s.next_bookmark(2, BookmarkDirection::Previous), Some(4));
+    }
+
+    #[test]
+    fn error_view_returns_error_and_fatal_rows() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+
+        let rows = s.get_rows_for_view(RowsView::Errors, 0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, 4);
+        assert_eq!(rows[0].1.level, "E");
+    }
+
+    #[test]
+    fn minimap_returns_bookmark_and_error_buckets() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.toggle_bookmark(2).unwrap();
+
+        let map = s.minimap(4);
+        assert_eq!(map.bookmarks, vec![1]);
+        assert_eq!(map.errors, vec![3]);
     }
 
     #[test]
