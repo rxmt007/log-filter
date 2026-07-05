@@ -197,6 +197,50 @@
   display: flex;
 }
 
+.lf-minimap {
+  width: 26px;
+  flex: none;
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  border-right: 1px solid var(--lf-border);
+  background: #eef0f3;
+  cursor: pointer;
+  padding: 0;
+}
+
+.lf-minimap-tick {
+  position: absolute;
+  height: 2px;
+  border-radius: 1px;
+  transform: translateY(-1px);
+}
+
+.lf-minimap-bookmark {
+  left: 2px;
+  width: 9px;
+  height: 3px;
+  background: var(--lf-accent);
+}
+
+.lf-minimap-error {
+  right: 2px;
+  width: 11px;
+  background: var(--lf-lv-e);
+}
+
+.lf-minimap-viewport {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  height: 8%;
+  min-height: 22px;
+  border: 1px solid var(--lf-accent);
+  border-radius: 2px;
+  background: rgba(59, 130, 246, 0.14);
+  pointer-events: none;
+}
+
 .lf-toolbar {
   flex: none;
   display: flex;
@@ -641,6 +685,17 @@
 
 .lf-bookmark-cell {
   padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--lf-accent);
+}
+
+.lf-bookmark-cell svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+  stroke: currentColor;
 }
 
 .lf-num {

@@ -6,6 +6,8 @@ export function StatusBar() {
   const view = useSession((s) => s.view);
   const hasFile = status.totalBytes > 0;
   const pct = hasFile ? Math.round((status.indexedBytes / status.totalBytes) * 100) : 0;
+  const viewLabel =
+    view === "filtered" ? "过滤视图" : view === "bookmarks" ? "书签视图" : view === "errors" ? "错误视图" : "全部视图";
 
   return (
     <div className="lf-statusbar">
@@ -24,7 +26,7 @@ export function StatusBar() {
           <span className="lf-status-fill" />
           <span className="lf-status-device">
             <i />
-            {view === "filtered" ? "过滤视图" : "全部视图"}
+            {viewLabel}
           </span>
         </>
       ) : (

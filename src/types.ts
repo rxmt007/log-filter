@@ -13,6 +13,8 @@ export interface Row {
 export interface Status {
   totalLines: number;
   filteredLines: number;
+  bookmarkLines: number;
+  errorLines: number;
   indexedBytes: number;
   totalBytes: number;
   indexing: boolean;
@@ -45,3 +47,10 @@ export interface SearchResult {
   count: number;
   firstLine: number | null;
 }
+
+export interface MinimapData {
+  bookmarks: number[];
+  errors: number[];
+}
+
+export type RowsView = "all" | "filtered" | "bookmarks" | "errors";

@@ -1,20 +1,23 @@
 import { create } from "zustand";
-import type { FilterSpec, SearchSpec, Status } from "@/types";
+import type { FilterSpec, RowsView, SearchSpec, Status } from "@/types";
 
 interface SessionState {
   status: Status;
   sessionId: number; // 每打开一个新文件自增,供表格清缓存
-  view: "all" | "filtered";
+  view: RowsView;
   filter: FilterSpec;
   filterRevision: number;
   search: SearchSpec;
   searchCount: number;
   currentSearchLine: number | null;
   selectedLine: number | null;
+  bookmarks: number[];
+  bookmarkRevision: number;
   setStatus: (s: Status) => void;
   beginSession: (s: Status) => void;
   setFilteredLines: (count: number) => void;
-  setView: (view: "all" | "filtered") => void;
+  setBookmarks: (bookmarks: number[]) => void;
+  setView: (view: RowsView) => void;
   setFilter: (patch: Partial<FilterSpec>) => void;
   setFilterField: (key: keyof Omit<FilterSpec, "levels">, patch: Partial<FilterSpec["pid"]>) => void;
   toggleLevel: (bit: number) => void;
@@ -50,6 +53,8 @@ export const DEFAULT_FILTER: FilterSpec = {
 const EMPTY: Status = {
   totalLines: 0,
   filteredLines: 0,
+  bookmarkLines: 0,
+  errorLines: 0,
   indexedBytes: 0,
   totalBytes: 0,
   indexing: false,
@@ -66,6 +71,8 @@ export const useSession = create<SessionState>()((set) => ({
   searchCount: 0,
   currentSearchLine: null,
   selectedLine: null,
+  bookmarks: [],
+  bookmarkRevision: 0,
   // 索引进度事件用它更新状态(不换 session)。
   setStatus: (status) =>
     set((s) => (status.generation >= s.status.generation ? { status } : {})),
@@ -78,9 +85,17 @@ export const useSession = create<SessionState>()((set) => ({
       searchCount: 0,
       currentSearchLine: null,
       selectedLine: null,
+      bookmarks: [],
+      bookmarkRevision: s.bookmarkRevision + 1,
     })),
   setFilteredLines: (count) =>
     set((s) => ({ status: { ...s.status, filteredLines: count } })),
+  setBookmarks: (bookmarks) =>
+    set((s) => ({
+      bookmarks,
+      bookmarkRevision: s.bookmarkRevision + 1,
+      status: { ...s.status, bookmarkLines: bookmarks.length },
+    })),
   setView: (view) => set({ view }),
   setFilter: (patch) =>
     set((s) => ({

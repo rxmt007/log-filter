@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { getRows } from "@/lib/ipc";
+import { Bookmark } from "lucide-react";
+import { getRows, listBookmarks, toggleBookmark } from "@/lib/ipc";
 import type { Row } from "@/types";
 import { useSession } from "@/store/session";
 
@@ -51,13 +52,20 @@ function highlightText(text: string, query: string, regex: boolean, caseSensitiv
 
 export function LogTable() {
   const status = useSession((s) => s.status);
-  const total = useSession((s) => (s.view === "filtered" ? s.status.filteredLines : s.status.totalLines));
+  const total = useSession((s) => {
+    if (s.view === "filtered") return s.status.filteredLines;
+    if (s.view === "bookmarks") return s.status.bookmarkLines;
+    if (s.view === "errors") return s.status.errorLines;
+    return s.status.totalLines;
+  });
   const view = useSession((s) => s.view);
   const sessionId = useSession((s) => s.sessionId);
+  const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const search = useSession((s) => s.search);
   const currentSearchLine = useSession((s) => s.currentSearchLine);
   const selectedLine = useSession((s) => s.selectedLine);
   const setSelectedLine = useSession((s) => s.setSelectedLine);
+  const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
   const cache = useRef<Map<number, Row>>(new Map());
   const filled = useRef<Map<number, number>>(new Map());
@@ -70,7 +78,7 @@ export function LogTable() {
     inflight.current.clear();
     parentRef.current?.scrollTo({ top: 0 });
     force((x) => x + 1);
-  }, [sessionId, view]);
+  }, [sessionId, view, bookmarkRevision]);
 
   const rv = useVirtualizer({
     count: total,
@@ -83,6 +91,11 @@ export function LogTable() {
     if (!currentSearchLine || view !== "all") return;
     rv.scrollToIndex(Math.max(0, currentSearchLine - 1), { align: "center" });
   }, [currentSearchLine, rv, view]);
+
+  useEffect(() => {
+    if (!selectedLine || view !== "all") return;
+    rv.scrollToIndex(Math.max(0, selectedLine - 1), { align: "center" });
+  }, [selectedLine, rv, view]);
 
   const items = rv.getVirtualItems();
 
@@ -116,8 +129,20 @@ export function LogTable() {
   const emptyText = useMemo(() => {
     if (!status.totalBytes) return "打开或拖入 logcat 文件后开始浏览";
     if (view === "filtered") return "当前过滤条件没有命中行";
+    if (view === "bookmarks") return "还没有书签";
+    if (view === "errors") return "当前日志没有错误或致命行";
     return "正在等待索引行";
   }, [status.totalBytes, view]);
+
+  const toggleRowBookmark = useCallback(
+    async (row: Row) => {
+      await toggleBookmark(row.lineNo);
+      const bookmarks = await listBookmarks();
+      setBookmarks(bookmarks);
+      force((x) => x + 1);
+    },
+    [setBookmarks],
+  );
 
   return (
     <div className="lf-table-shell">
@@ -141,6 +166,7 @@ export function LogTable() {
                   data-selected={selected || undefined}
                   key={vi.key}
                   onClick={() => row && setSelectedLine(row.lineNo)}
+                  onDoubleClick={() => row && toggleRowBookmark(row)}
                   style={{
                     gridTemplateColumns: COLS,
                     transform: `translateY(${vi.start}px)`,
@@ -148,7 +174,9 @@ export function LogTable() {
                 >
                   {row ? (
                     <>
-                      <span className="lf-bookmark-cell" />
+                      <span className="lf-bookmark-cell">
+                        {row.marked && <Bookmark />}
+                      </span>
                       <span className="lf-num">{row.lineNo}</span>
                       <span className="lf-meta">{row.date}</span>
                       <span className="lf-meta">{row.time}</span>

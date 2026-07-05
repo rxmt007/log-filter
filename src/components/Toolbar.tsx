@@ -89,7 +89,6 @@ export function Toolbar() {
     [currentSearchLine, searchCount, setCurrentSearchLine],
   );
 
-  const hasFiltered = status.filteredLines > 0 && status.filteredLines !== status.totalLines;
   const countLabel = search.query ? `${currentSearchLine ?? "-"} / ${searchCount}` : "0 / 0";
 
   return (
@@ -198,11 +197,35 @@ export function Toolbar() {
           <span>过滤条件</span>
           <button
             className="lf-view-toggle"
+            data-active={view === "all"}
+            type="button"
+            onClick={() => setView("all")}
+          >
+            全部
+          </button>
+          <button
+            className="lf-view-toggle"
             data-active={view === "filtered"}
             type="button"
-            onClick={() => setView(view === "filtered" ? "all" : "filtered")}
+            onClick={() => setView("filtered")}
           >
-            {view === "filtered" ? "过滤视图" : hasFiltered ? "全部视图" : "全部视图"}
+            过滤
+          </button>
+          <button
+            className="lf-view-toggle"
+            data-active={view === "bookmarks"}
+            type="button"
+            onClick={() => setView("bookmarks")}
+          >
+            书签
+          </button>
+          <button
+            className="lf-view-toggle"
+            data-active={view === "errors"}
+            type="button"
+            onClick={() => setView("errors")}
+          >
+            错误
           </button>
           <button
             className="lf-view-toggle"
