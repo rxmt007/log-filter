@@ -1,4 +1,7 @@
-use crate::dto::{FilterSpecDto, MinimapDto, Row, SearchResult, SearchSpecDto, Status};
+use crate::dto::{
+    AppConfigDto, ExportRequest, ExportSummaryDto, FilterSpecDto, MinimapDto, Row, SearchResult,
+    SearchSpecDto, SplitRequest, SplitSummaryDto, Status,
+};
 use crate::state::AppState;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -30,6 +33,16 @@ fn empty_status(generation: u64) -> Status {
         total_bytes: 0,
         indexing: false,
         generation,
+    }
+}
+
+fn rows_view_from_str(view: &str) -> Option<logcore::session::RowsView> {
+    match view {
+        "all" => Some(logcore::session::RowsView::All),
+        "filtered" => Some(logcore::session::RowsView::Filtered),
+        "bookmarks" => Some(logcore::session::RowsView::Bookmarks),
+        "errors" => Some(logcore::session::RowsView::Errors),
+        _ => None,
     }
 }
 
@@ -86,12 +99,8 @@ pub fn get_status(state: State<AppState>) -> Status {
 
 #[tauri::command]
 pub fn get_rows(view: String, start: usize, count: usize, state: State<AppState>) -> Vec<Row> {
-    let view = match view.as_str() {
-        "all" => logcore::session::RowsView::All,
-        "filtered" => logcore::session::RowsView::Filtered,
-        "bookmarks" => logcore::session::RowsView::Bookmarks,
-        "errors" => logcore::session::RowsView::Errors,
-        _ => return Vec::new(),
+    let Some(view) = rows_view_from_str(&view) else {
+        return Vec::new();
     };
     let count = count.min(MAX_ROWS);
     let guard = state.lock_session();
@@ -205,4 +214,74 @@ pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
         bookmarks: minimap.bookmarks,
         errors: minimap.errors,
     }
+}
+
+#[tauri::command]
+pub fn export_logs(
+    request: ExportRequest,
+    state: State<AppState>,
+) -> Result<ExportSummaryDto, String> {
+    if request.path.trim().is_empty() {
+        return Err("export path is required".to_string());
+    }
+    let output = PathBuf::from(&request.path);
+    let mut guard = state.lock_session();
+    let Some(session) = guard.as_mut() else {
+        return Err("open a log file before exporting".to_string());
+    };
+
+    let summary = if request.mode == "range" {
+        let start = request
+            .start_line
+            .ok_or_else(|| "range start line is required".to_string())?;
+        let end = request
+            .end_line
+            .ok_or_else(|| "range end line is required".to_string())?;
+        session.export_range(start, end, &output)
+    } else {
+        let view = request.view.as_deref().unwrap_or("all");
+        let view =
+            rows_view_from_str(view).ok_or_else(|| format!("unknown export view: {view}"))?;
+        session.export_view(view, &output)
+    }
+    .map_err(|err| err.to_string())?;
+
+    Ok(summary.into())
+}
+
+#[tauri::command]
+pub fn split_log_file(request: SplitRequest) -> Result<SplitSummaryDto, String> {
+    if request.path.trim().is_empty() {
+        return Err("source path is required".to_string());
+    }
+    if request.out_dir.trim().is_empty() {
+        return Err("output directory is required".to_string());
+    }
+    let mode = match request.mode.as_str() {
+        "bytes" => logcore::split::SplitMode::Bytes(request.value),
+        "lines" => logcore::split::SplitMode::Lines(request.value),
+        other => return Err(format!("unknown split mode: {other}")),
+    };
+    let summary = logcore::split::split_file(
+        &PathBuf::from(request.path),
+        &PathBuf::from(request.out_dir),
+        mode,
+    )
+    .map_err(|err| err.to_string())?;
+    Ok(summary.into())
+}
+
+#[tauri::command]
+pub fn get_config() -> Result<AppConfigDto, String> {
+    let path = logcore::config::default_config_path();
+    let config = logcore::config::load_config(&path).map_err(|err| err.to_string())?;
+    Ok(AppConfigDto::from_config(config, path))
+}
+
+#[tauri::command]
+pub fn set_config(config: AppConfigDto) -> Result<AppConfigDto, String> {
+    let path = logcore::config::default_config_path();
+    let config = logcore::config::AppConfig::try_from(config)?;
+    logcore::config::save_config(&path, &config).map_err(|err| err.to_string())?;
+    Ok(AppConfigDto::from_config(config, path))
 }

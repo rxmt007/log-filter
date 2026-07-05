@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// 传给前端的一行(camelCase 对齐 TS 类型)。
 #[derive(Serialize, Clone)]
@@ -103,4 +104,118 @@ pub struct SearchResult {
 pub struct MinimapDto {
     pub bookmarks: Vec<usize>,
     pub errors: Vec<usize>,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportRequest {
+    pub mode: String,
+    pub view: Option<String>,
+    pub start_line: Option<u64>,
+    pub end_line: Option<u64>,
+    pub path: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSummaryDto {
+    pub written_lines: usize,
+    pub written_bytes: u64,
+}
+
+impl From<logcore::export::ExportSummary> for ExportSummaryDto {
+    fn from(value: logcore::export::ExportSummary) -> Self {
+        Self {
+            written_lines: value.written_lines,
+            written_bytes: value.written_bytes,
+        }
+    }
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitRequest {
+    pub path: String,
+    pub out_dir: String,
+    pub mode: String,
+    pub value: usize,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitSummaryDto {
+    pub parts: Vec<String>,
+    pub total_bytes: u64,
+}
+
+impl From<logcore::split::SplitSummary> for SplitSummaryDto {
+    fn from(value: logcore::split::SplitSummary) -> Self {
+        Self {
+            parts: value
+                .parts
+                .into_iter()
+                .map(|path| path.to_string_lossy().to_string())
+                .collect(),
+            total_bytes: value.total_bytes,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AppConfigDto {
+    pub theme: String,
+    pub adb_path: Option<String>,
+    pub storage_dir: Option<String>,
+    pub encoding: String,
+    pub font_size: u16,
+    pub row_height: u16,
+    pub config_path: String,
+}
+
+impl AppConfigDto {
+    pub fn from_config(config: logcore::config::AppConfig, config_path: PathBuf) -> Self {
+        Self {
+            theme: match config.theme {
+                logcore::config::ThemeMode::Light => "light".to_string(),
+                logcore::config::ThemeMode::Dark => "dark".to_string(),
+            },
+            adb_path: config
+                .adb_path
+                .map(|path| path.to_string_lossy().to_string()),
+            storage_dir: config
+                .storage_dir
+                .map(|path| path.to_string_lossy().to_string()),
+            encoding: config.encoding,
+            font_size: config.font_size,
+            row_height: config.row_height,
+            config_path: config_path.to_string_lossy().to_string(),
+        }
+    }
+}
+
+impl TryFrom<AppConfigDto> for logcore::config::AppConfig {
+    type Error = String;
+
+    fn try_from(value: AppConfigDto) -> Result<Self, Self::Error> {
+        let theme = match value.theme.as_str() {
+            "dark" => logcore::config::ThemeMode::Dark,
+            "light" => logcore::config::ThemeMode::Light,
+            other => return Err(format!("unsupported theme: {other}")),
+        };
+        Ok(Self {
+            theme,
+            adb_path: value
+                .adb_path
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from),
+            storage_dir: value
+                .storage_dir
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from),
+            encoding: value.encoding,
+            font_size: value.font_size,
+            row_height: value.row_height,
+        })
+    }
 }
