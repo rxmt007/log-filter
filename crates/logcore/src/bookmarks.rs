@@ -85,7 +85,10 @@ impl BookmarkStore {
         }
         let text = fs::read_to_string(sidecar_path)?;
         let sidecar: BookmarkSidecar = toml::from_str(&text).map_err(|err| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("invalid bookmark TOML: {err}"))
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid bookmark TOML: {err}"),
+            )
         })?;
         Ok(Self::from_lines(sidecar.lines))
     }
