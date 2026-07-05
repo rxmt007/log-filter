@@ -1,9 +1,9 @@
-import { useEffect } from "react";
+import { type CSSProperties, useEffect } from "react";
 import { Toolbar } from "@/components/Toolbar";
 import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
 import { Minimap } from "@/components/Minimap";
-import { nextBookmark, onIndexProgress, setFilter } from "@/lib/ipc";
+import { getConfig, nextBookmark, onIndexProgress, setFilter } from "@/lib/ipc";
 import { useSession } from "@/store/session";
 
 export default function App() {
@@ -16,6 +16,15 @@ export default function App() {
   const selectedLine = useSession((s) => s.selectedLine);
   const setSelectedLine = useSession((s) => s.setSelectedLine);
   const setView = useSession((s) => s.setView);
+  const appConfig = useSession((s) => s.appConfig);
+  const setAppConfig = useSession((s) => s.setAppConfig);
+  const theme = useSession((s) => s.theme);
+
+  useEffect(() => {
+    getConfig()
+      .then(setAppConfig)
+      .catch((err) => console.error("get_config failed", err));
+  }, [setAppConfig]);
 
   useEffect(() => {
     const un = onIndexProgress(setStatus);
@@ -52,8 +61,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedLine, setSelectedLine, setView]);
 
+  const appStyle = {
+    "--lf-font-size": `${appConfig.fontSize}px`,
+    "--lf-row-height": `${appConfig.rowHeight}px`,
+  } as CSSProperties;
+
   return (
-    <div className="lf-app">
+    <div className={`lf-app lf-theme-${theme}`} style={appStyle}>
       <Toolbar />
       <div className="lf-main">
         <Minimap />

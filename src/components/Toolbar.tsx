@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ChevronDown,
@@ -8,14 +8,18 @@ import {
   Pause,
   Play,
   Search,
+  Settings,
   Split,
+  Moon,
+  Sun,
   Square,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { openFile, searchLogs, searchNext } from "@/lib/ipc";
+import { ExportDialog, SettingsDialog, SplitDialog } from "@/components/ToolDialogs";
+import { openFile, saveAppConfig, searchLogs, searchNext } from "@/lib/ipc";
 import { ALL_LEVELS, LEVEL_BITS, useSession } from "@/store/session";
-import type { FilterSpec } from "@/types";
+import type { FilterSpec, ThemeMode } from "@/types";
 
 const LEVELS = [
   ["V", LEVEL_BITS.V],
@@ -41,8 +45,13 @@ const FILTER_FIELDS: Array<{
 ];
 
 export function Toolbar() {
+  const [dialog, setDialog] = useState<"export" | "split" | "settings" | null>(null);
   const beginSession = useSession((s) => s.beginSession);
   const status = useSession((s) => s.status);
+  const appConfig = useSession((s) => s.appConfig);
+  const theme = useSession((s) => s.theme);
+  const setAppConfig = useSession((s) => s.setAppConfig);
+  const setTheme = useSession((s) => s.setTheme);
   const filter = useSession((s) => s.filter);
   const toggleLevel = useSession((s) => s.toggleLevel);
   const setFilterField = useSession((s) => s.setFilterField);
@@ -59,7 +68,19 @@ export function Toolbar() {
     const path = await open({ multiple: false, directory: false });
     if (typeof path === "string") {
       const st = await openFile(path);
-      beginSession(st);
+      beginSession(st, path);
+    }
+  };
+
+  const toggleTheme = async () => {
+    const nextTheme: ThemeMode = theme === "dark" ? "light" : "dark";
+    const nextConfig = { ...appConfig, theme: nextTheme };
+    setTheme(nextTheme);
+    try {
+      const saved = await saveAppConfig(nextConfig);
+      setAppConfig(saved);
+    } catch (err) {
+      console.error("save theme failed", err);
     }
   };
 
@@ -92,24 +113,25 @@ export function Toolbar() {
   const countLabel = search.query ? `${currentSearchLine ?? "-"} / ${searchCount}` : "0 / 0";
 
   return (
-    <div className="lf-toolbar">
-      <div className="lf-toolbar-row lf-toolbar-row-top">
-        <button className="lf-select-button" type="button">
-          <FolderOpen />
-          <span>来源:文件</span>
-          <ChevronDown />
-        </button>
-        <button className="lf-select-button lf-device" type="button">
-          <span className="lf-device-dot" />
-          <span>{status.totalBytes ? "本地日志文件" : "无设备"}</span>
-          <ChevronDown />
-        </button>
-        <button className="lf-select-button lf-command" type="button">
-          <span>命令</span>
-          <code>logcat -v threadtime</code>
-          <ChevronDown />
-        </button>
-      </div>
+    <>
+      <div className="lf-toolbar">
+        <div className="lf-toolbar-row lf-toolbar-row-top">
+          <button className="lf-select-button" type="button">
+            <FolderOpen />
+            <span>来源:文件</span>
+            <ChevronDown />
+          </button>
+          <button className="lf-select-button lf-device" type="button">
+            <span className="lf-device-dot" />
+            <span>{status.totalBytes ? "本地日志文件" : "无设备"}</span>
+            <ChevronDown />
+          </button>
+          <button className="lf-select-button lf-command" type="button">
+            <span>命令</span>
+            <code>logcat -v threadtime</code>
+            <ChevronDown />
+          </button>
+        </div>
 
       <div className="lf-toolbar-row lf-toolbar-row-actions">
         <Button size="icon-sm" className="lf-run-button" title="运行">
@@ -128,11 +150,17 @@ export function Toolbar() {
         <Button size="icon-sm" variant="ghost" title="打开" onClick={onOpen}>
           <FolderOpen />
         </Button>
-        <Button size="icon-sm" variant="ghost" title="导出">
+        <Button size="icon-sm" variant="ghost" title="导出" onClick={() => setDialog("export")}>
           <Download />
         </Button>
-        <Button size="icon-sm" variant="ghost" title="切分">
+        <Button size="icon-sm" variant="ghost" title="切分" onClick={() => setDialog("split")}>
           <Split />
+        </Button>
+        <Button size="icon-sm" variant="ghost" title="设置" onClick={() => setDialog("settings")}>
+          <Settings />
+        </Button>
+        <Button size="icon-sm" variant="ghost" title="主题" onClick={toggleTheme}>
+          {theme === "dark" ? <Sun /> : <Moon />}
         </Button>
         <span className="lf-separator" />
         <span className="lf-level-label">级别</span>
@@ -282,6 +310,10 @@ export function Toolbar() {
           })}
         </div>
       </div>
-    </div>
+      </div>
+      {dialog === "export" && <ExportDialog onClose={() => setDialog(null)} />}
+      {dialog === "split" && <SplitDialog onClose={() => setDialog(null)} />}
+      {dialog === "settings" && <SettingsDialog onClose={() => setDialog(null)} />}
+    </>
   );
 }

@@ -7,7 +7,6 @@ import type { Row } from "@/types";
 import { useSession } from "@/store/session";
 
 const WINDOW = 200;
-const ROW_H = 20;
 const COLS = "22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr)";
 const HEADERS = ["", "行号", "日期", "时间", "级别", "PID", "TID", "Tag", "消息"];
 
@@ -61,6 +60,7 @@ export function LogTable() {
   const view = useSession((s) => s.view);
   const sessionId = useSession((s) => s.sessionId);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
+  const rowHeight = useSession((s) => s.appConfig.rowHeight);
   const search = useSession((s) => s.search);
   const currentSearchLine = useSession((s) => s.currentSearchLine);
   const selectedLine = useSession((s) => s.selectedLine);
@@ -83,7 +83,7 @@ export function LogTable() {
   const rv = useVirtualizer({
     count: total,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_H,
+    estimateSize: () => rowHeight,
     overscan: 24,
   });
 
@@ -169,6 +169,7 @@ export function LogTable() {
                   onDoubleClick={() => row && toggleRowBookmark(row)}
                   style={{
                     gridTemplateColumns: COLS,
+                    height: rowHeight,
                     transform: `translateY(${vi.start}px)`,
                   }}
                 >

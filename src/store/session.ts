@@ -1,10 +1,13 @@
 import { create } from "zustand";
-import type { FilterSpec, RowsView, SearchSpec, Status } from "@/types";
+import type { AppConfig, FilterSpec, RowsView, SearchSpec, Status, ThemeMode } from "@/types";
 
 interface SessionState {
   status: Status;
   sessionId: number; // 每打开一个新文件自增,供表格清缓存
+  sourcePath: string | null;
   view: RowsView;
+  appConfig: AppConfig;
+  theme: ThemeMode;
   filter: FilterSpec;
   filterRevision: number;
   search: SearchSpec;
@@ -14,7 +17,10 @@ interface SessionState {
   bookmarks: number[];
   bookmarkRevision: number;
   setStatus: (s: Status) => void;
-  beginSession: (s: Status) => void;
+  beginSession: (s: Status, sourcePath?: string) => void;
+  setSourcePath: (sourcePath: string | null) => void;
+  setAppConfig: (config: AppConfig) => void;
+  setTheme: (theme: ThemeMode) => void;
   setFilteredLines: (count: number) => void;
   setBookmarks: (bookmarks: number[]) => void;
   setView: (view: RowsView) => void;
@@ -61,10 +67,23 @@ const EMPTY: Status = {
   generation: 0,
 };
 
+export const DEFAULT_CONFIG: AppConfig = {
+  theme: "light",
+  adbPath: null,
+  storageDir: null,
+  encoding: "UTF-8",
+  fontSize: 13,
+  rowHeight: 20,
+  configPath: "",
+};
+
 export const useSession = create<SessionState>()((set) => ({
   status: EMPTY,
   sessionId: 0,
+  sourcePath: null,
   view: "all",
+  appConfig: DEFAULT_CONFIG,
+  theme: DEFAULT_CONFIG.theme,
   filter: DEFAULT_FILTER,
   filterRevision: 0,
   search: { query: "", regex: false, caseSensitive: false },
@@ -77,16 +96,24 @@ export const useSession = create<SessionState>()((set) => ({
   setStatus: (status) =>
     set((s) => (status.generation >= s.status.generation ? { status } : {})),
   // 打开新文件时用它:更新状态并自增 sessionId。
-  beginSession: (status) =>
+  beginSession: (status, sourcePath) =>
     set((s) => ({
       status,
       sessionId: s.sessionId + 1,
+      sourcePath: sourcePath ?? s.sourcePath,
       view: "all",
       searchCount: 0,
       currentSearchLine: null,
       selectedLine: null,
       bookmarks: [],
       bookmarkRevision: s.bookmarkRevision + 1,
+    })),
+  setSourcePath: (sourcePath) => set({ sourcePath }),
+  setAppConfig: (appConfig) => set({ appConfig, theme: appConfig.theme }),
+  setTheme: (theme) =>
+    set((s) => ({
+      theme,
+      appConfig: { ...s.appConfig, theme },
     })),
   setFilteredLines: (count) =>
     set((s) => ({ status: { ...s.status, filteredLines: count } })),

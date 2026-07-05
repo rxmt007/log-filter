@@ -54,3 +54,40 @@ export interface MinimapData {
 }
 
 export type RowsView = "all" | "filtered" | "bookmarks" | "errors";
+
+export type ThemeMode = "light" | "dark";
+
+export interface AppConfig {
+  theme: ThemeMode;
+  adbPath: string | null;
+  storageDir: string | null;
+  encoding: string;
+  fontSize: number;
+  rowHeight: number;
+  configPath: string;
+}
+
+export interface ExportRequest {
+  mode: "view" | "range";
+  view?: RowsView;
+  startLine?: number;
+  endLine?: number;
+  path: string;
+}
+
+export interface ExportSummary {
+  writtenLines: number;
+  writtenBytes: number;
+}
+
+export interface SplitRequest {
+  path: string;
+  outDir: string;
+  mode: "bytes" | "lines";
+  value: number;
+}
+
+export interface SplitSummary {
+  parts: string[];
+  totalBytes: number;
+}
