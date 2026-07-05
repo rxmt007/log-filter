@@ -4,7 +4,22 @@ import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
 import { Minimap } from "@/components/Minimap";
 import { getConfig, nextBookmark, onIndexProgress, setFilter } from "@/lib/ipc";
-import { useSession } from "@/store/session";
+import { ALL_LEVELS, useSession } from "@/store/session";
+import type { FilterSpec } from "@/types";
+
+function isFilterSpecActive(filter: FilterSpec) {
+  const fieldActive = (field: FilterSpec["pid"]) =>
+    field.enabled && field.pattern.trim().length > 0;
+  return (
+    filter.levels !== ALL_LEVELS ||
+    fieldActive(filter.pid) ||
+    fieldActive(filter.tid) ||
+    fieldActive(filter.tagInclude) ||
+    fieldActive(filter.tagExclude) ||
+    fieldActive(filter.wordInclude) ||
+    fieldActive(filter.wordExclude)
+  );
+}
 
 export default function App() {
   const setStatus = useSession((s) => s.setStatus);
@@ -36,14 +51,25 @@ export default function App() {
   useEffect(() => {
     if (!hasFile) return;
     const timer = window.setTimeout(() => {
+      const requestedRevision = filterRevision;
+      const filterActive = isFilterSpecActive(filter);
       setFilter(filter)
-        .then(setFilteredLines)
+        .then((count) => {
+          if (useSession.getState().filterRevision !== requestedRevision) return;
+          setFilteredLines(count);
+          const currentView = useSession.getState().view;
+          if (filterActive && currentView !== "bookmarks" && currentView !== "errors") {
+            setView("filtered");
+          } else if (!filterActive && currentView === "filtered") {
+            setView("all");
+          }
+        })
         .catch((err) => {
           console.error("set_filter failed", err);
         });
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [filter, filterRevision, hasFile, sessionId, setFilteredLines]);
+  }, [filter, filterRevision, hasFile, sessionId, setFilteredLines, setView]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

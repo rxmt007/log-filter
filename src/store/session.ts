@@ -10,6 +10,7 @@ interface SessionState {
   theme: ThemeMode;
   filter: FilterSpec;
   filterRevision: number;
+  filterResultRevision: number;
   search: SearchSpec;
   searchCount: number;
   currentSearchLine: number | null;
@@ -86,6 +87,7 @@ export const useSession = create<SessionState>()((set) => ({
   theme: DEFAULT_CONFIG.theme,
   filter: DEFAULT_FILTER,
   filterRevision: 0,
+  filterResultRevision: 0,
   search: { query: "", regex: false, caseSensitive: false },
   searchCount: 0,
   currentSearchLine: null,
@@ -116,7 +118,10 @@ export const useSession = create<SessionState>()((set) => ({
       appConfig: { ...s.appConfig, theme },
     })),
   setFilteredLines: (count) =>
-    set((s) => ({ status: { ...s.status, filteredLines: count } })),
+    set((s) => ({
+      status: { ...s.status, filteredLines: count },
+      filterResultRevision: s.filterResultRevision + 1,
+    })),
   setBookmarks: (bookmarks) =>
     set((s) => ({
       bookmarks,

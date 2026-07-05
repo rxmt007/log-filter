@@ -60,6 +60,7 @@ export function LogTable() {
   const view = useSession((s) => s.view);
   const sessionId = useSession((s) => s.sessionId);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
+  const filterResultRevision = useSession((s) => s.filterResultRevision);
   const rowHeight = useSession((s) => s.appConfig.rowHeight);
   const search = useSession((s) => s.search);
   const currentSearchLine = useSession((s) => s.currentSearchLine);
@@ -78,7 +79,7 @@ export function LogTable() {
     inflight.current.clear();
     parentRef.current?.scrollTo({ top: 0 });
     force((x) => x + 1);
-  }, [sessionId, view, bookmarkRevision]);
+  }, [sessionId, view, bookmarkRevision, filterResultRevision]);
 
   const rv = useVirtualizer({
     count: total,
