@@ -28,6 +28,12 @@ pub struct Minimap {
     pub errors: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResultTarget {
+    pub line_no: u64,
+    pub result_index: usize,
+}
+
 pub struct Session {
     source_path: PathBuf,
     source: MmapSource,
@@ -115,13 +121,112 @@ impl Session {
         self.bookmarks.next(from_line_no, direction)
     }
 
+    pub fn next_bookmark_in_current_result(
+        &self,
+        from_line_no: u64,
+        direction: BookmarkDirection,
+    ) -> Option<ResultTarget> {
+        let mut targets = self
+            .bookmark_source_lines()
+            .into_iter()
+            .filter_map(|line_no| {
+                let source_idx = line_no.saturating_sub(1);
+                self.current_result_index_for_source_idx(source_idx)
+                    .map(|result_index| ResultTarget {
+                        line_no,
+                        result_index,
+                    })
+            })
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return None;
+        }
+        targets.sort_by_key(|target| target.result_index);
+        let from_source_idx = from_line_no.saturating_sub(1);
+        let from_result_idx = self
+            .current_result_index_for_source_idx(from_source_idx)
+            .unwrap_or(0);
+        match direction {
+            BookmarkDirection::Next => {
+                let idx = targets
+                    .iter()
+                    .position(|target| target.result_index > from_result_idx)
+                    .unwrap_or(0);
+                Some(targets[idx])
+            }
+            BookmarkDirection::Previous => {
+                let idx = targets
+                    .iter()
+                    .rposition(|target| target.result_index < from_result_idx)
+                    .unwrap_or(targets.len() - 1);
+                Some(targets[idx])
+            }
+        }
+    }
+
     pub fn minimap(&self, buckets: usize) -> Minimap {
-        if buckets == 0 || self.total_lines() == 0 {
+        let total = self.current_result_len();
+        if buckets == 0 || total == 0 {
             return Minimap {
                 bookmarks: Vec::new(),
                 errors: Vec::new(),
             };
         }
+        if !self.filter_active {
+            return self.source_minimap(buckets);
+        }
+
+        let mut bookmarks = BTreeSet::new();
+        let mut errors = BTreeSet::new();
+        for result_idx in 0..total {
+            let Some(source_idx) = self.current_result_source_idx(result_idx) else {
+                continue;
+            };
+            let Some(bucket) = bucket_for_zero_based(result_idx, total, buckets) else {
+                continue;
+            };
+            if self.is_bookmarked(source_idx as u64 + 1) {
+                bookmarks.insert(bucket);
+            }
+            if self.source_idx_is_error(source_idx as u64) {
+                errors.insert(bucket);
+            }
+        }
+        Minimap {
+            bookmarks: bookmarks.into_iter().collect(),
+            errors: errors.into_iter().collect(),
+        }
+    }
+
+    fn current_result_len(&self) -> usize {
+        self.filtered_count()
+    }
+
+    fn current_result_source_idx(&self, result_idx: usize) -> Option<usize> {
+        if self.filter_active {
+            self.filtered.get(result_idx).map(|idx| *idx as usize)
+        } else if result_idx < self.indexer.offsets().len() {
+            Some(result_idx)
+        } else {
+            None
+        }
+    }
+
+    fn current_result_index_for_source_idx(&self, source_idx: u64) -> Option<usize> {
+        if self.filter_active {
+            self.filtered.binary_search(&source_idx).ok()
+        } else if (source_idx as usize) < self.indexer.offsets().len() {
+            Some(source_idx as usize)
+        } else {
+            None
+        }
+    }
+
+    fn source_idx_is_error(&self, source_idx: u64) -> bool {
+        self.error_lines.binary_search(&source_idx).is_ok()
+    }
+
+    fn source_minimap(&self, buckets: usize) -> Minimap {
         let total = self.total_lines();
         let bookmarks = self
             .bookmark_source_lines()
@@ -436,7 +541,7 @@ fn bucket_for_zero_based(index: usize, total: usize, buckets: usize) -> Option<u
 mod tests {
     use super::*;
     use crate::bookmarks::BookmarkDirection;
-    use crate::filter::{FilterField, FilterSpec};
+    use crate::filter::{FilterField, FilterSpec, LevelMask};
     use crate::search::{SearchDirection, SearchSpec};
     use std::io::Write;
 
@@ -528,6 +633,77 @@ mod tests {
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].0, 1);
         assert_eq!(rows[3].0, 4);
+    }
+
+    #[test]
+    fn marked_only_filter_intersects_with_levels() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.toggle_bookmark(4).unwrap();
+
+        let count = s
+            .set_filter(&FilterSpec {
+                levels: LevelMask::from_levels(&["E", "F"]),
+                marked_only: true,
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(count, 1);
+        let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, 4);
+        assert_eq!(rows[0].1.level, "E");
+    }
+
+    #[test]
+    fn next_bookmark_uses_current_result_order() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.toggle_bookmark(2).unwrap();
+        s.toggle_bookmark(4).unwrap();
+        s.set_filter(&FilterSpec {
+            levels: LevelMask::from_levels(&["E", "F"]),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let target = s
+            .next_bookmark_in_current_result(1, BookmarkDirection::Next)
+            .unwrap();
+        assert_eq!(target.line_no, 4);
+        assert_eq!(target.result_index, 0);
+    }
+
+    #[test]
+    fn minimap_uses_current_filtered_result_buckets() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for i in 0..4 {
+            writeln!(
+                f,
+                "04-20 12:06:02.{i:03}   300   330 E Payment: error {i}"
+            )
+            .unwrap();
+        }
+        for i in 4..8 {
+            writeln!(
+                f,
+                "04-20 12:06:02.{i:03}   300   330 I Payment: info {i}"
+            )
+            .unwrap();
+        }
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.set_filter(&FilterSpec {
+            levels: LevelMask::from_levels(&["E", "F"]),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let map = s.minimap(4);
+        assert_eq!(map.errors, vec![0, 1, 2, 3]);
     }
 
     #[test]
