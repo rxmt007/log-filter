@@ -1943,7 +1943,9 @@ dependencies = [
  "memchr",
  "memmap2",
  "regex",
+ "serde",
  "tempfile",
+ "toml 0.8.2",
 ]
 
 [[package]]
