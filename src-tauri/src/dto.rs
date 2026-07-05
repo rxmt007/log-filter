@@ -216,6 +216,7 @@ impl TryFrom<AppConfigDto> for logcore::config::AppConfig {
             encoding: value.encoding,
             font_size: value.font_size,
             row_height: value.row_height,
-        })
+        }
+        .normalized())
     }
 }

@@ -34,24 +34,36 @@ impl Default for AppConfig {
     }
 }
 
+impl AppConfig {
+    pub fn normalized(mut self) -> Self {
+        if self.encoding.trim().is_empty() {
+            self.encoding = "UTF-8".to_string();
+        }
+        self.font_size = self.font_size.clamp(10, 20);
+        self.row_height = self.row_height.clamp(16, 32);
+        self
+    }
+}
+
 pub fn load_config(path: &Path) -> io::Result<AppConfig> {
     if !path.exists() {
         return Ok(AppConfig::default());
     }
     let text = fs::read_to_string(path)?;
-    toml::from_str(&text).map_err(|err| {
+    let config: AppConfig = toml::from_str(&text).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("invalid config TOML: {err}"),
         )
-    })
+    })?;
+    Ok(config.normalized())
 }
 
 pub fn save_config(path: &Path, config: &AppConfig) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let text = toml::to_string_pretty(config)
+    let text = toml::to_string_pretty(&config.clone().normalized())
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
     fs::write(path, text)
 }
@@ -133,6 +145,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing.toml");
         assert_eq!(load_config(&path).unwrap(), AppConfig::default());
+    }
+
+    #[test]
+    fn invalid_numeric_settings_are_normalized_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+theme = "dark"
+encoding = ""
+font_size = 0
+row_height = 200
+"#,
+        )
+        .unwrap();
+
+        let config = load_config(&path).unwrap();
+        assert_eq!(config.theme, ThemeMode::Dark);
+        assert_eq!(config.encoding, "UTF-8");
+        assert_eq!(config.font_size, 10);
+        assert_eq!(config.row_height, 32);
     }
 
     #[test]
