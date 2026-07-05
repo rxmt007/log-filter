@@ -6,6 +6,7 @@ import type {
   ExportSummary,
   FilterSpec,
   MinimapData,
+  NavigationTarget,
   Row,
   RowsView,
   SearchResult,
@@ -36,7 +37,7 @@ export const toggleBookmark = (lineNo: number) => invoke<boolean>("toggle_bookma
 export const listBookmarks = () => invoke<number[]>("list_bookmarks");
 
 export const nextBookmark = (fromLineNo: number, direction: "next" | "previous") =>
-  invoke<number | null>("next_bookmark", { fromLineNo, direction });
+  invoke<NavigationTarget | null>("next_bookmark", { fromLineNo, direction });
 
 export const getMinimap = (buckets: number) => invoke<MinimapData>("get_minimap", { buckets });
 

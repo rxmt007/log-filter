@@ -1,6 +1,6 @@
 use crate::dto::{
-    AppConfigDto, ExportRequest, ExportSummaryDto, FilterSpecDto, MinimapDto, Row, SearchResult,
-    SearchSpecDto, SplitRequest, SplitSummaryDto, Status,
+    AppConfigDto, ExportRequest, ExportSummaryDto, FilterSpecDto, MinimapDto, NavigationTargetDto,
+    Row, SearchResult, SearchSpecDto, SplitRequest, SplitSummaryDto, Status,
 };
 use crate::state::AppState;
 use std::path::PathBuf;
@@ -189,7 +189,11 @@ pub fn list_bookmarks(state: State<AppState>) -> Vec<u64> {
 }
 
 #[tauri::command]
-pub fn next_bookmark(from_line_no: u64, direction: String, state: State<AppState>) -> Option<u64> {
+pub fn next_bookmark(
+    from_line_no: u64,
+    direction: String,
+    state: State<AppState>,
+) -> Option<NavigationTargetDto> {
     let direction = match direction.as_str() {
         "previous" => logcore::bookmarks::BookmarkDirection::Previous,
         _ => logcore::bookmarks::BookmarkDirection::Next,
@@ -197,7 +201,8 @@ pub fn next_bookmark(from_line_no: u64, direction: String, state: State<AppState
     let guard = state.lock_session();
     guard
         .as_ref()
-        .and_then(|session| session.next_bookmark(from_line_no, direction))
+        .and_then(|session| session.next_bookmark_in_current_result(from_line_no, direction))
+        .map(Into::into)
 }
 
 #[tauri::command]

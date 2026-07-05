@@ -52,6 +52,7 @@ impl From<FilterFieldDto> for logcore::filter::FilterField {
 #[serde(rename_all = "camelCase")]
 pub struct FilterSpecDto {
     pub levels: u8,
+    pub marked_only: bool,
     pub pid: FilterFieldDto,
     pub tid: FilterFieldDto,
     pub tag_include: FilterFieldDto,
@@ -64,6 +65,7 @@ impl From<FilterSpecDto> for logcore::filter::FilterSpec {
     fn from(value: FilterSpecDto) -> Self {
         Self {
             levels: logcore::filter::LevelMask::from_bits(value.levels),
+            marked_only: value.marked_only,
             pid: value.pid.into(),
             tid: value.tid.into(),
             tag_include: value.tag_include.into(),
@@ -104,6 +106,22 @@ pub struct SearchResult {
 pub struct MinimapDto {
     pub bookmarks: Vec<usize>,
     pub errors: Vec<usize>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationTargetDto {
+    pub line_no: u64,
+    pub result_index: usize,
+}
+
+impl From<logcore::session::ResultTarget> for NavigationTargetDto {
+    fn from(value: logcore::session::ResultTarget) -> Self {
+        Self {
+            line_no: value.line_no,
+            result_index: value.result_index,
+        }
+    }
 }
 
 #[derive(Deserialize, Clone)]

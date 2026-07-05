@@ -29,6 +29,7 @@ export interface FilterField {
 
 export interface FilterSpec {
   levels: number;
+  markedOnly: boolean;
   pid: FilterField;
   tid: FilterField;
   tagInclude: FilterField;
@@ -51,6 +52,11 @@ export interface SearchResult {
 export interface MinimapData {
   bookmarks: number[];
   errors: number[];
+}
+
+export interface NavigationTarget {
+  lineNo: number;
+  resultIndex: number;
 }
 
 export type RowsView = "all" | "filtered" | "bookmarks" | "errors";
