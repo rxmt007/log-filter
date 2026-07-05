@@ -64,3 +64,4 @@ LogFilter/          原 Java 工程(只读参考,已忽略,将删除)
 
 - UI 当前样式为**规划基线**,后续会再做一版交互设计。
 - §4 索引步长、`get_rows` count 上限、DOM/canvas 渲染等细节,在实施中按实际功能 / 性能确定与调整。
+- 后续新增或更新 `docs/superpowers/specs/`、`docs/superpowers/plans/`、实施总结等项目文档时,默认使用中文;引用外部 API / 代码标识可保留英文原文。
