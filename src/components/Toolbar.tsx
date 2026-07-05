@@ -31,7 +31,7 @@ const LEVELS = [
 ] as const;
 
 const FILTER_FIELDS: Array<{
-  key: keyof Omit<FilterSpec, "levels">;
+  key: keyof Omit<FilterSpec, "levels" | "markedOnly">;
   label: string;
   badge?: "+" | "-";
   placeholder: string;

@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import type { AppConfig, FilterSpec, RowsView, SearchSpec, Status, ThemeMode } from "@/types";
 
+type FilterFieldKey =
+  | "pid"
+  | "tid"
+  | "tagInclude"
+  | "tagExclude"
+  | "wordInclude"
+  | "wordExclude";
+
 interface SessionState {
   status: Status;
   sessionId: number; // 每打开一个新文件自增,供表格清缓存
@@ -15,6 +23,7 @@ interface SessionState {
   searchCount: number;
   currentSearchLine: number | null;
   selectedLine: number | null;
+  selectedResultIndex: number | null;
   bookmarks: number[];
   bookmarkRevision: number;
   setStatus: (s: Status) => void;
@@ -26,12 +35,14 @@ interface SessionState {
   setBookmarks: (bookmarks: number[]) => void;
   setView: (view: RowsView) => void;
   setFilter: (patch: Partial<FilterSpec>) => void;
-  setFilterField: (key: keyof Omit<FilterSpec, "levels">, patch: Partial<FilterSpec["pid"]>) => void;
+  setFilterField: (key: FilterFieldKey, patch: Partial<FilterSpec["pid"]>) => void;
   toggleLevel: (bit: number) => void;
   setSearch: (patch: Partial<SearchSpec>) => void;
   setSearchResult: (count: number, firstLine: number | null) => void;
   setCurrentSearchLine: (line: number | null) => void;
   setSelectedLine: (line: number | null) => void;
+  setSelectedResultIndex: (index: number | null) => void;
+  selectRow: (line: number | null, resultIndex: number | null) => void;
 }
 
 export const LEVEL_BITS = {
@@ -49,6 +60,7 @@ const field = (enabled = false, pattern = "", regex = false) => ({ enabled, patt
 
 export const DEFAULT_FILTER: FilterSpec = {
   levels: ALL_LEVELS,
+  markedOnly: false,
   pid: field(),
   tid: field(),
   tagInclude: field(),
@@ -92,6 +104,7 @@ export const useSession = create<SessionState>()((set) => ({
   searchCount: 0,
   currentSearchLine: null,
   selectedLine: null,
+  selectedResultIndex: null,
   bookmarks: [],
   bookmarkRevision: 0,
   // 索引进度事件用它更新状态(不换 session)。
@@ -107,6 +120,7 @@ export const useSession = create<SessionState>()((set) => ({
       searchCount: 0,
       currentSearchLine: null,
       selectedLine: null,
+      selectedResultIndex: null,
       bookmarks: [],
       bookmarkRevision: s.bookmarkRevision + 1,
     })),
@@ -150,7 +164,15 @@ export const useSession = create<SessionState>()((set) => ({
   setSearch: (patch) =>
     set((s) => ({ search: { ...s.search, ...patch } })),
   setSearchResult: (count, firstLine) =>
-    set({ searchCount: count, currentSearchLine: firstLine, selectedLine: firstLine }),
-  setCurrentSearchLine: (line) => set({ currentSearchLine: line, selectedLine: line }),
+    set({
+      searchCount: count,
+      currentSearchLine: firstLine,
+      selectedLine: firstLine,
+      selectedResultIndex: null,
+    }),
+  setCurrentSearchLine: (line) =>
+    set({ currentSearchLine: line, selectedLine: line, selectedResultIndex: null }),
   setSelectedLine: (line) => set({ selectedLine: line }),
+  setSelectedResultIndex: (selectedResultIndex) => set({ selectedResultIndex }),
+  selectRow: (selectedLine, selectedResultIndex) => set({ selectedLine, selectedResultIndex }),
 }));

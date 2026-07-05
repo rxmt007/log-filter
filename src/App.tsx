@@ -4,22 +4,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
 import { Minimap } from "@/components/Minimap";
 import { getConfig, nextBookmark, onIndexProgress, setFilter } from "@/lib/ipc";
-import { ALL_LEVELS, useSession } from "@/store/session";
-import type { FilterSpec } from "@/types";
-
-function isFilterSpecActive(filter: FilterSpec) {
-  const fieldActive = (field: FilterSpec["pid"]) =>
-    field.enabled && field.pattern.trim().length > 0;
-  return (
-    filter.levels !== ALL_LEVELS ||
-    fieldActive(filter.pid) ||
-    fieldActive(filter.tid) ||
-    fieldActive(filter.tagInclude) ||
-    fieldActive(filter.tagExclude) ||
-    fieldActive(filter.wordInclude) ||
-    fieldActive(filter.wordExclude)
-  );
-}
+import { useSession } from "@/store/session";
 
 export default function App() {
   const setStatus = useSession((s) => s.setStatus);
@@ -28,12 +13,13 @@ export default function App() {
   const sessionId = useSession((s) => s.sessionId);
   const hasFile = useSession((s) => s.status.totalBytes > 0);
   const setFilteredLines = useSession((s) => s.setFilteredLines);
+  const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const selectedLine = useSession((s) => s.selectedLine);
-  const setSelectedLine = useSession((s) => s.setSelectedLine);
-  const setView = useSession((s) => s.setView);
+  const selectRow = useSession((s) => s.selectRow);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const theme = useSession((s) => s.theme);
+  const bookmarkSensitiveRevision = filter.markedOnly ? bookmarkRevision : 0;
 
   useEffect(() => {
     getConfig()
@@ -52,40 +38,39 @@ export default function App() {
     if (!hasFile) return;
     const timer = window.setTimeout(() => {
       const requestedRevision = filterRevision;
-      const filterActive = isFilterSpecActive(filter);
       setFilter(filter)
         .then((count) => {
           if (useSession.getState().filterRevision !== requestedRevision) return;
           setFilteredLines(count);
-          const currentView = useSession.getState().view;
-          if (filterActive && currentView !== "bookmarks" && currentView !== "errors") {
-            setView("filtered");
-          } else if (!filterActive && currentView === "filtered") {
-            setView("all");
-          }
         })
         .catch((err) => {
           console.error("set_filter failed", err);
         });
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [filter, filterRevision, hasFile, sessionId, setFilteredLines, setView]);
+  }, [
+    filter,
+    filterRevision,
+    bookmarkSensitiveRevision,
+    hasFile,
+    sessionId,
+    setFilteredLines,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "F2" && event.key !== "F3") return;
       event.preventDefault();
       const direction = event.key === "F2" ? "previous" : "next";
-      nextBookmark(selectedLine ?? 1, direction).then((line) => {
-        if (line) {
-          setView("all");
-          setSelectedLine(line);
+      nextBookmark(selectedLine ?? 1, direction).then((target) => {
+        if (target) {
+          selectRow(target.lineNo, target.resultIndex);
         }
       });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedLine, setSelectedLine, setView]);
+  }, [selectedLine, selectRow]);
 
   const appStyle = {
     "--lf-font-size": `${appConfig.fontSize}px`,

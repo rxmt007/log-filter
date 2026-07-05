@@ -4,7 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Bookmark } from "lucide-react";
 import { getRows, listBookmarks, toggleBookmark } from "@/lib/ipc";
 import type { Row } from "@/types";
-import { useSession } from "@/store/session";
+import { ALL_LEVELS, useSession } from "@/store/session";
 
 const WINDOW = 200;
 const COLS = "22px 58px 50px 98px 40px 54px 54px 154px minmax(0,1fr)";
@@ -49,15 +49,14 @@ function highlightText(text: string, query: string, regex: boolean, caseSensitiv
   }
 }
 
+function fieldActive(field: { enabled: boolean; pattern: string }) {
+  return field.enabled && field.pattern.trim().length > 0;
+}
+
 export function LogTable() {
   const status = useSession((s) => s.status);
-  const total = useSession((s) => {
-    if (s.view === "filtered") return s.status.filteredLines;
-    if (s.view === "bookmarks") return s.status.bookmarkLines;
-    if (s.view === "errors") return s.status.errorLines;
-    return s.status.totalLines;
-  });
-  const view = useSession((s) => s.view);
+  const total = useSession((s) => s.status.filteredLines);
+  const filter = useSession((s) => s.filter);
   const sessionId = useSession((s) => s.sessionId);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const filterResultRevision = useSession((s) => s.filterResultRevision);
@@ -65,13 +64,24 @@ export function LogTable() {
   const search = useSession((s) => s.search);
   const currentSearchLine = useSession((s) => s.currentSearchLine);
   const selectedLine = useSession((s) => s.selectedLine);
+  const selectedResultIndex = useSession((s) => s.selectedResultIndex);
   const setSelectedLine = useSession((s) => s.setSelectedLine);
+  const setSelectedResultIndex = useSession((s) => s.setSelectedResultIndex);
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
   const cache = useRef<Map<number, Row>>(new Map());
   const filled = useRef<Map<number, number>>(new Map());
   const inflight = useRef<Set<number>>(new Set());
   const [, force] = useState(0);
+  const defaultResultOrder =
+    filter.levels === ALL_LEVELS &&
+    !filter.markedOnly &&
+    !fieldActive(filter.pid) &&
+    !fieldActive(filter.tid) &&
+    !fieldActive(filter.tagInclude) &&
+    !fieldActive(filter.tagExclude) &&
+    !fieldActive(filter.wordInclude) &&
+    !fieldActive(filter.wordExclude);
 
   useEffect(() => {
     cache.current.clear();
@@ -79,7 +89,7 @@ export function LogTable() {
     inflight.current.clear();
     parentRef.current?.scrollTo({ top: 0 });
     force((x) => x + 1);
-  }, [sessionId, view, bookmarkRevision, filterResultRevision]);
+  }, [sessionId, bookmarkRevision, filterResultRevision]);
 
   const rv = useVirtualizer({
     count: total,
@@ -89,14 +99,14 @@ export function LogTable() {
   });
 
   useEffect(() => {
-    if (!currentSearchLine || view !== "all") return;
+    if (!currentSearchLine || selectedResultIndex != null || !defaultResultOrder) return;
     rv.scrollToIndex(Math.max(0, currentSearchLine - 1), { align: "center" });
-  }, [currentSearchLine, rv, view]);
+  }, [currentSearchLine, defaultResultOrder, rv, selectedResultIndex]);
 
   useEffect(() => {
-    if (!selectedLine || view !== "all") return;
-    rv.scrollToIndex(Math.max(0, selectedLine - 1), { align: "center" });
-  }, [selectedLine, rv, view]);
+    if (selectedResultIndex == null) return;
+    rv.scrollToIndex(Math.max(0, selectedResultIndex), { align: "center" });
+  }, [selectedResultIndex, rv]);
 
   const items = rv.getVirtualItems();
 
@@ -108,7 +118,7 @@ export function LogTable() {
       if (inflight.current.has(block)) return;
       inflight.current.add(block);
       try {
-        const rows = await getRows(view, block, WINDOW);
+        const rows = await getRows("filtered", block, WINDOW);
         rows.forEach((r, i) => cache.current.set(block + i, r));
         filled.current.set(block, rows.length);
         force((x) => x + 1);
@@ -116,7 +126,7 @@ export function LogTable() {
         inflight.current.delete(block);
       }
     },
-    [view],
+    [],
   );
 
   useEffect(() => {
@@ -129,11 +139,8 @@ export function LogTable() {
 
   const emptyText = useMemo(() => {
     if (!status.totalBytes) return "打开或拖入 logcat 文件后开始浏览";
-    if (view === "filtered") return "当前过滤条件没有命中行";
-    if (view === "bookmarks") return "还没有书签";
-    if (view === "errors") return "当前日志没有错误或致命行";
-    return "正在等待索引行";
-  }, [status.totalBytes, view]);
+    return "当前结果没有命中行";
+  }, [status.totalBytes]);
 
   const toggleRowBookmark = useCallback(
     async (row: Row) => {
@@ -159,14 +166,21 @@ export function LogTable() {
           <div style={{ height: rv.getTotalSize(), position: "relative" }}>
             {items.map((vi) => {
               const row = cache.current.get(vi.index);
-              const selected = row?.lineNo === selectedLine || row?.lineNo === currentSearchLine;
+              const selected =
+                vi.index === selectedResultIndex ||
+                row?.lineNo === selectedLine ||
+                row?.lineNo === currentSearchLine;
               return (
                 <div
                   className="lf-table-row"
                   data-level={row?.level || ""}
                   data-selected={selected || undefined}
                   key={vi.key}
-                  onClick={() => row && setSelectedLine(row.lineNo)}
+                  onClick={() => {
+                    if (!row) return;
+                    setSelectedLine(row.lineNo);
+                    setSelectedResultIndex(vi.index);
+                  }}
                   onDoubleClick={() => row && toggleRowBookmark(row)}
                   style={{
                     gridTemplateColumns: COLS,
