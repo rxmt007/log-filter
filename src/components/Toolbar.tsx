@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  Bookmark,
   ChevronDown,
   ChevronUp,
   Download,
@@ -53,10 +54,9 @@ export function Toolbar() {
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setTheme = useSession((s) => s.setTheme);
   const filter = useSession((s) => s.filter);
+  const setFilter = useSession((s) => s.setFilter);
   const toggleLevel = useSession((s) => s.toggleLevel);
   const setFilterField = useSession((s) => s.setFilterField);
-  const view = useSession((s) => s.view);
-  const setView = useSession((s) => s.setView);
   const search = useSession((s) => s.search);
   const setSearch = useSession((s) => s.setSearch);
   const searchCount = useSession((s) => s.searchCount);
@@ -165,6 +165,14 @@ export function Toolbar() {
         <span className="lf-separator" />
         <span className="lf-level-label">级别</span>
         <div className="lf-level-chips">
+          <button
+            className="lf-level-chip lf-level-all"
+            data-active={filter.levels === ALL_LEVELS}
+            type="button"
+            onClick={() => setFilter({ levels: ALL_LEVELS })}
+          >
+            <b>全部</b>
+          </button>
           {LEVELS.map(([level, bit]) => {
             const on = (filter.levels & bit) !== 0;
             return (
@@ -181,6 +189,15 @@ export function Toolbar() {
               </button>
             );
           })}
+          <button
+            className="lf-level-chip lf-marked-only-chip"
+            data-active={filter.markedOnly}
+            type="button"
+            onClick={() => setFilter({ markedOnly: !filter.markedOnly })}
+          >
+            <Bookmark />
+            <b>仅标记</b>
+          </button>
         </div>
         <div className="lf-spacer" />
         <div className="lf-search-box">
@@ -223,46 +240,6 @@ export function Toolbar() {
       <div className="lf-filter-bar">
         <div className="lf-filter-title">
           <span>过滤条件</span>
-          <button
-            className="lf-view-toggle"
-            data-active={view === "all"}
-            type="button"
-            onClick={() => setView("all")}
-          >
-            全部
-          </button>
-          <button
-            className="lf-view-toggle"
-            data-active={view === "filtered"}
-            type="button"
-            onClick={() => setView("filtered")}
-          >
-            过滤
-          </button>
-          <button
-            className="lf-view-toggle"
-            data-active={view === "bookmarks"}
-            type="button"
-            onClick={() => setView("bookmarks")}
-          >
-            书签
-          </button>
-          <button
-            className="lf-view-toggle"
-            data-active={view === "errors"}
-            type="button"
-            onClick={() => setView("errors")}
-          >
-            错误
-          </button>
-          <button
-            className="lf-view-toggle"
-            data-active={filter.levels === ALL_LEVELS}
-            type="button"
-            onClick={() => useSession.getState().setFilter({ levels: ALL_LEVELS })}
-          >
-            全级别
-          </button>
         </div>
         <div className="lf-filter-fields">
           {FILTER_FIELDS.map((field) => {

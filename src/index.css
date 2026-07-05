@@ -418,6 +418,44 @@
   line-height: 1;
 }
 
+.lf-level-all {
+  margin-right: 5px;
+  padding: 0 10px;
+  color: var(--lf-text-dim);
+}
+
+.lf-level-all b,
+.lf-marked-only-chip b {
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.lf-level-all[data-active="true"] {
+  border-color: var(--lf-accent);
+  background: var(--lf-accent-soft);
+  color: var(--lf-accent-strong);
+}
+
+.lf-marked-only-chip {
+  margin-left: 5px;
+  padding: 0 10px;
+  color: var(--lf-accent-strong);
+}
+
+.lf-marked-only-chip svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+}
+
+.lf-marked-only-chip[data-active="true"] {
+  border-color: var(--lf-accent);
+  background: var(--lf-accent-soft);
+  color: var(--lf-accent-strong);
+}
+
 .lf-level-chip[data-level="V"] { color: var(--lf-lv-v); }
 .lf-level-chip[data-level="D"] { color: var(--lf-lv-d); }
 .lf-level-chip[data-level="I"] { color: var(--lf-lv-i); }
