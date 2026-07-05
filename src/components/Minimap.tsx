@@ -5,14 +5,38 @@ import type { MinimapData } from "@/types";
 
 const BUCKETS = 180;
 
+function bucketRanges(buckets: number[]) {
+  const sorted = [...new Set(buckets)].sort((a, b) => a - b);
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const bucket of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && bucket <= last.end + 1) {
+      last.end = bucket;
+    } else {
+      ranges.push({ start: bucket, end: bucket });
+    }
+  }
+  return ranges;
+}
+
+function rangeStyle(range: { start: number; end: number }) {
+  const start = (range.start / BUCKETS) * 100;
+  const end = ((range.end + 1) / BUCKETS) * 100;
+  return {
+    top: `${start}%`,
+    height: `${Math.max(0.7, end - start)}%`,
+  };
+}
+
 export function Minimap() {
   const status = useSession((s) => s.status);
   const sessionId = useSession((s) => s.sessionId);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
-  const selectedLine = useSession((s) => s.selectedLine);
-  const setSelectedLine = useSession((s) => s.setSelectedLine);
-  const setView = useSession((s) => s.setView);
+  const filterResultRevision = useSession((s) => s.filterResultRevision);
+  const selectedResultIndex = useSession((s) => s.selectedResultIndex);
+  const setSelectedResultIndex = useSession((s) => s.setSelectedResultIndex);
   const [data, setData] = useState<MinimapData>({ bookmarks: [], errors: [] });
+  const resultCount = status.filteredLines;
 
   useEffect(() => {
     if (!status.totalBytes) {
@@ -22,10 +46,17 @@ export function Minimap() {
     getMinimap(BUCKETS)
       .then(setData)
       .catch(() => setData({ bookmarks: [], errors: [] }));
-  }, [status.totalBytes, status.totalLines, status.errorLines, sessionId, bookmarkRevision]);
+  }, [
+    status.totalBytes,
+    status.filteredLines,
+    status.errorLines,
+    sessionId,
+    bookmarkRevision,
+    filterResultRevision,
+  ]);
 
-  const viewportTop = status.totalLines
-    ? Math.min(92, Math.max(0, (((selectedLine ?? 1) - 1) / status.totalLines) * 100))
+  const viewportTop = resultCount
+    ? Math.min(92, Math.max(0, ((selectedResultIndex ?? 0) / resultCount) * 100))
     : 0;
 
   return (
@@ -34,26 +65,28 @@ export function Minimap() {
       type="button"
       aria-label="日志小地图"
       onClick={(event) => {
-        if (!status.totalLines) return;
+        if (!resultCount) return;
         const rect = event.currentTarget.getBoundingClientRect();
         const frac = (event.clientY - rect.top) / rect.height;
-        const line = Math.min(status.totalLines, Math.max(1, Math.floor(frac * status.totalLines) + 1));
-        setView("all");
-        setSelectedLine(line);
+        const resultIndex = Math.min(
+          resultCount - 1,
+          Math.max(0, Math.floor(frac * resultCount)),
+        );
+        setSelectedResultIndex(resultIndex);
       }}
     >
-      {data.bookmarks.map((bucket) => (
+      {bucketRanges(data.bookmarks).map((range) => (
         <span
-          className="lf-minimap-tick lf-minimap-bookmark"
-          key={`b-${bucket}`}
-          style={{ top: `${(bucket / Math.max(1, BUCKETS - 1)) * 100}%` }}
+          className="lf-minimap-segment lf-minimap-bookmark"
+          key={`b-${range.start}-${range.end}`}
+          style={rangeStyle(range)}
         />
       ))}
-      {data.errors.map((bucket) => (
+      {bucketRanges(data.errors).map((range) => (
         <span
-          className="lf-minimap-tick lf-minimap-error"
-          key={`e-${bucket}`}
-          style={{ top: `${(bucket / Math.max(1, BUCKETS - 1)) * 100}%` }}
+          className="lf-minimap-segment lf-minimap-error"
+          key={`e-${range.start}-${range.end}`}
+          style={rangeStyle(range)}
         />
       ))}
       <span className="lf-minimap-viewport" style={{ top: `${viewportTop}%` }} />

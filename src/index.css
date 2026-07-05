@@ -269,6 +269,23 @@
   background: var(--lf-lv-e);
 }
 
+.lf-minimap-segment {
+  position: absolute;
+  border-radius: 2px;
+}
+
+.lf-minimap-segment.lf-minimap-bookmark {
+  left: 2px;
+  width: 9px;
+  background: var(--lf-accent);
+}
+
+.lf-minimap-segment.lf-minimap-error {
+  right: 2px;
+  width: 11px;
+  background: var(--lf-lv-e);
+}
+
 .lf-minimap-viewport {
   position: absolute;
   left: 1px;
