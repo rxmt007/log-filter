@@ -1,4 +1,5 @@
 use crate::bookmarks::{BookmarkDirection, BookmarkStore};
+use crate::export::{write_raw_line, ExportSummary};
 use crate::filter::{FilterError, FilterMatcher, FilterSpec};
 use crate::indexer::{line_span, Indexer};
 use crate::mmap_source::MmapSource;
@@ -8,6 +9,7 @@ use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
 };
 use std::collections::BTreeSet;
+use std::fs::{self, File};
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -136,6 +138,89 @@ impl Session {
         Minimap { bookmarks, errors }
     }
 
+    pub fn export_view(&self, view: RowsView, output: &Path) -> io::Result<ExportSummary> {
+        let mut writer = self.create_export_file(output)?;
+        let frontier = self.indexed_frontier();
+        let effective_view = if view == RowsView::Filtered && !self.filter_active {
+            RowsView::All
+        } else {
+            view
+        };
+        let mut summary = ExportSummary {
+            written_lines: 0,
+            written_bytes: 0,
+        };
+
+        match effective_view {
+            RowsView::All => {
+                for source_idx in 0..self.indexer.offsets().len() {
+                    self.write_source_line(source_idx, frontier, &mut writer, &mut summary)?;
+                }
+            }
+            RowsView::Filtered => {
+                for source_idx in &self.filtered {
+                    self.write_source_line(
+                        *source_idx as usize,
+                        frontier,
+                        &mut writer,
+                        &mut summary,
+                    )?;
+                }
+            }
+            RowsView::Bookmarks => {
+                for line_no in self.bookmark_source_lines() {
+                    self.write_source_line(
+                        (line_no - 1) as usize,
+                        frontier,
+                        &mut writer,
+                        &mut summary,
+                    )?;
+                }
+            }
+            RowsView::Errors => {
+                for source_idx in &self.error_lines {
+                    self.write_source_line(
+                        *source_idx as usize,
+                        frontier,
+                        &mut writer,
+                        &mut summary,
+                    )?;
+                }
+            }
+        }
+
+        Ok(summary)
+    }
+
+    pub fn export_range(
+        &self,
+        start_line_no: u64,
+        end_line_no: u64,
+        output: &Path,
+    ) -> io::Result<ExportSummary> {
+        if start_line_no == 0 || end_line_no < start_line_no {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "export range must be 1-based and ascending",
+            ));
+        }
+        let mut writer = self.create_export_file(output)?;
+        let frontier = self.indexed_frontier();
+        let total = self.indexer.offsets().len() as u64;
+        let start = start_line_no.min(total + 1);
+        let end = end_line_no.min(total);
+        let mut summary = ExportSummary {
+            written_lines: 0,
+            written_bytes: 0,
+        };
+
+        for line_no in start..=end {
+            self.write_source_line((line_no - 1) as usize, frontier, &mut writer, &mut summary)?;
+        }
+
+        Ok(summary)
+    }
+
     pub fn set_filter(&mut self, spec: &FilterSpec) -> Result<usize, FilterError> {
         if !spec.is_active() {
             self.filtered.clear();
@@ -249,6 +334,52 @@ impl Session {
         let (start, end) = line_span(offsets, source_idx, frontier)?;
         let text = String::from_utf8_lossy(&self.source.bytes()[start..end]);
         Some((source_idx as u64 + 1, parse_line(&text)))
+    }
+
+    fn source_line_bytes(&self, source_idx: usize, frontier: usize) -> Option<&[u8]> {
+        let offsets = self.indexer.offsets();
+        let (start, end) = line_span(offsets, source_idx, frontier)?;
+        Some(&self.source.bytes()[start..end])
+    }
+
+    fn write_source_line(
+        &self,
+        source_idx: usize,
+        frontier: usize,
+        writer: &mut File,
+        summary: &mut ExportSummary,
+    ) -> io::Result<()> {
+        if let Some(bytes) = self.source_line_bytes(source_idx, frontier) {
+            summary.written_bytes += write_raw_line(writer, bytes)?;
+            summary.written_lines += 1;
+        }
+        Ok(())
+    }
+
+    fn create_export_file(&self, output: &Path) -> io::Result<File> {
+        if self.is_source_path(output) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "export output must differ from source file",
+            ));
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        File::create(output)
+    }
+
+    fn is_source_path(&self, output: &Path) -> bool {
+        if output == self.source_path {
+            return true;
+        }
+        match (
+            fs::canonicalize(output),
+            fs::canonicalize(&self.source_path),
+        ) {
+            (Ok(out), Ok(source)) => out == source,
+            _ => false,
+        }
     }
 
     fn refresh_error_lines(&mut self) {
@@ -451,6 +582,44 @@ mod tests {
         let map = s.minimap(4);
         assert_eq!(map.bookmarks, vec![1]);
         assert_eq!(map.errors, vec![3]);
+    }
+
+    #[test]
+    fn export_range_writes_original_source_lines() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let out = tempfile::NamedTempFile::new().unwrap();
+
+        let summary = s.export_range(2, 3, out.path()).unwrap();
+
+        assert_eq!(summary.written_lines, 2);
+        let text = std::fs::read_to_string(out.path()).unwrap();
+        assert_eq!(
+            text,
+            "04-20 12:06:02.225   200   220 I Network: GET /home ok\n04-20 12:06:02.325   200   221 W Network: slow request\n"
+        );
+    }
+
+    #[test]
+    fn export_filtered_view_writes_only_matching_source_lines() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.set_filter(&FilterSpec {
+            tag_include: FilterField::plain(true, "Network"),
+            ..Default::default()
+        })
+        .unwrap();
+        let out = tempfile::NamedTempFile::new().unwrap();
+
+        let summary = s.export_view(RowsView::Filtered, out.path()).unwrap();
+
+        assert_eq!(summary.written_lines, 2);
+        let text = std::fs::read_to_string(out.path()).unwrap();
+        assert!(text.contains("GET /home ok"));
+        assert!(text.contains("slow request"));
+        assert!(!text.contains("SocketTimeoutException"));
     }
 
     #[test]
