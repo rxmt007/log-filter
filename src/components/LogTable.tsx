@@ -38,6 +38,11 @@ interface ResizeState {
   startWidth: number;
 }
 
+interface FilledBlock {
+  count: number;
+  epoch: number;
+}
+
 const TABLE_COLUMNS: ColumnDefinition[] = [
   { id: "bookmark", label: "", className: "lf-bookmark-cell", width: 24, min: 22, max: 36 },
   { id: "lineNo", label: "行号", className: "lf-num", width: 58, min: 52, max: 120 },
@@ -169,7 +174,7 @@ export function LogTable() {
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
   const cache = useRef<Map<number, Row>>(new Map());
-  const filled = useRef<Map<number, number>>(new Map());
+  const filledEpoch = useRef<Map<number, FilledBlock>>(new Map());
   const inflight = useRef<Set<number>>(new Set());
   const cacheEpoch = useRef(0);
   const appConfigRef = useRef(appConfig);
@@ -290,7 +295,7 @@ export function LogTable() {
   useEffect(() => {
     cacheEpoch.current += 1;
     cache.current.clear();
-    filled.current.clear();
+    filledEpoch.current.clear();
     inflight.current.clear();
     parentRef.current?.scrollTo({ top: 0 });
     setViewportResultIndex(0);
@@ -299,8 +304,6 @@ export function LogTable() {
 
   useEffect(() => {
     cacheEpoch.current += 1;
-    cache.current.clear();
-    filled.current.clear();
     inflight.current.clear();
     force((x) => x + 1);
   }, [filterResultRevision]);
@@ -334,7 +337,8 @@ export function LogTable() {
     async (block: number, totalNow: number) => {
       const want = Math.min(WINDOW, totalNow - block);
       if (want <= 0) return;
-      if ((filled.current.get(block) ?? 0) >= want) return;
+      const filled = filledEpoch.current.get(block);
+      if (filled?.epoch === cacheEpoch.current && filled.count >= want) return;
       if (inflight.current.has(block)) return;
       const epoch = cacheEpoch.current;
       inflight.current.add(block);
@@ -342,7 +346,10 @@ export function LogTable() {
         const rows = await getRows("filtered", block, WINDOW);
         if (cacheEpoch.current !== epoch) return;
         rows.forEach((r, i) => cache.current.set(block + i, r));
-        filled.current.set(block, rows.length);
+        for (let i = rows.length; i < want; i += 1) {
+          cache.current.delete(block + i);
+        }
+        filledEpoch.current.set(block, { count: rows.length, epoch });
         force((x) => x + 1);
       } finally {
         inflight.current.delete(block);
@@ -357,7 +364,7 @@ export function LogTable() {
     const last = items[items.length - 1].index;
     ensureBlock(Math.floor(first / WINDOW) * WINDOW, total);
     ensureBlock(Math.floor(last / WINDOW) * WINDOW, total);
-  }, [items, ensureBlock, total]);
+  }, [filterResultRevision, items, ensureBlock, total]);
 
   const emptyText = useMemo(() => {
     if (!status.totalBytes) return "打开或拖入 logcat 文件后开始浏览";

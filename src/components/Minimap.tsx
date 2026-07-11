@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 import { getMinimap } from "@/lib/ipc";
 import { useSession } from "@/store/session";
 import type { MinimapData } from "@/types";
@@ -65,10 +65,14 @@ export function Minimap() {
   const sessionId = useSession((s) => s.sessionId);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const filterResultRevision = useSession((s) => s.filterResultRevision);
+  const markedOnly = useSession((s) => s.filter.markedOnly);
+  const rowHeight = useSession((s) => s.appConfig.rowHeight);
   const viewportResultIndex = useSession((s) => s.viewportResultIndex);
   const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
   const [data, setData] = useState<MinimapData>({ bookmarks: [], errors: [] });
   const [dragging, setDragging] = useState(false);
+  const [trackHeight, setTrackHeight] = useState(0);
+  const trackRef = useRef<HTMLButtonElement>(null);
   const draggingRef = useRef(false);
   const grabOffsetRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -139,12 +143,27 @@ export function Minimap() {
     };
   }, []);
 
+  useLayoutEffect(() => {
+    const element = trackRef.current;
+    if (!element) return;
+    const updateHeight = () => setTrackHeight(element.getBoundingClientRect().height);
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const viewportTop = resultCount
     ? Math.min(92, Math.max(0, (viewportResultIndex / Math.max(1, resultCount - 1)) * 92))
     : 0;
+  const markedOnlyContinuous = markedOnly && resultCount > 0;
+  const contentHeightPercent = trackHeight
+    ? Math.min(100, Math.max(0.7, ((resultCount * rowHeight) / trackHeight) * 100))
+    : 100;
 
   return (
     <button
+      ref={trackRef}
       className="lf-minimap"
       data-dragging={dragging || undefined}
       type="button"
@@ -181,13 +200,20 @@ export function Minimap() {
       onPointerCancel={endDrag}
       onLostPointerCapture={endDrag}
     >
-      {bucketRanges(data.bookmarks).map((range) => (
+      {markedOnlyContinuous ? (
         <span
-          className="lf-minimap-segment lf-minimap-bookmark"
-          key={`b-${range.start}-${range.end}`}
-          style={rangeStyle(range)}
+          className="lf-minimap-segment lf-minimap-bookmark lf-minimap-continuous"
+          style={{ top: "0%", height: `${contentHeightPercent}%` }}
         />
-      ))}
+      ) : (
+        bucketRanges(data.bookmarks).map((range) => (
+          <span
+            className="lf-minimap-segment lf-minimap-bookmark"
+            key={`b-${range.start}-${range.end}`}
+            style={rangeStyle(range)}
+          />
+        ))
+      )}
       {bucketRanges(data.errors).map((range) => (
         <span
           className="lf-minimap-segment lf-minimap-error"

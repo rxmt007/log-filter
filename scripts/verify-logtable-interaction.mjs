@@ -13,14 +13,30 @@ function expectContract(name, condition) {
   }
 }
 
+function effectBodyWithDependency(source, dependency) {
+  const dependencyEnd = source.indexOf(`}, [${dependency}]);`);
+  if (dependencyEnd < 0) return "";
+  const effectStart = source.lastIndexOf("useEffect(() => {", dependencyEnd);
+  if (effectStart < 0) return "";
+  return source.slice(effectStart, dependencyEnd);
+}
+
+const filterRevisionEffect = effectBodyWithDependency(files.table, "filterResultRevision");
+
 expectContract("store has ScrollRequest", files.session.includes("ScrollRequest"));
 expectContract("store tracks viewportResultIndex", files.session.includes("viewportResultIndex"));
 expectContract("store exposes navigateToResultIndex", files.session.includes("navigateToResultIndex"));
 expectContract("minimap stores grab offset", files.minimap.includes("grabOffsetRef"));
 expectContract("minimap uses viewportResultIndex", files.minimap.includes("viewportResultIndex"));
+expectContract("minimap renders marked-only as continuous content", files.minimap.includes("markedOnlyContinuous"));
 expectContract("table consumes scrollRequest", files.table.includes("scrollRequest"));
 expectContract("table updates viewportResultIndex", files.table.includes("setViewportResultIndex"));
 expectContract("table no longer resets on bookmarkRevision", !files.table.includes("bookmarkRevision"));
+expectContract("table tracks cache freshness by epoch", files.table.includes("filledEpoch"));
+expectContract(
+  "filter refresh keeps visible cache while refetching",
+  !!filterRevisionEffect && !filterRevisionEffect.includes("cache.current.clear()"),
+);
 expectContract(
   "table row click does not call navigate",
   !/onClick=\{[\s\S]*?navigateToResultIndex/.test(files.table),
