@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { getMinimap } from "@/lib/ipc";
 import { useSession } from "@/store/session";
 import type { MinimapData } from "@/types";
@@ -28,6 +28,16 @@ function rangeStyle(range: { start: number; end: number }) {
   };
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function pointerToResultIndex(clientY: number, rect: DOMRect, resultCount: number) {
+  if (resultCount <= 0 || rect.height <= 0) return null;
+  const frac = clamp((clientY - rect.top) / rect.height, 0, 1);
+  return clamp(Math.floor(frac * resultCount), 0, resultCount - 1);
+}
+
 export function Minimap() {
   const status = useSession((s) => s.status);
   const sessionId = useSession((s) => s.sessionId);
@@ -36,7 +46,44 @@ export function Minimap() {
   const selectedResultIndex = useSession((s) => s.selectedResultIndex);
   const setSelectedResultIndex = useSession((s) => s.setSelectedResultIndex);
   const [data, setData] = useState<MinimapData>({ bookmarks: [], errors: [] });
+  const [dragging, setDragging] = useState(false);
+  const draggingRef = useRef(false);
+  const frameRef = useRef<number | null>(null);
+  const pendingIndexRef = useRef<number | null>(null);
   const resultCount = status.filteredLines;
+
+  const scheduleResultIndex = useCallback(
+    (index: number) => {
+      pendingIndexRef.current = index;
+      if (frameRef.current != null) return;
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null;
+        const next = pendingIndexRef.current;
+        pendingIndexRef.current = null;
+        if (next != null) {
+          setSelectedResultIndex(next);
+        }
+      });
+    },
+    [setSelectedResultIndex],
+  );
+
+  const updateFromPointer = useCallback(
+    (event: PointerEvent<HTMLElement>) => {
+      if (!resultCount) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const resultIndex = pointerToResultIndex(event.clientY, rect, resultCount);
+      if (resultIndex != null) {
+        scheduleResultIndex(resultIndex);
+      }
+    },
+    [resultCount, scheduleResultIndex],
+  );
+
+  const endDrag = useCallback(() => {
+    draggingRef.current = false;
+    setDragging(false);
+  }, []);
 
   useEffect(() => {
     if (!status.totalBytes) {
@@ -55,6 +102,14 @@ export function Minimap() {
     filterResultRevision,
   ]);
 
+  useEffect(() => {
+    return () => {
+      if (frameRef.current != null) {
+        window.cancelAnimationFrame(frameRef.current);
+      }
+    };
+  }, []);
+
   const viewportTop = resultCount
     ? Math.min(92, Math.max(0, ((selectedResultIndex ?? 0) / resultCount) * 100))
     : 0;
@@ -62,18 +117,32 @@ export function Minimap() {
   return (
     <button
       className="lf-minimap"
+      data-dragging={dragging || undefined}
       type="button"
       aria-label="日志小地图"
-      onClick={(event) => {
+      onPointerDown={(event) => {
         if (!resultCount) return;
-        const rect = event.currentTarget.getBoundingClientRect();
-        const frac = (event.clientY - rect.top) / rect.height;
-        const resultIndex = Math.min(
-          resultCount - 1,
-          Math.max(0, Math.floor(frac * resultCount)),
-        );
-        setSelectedResultIndex(resultIndex);
+        event.preventDefault();
+        draggingRef.current = true;
+        setDragging(true);
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Pointer capture can fail if the pointer was already canceled; dragging still ends safely.
+        }
+        updateFromPointer(event);
       }}
+      onPointerMove={(event) => {
+        if (!draggingRef.current) return;
+        event.preventDefault();
+        updateFromPointer(event);
+      }}
+      onPointerUp={(event) => {
+        updateFromPointer(event);
+        endDrag();
+      }}
+      onPointerCancel={endDrag}
+      onLostPointerCapture={endDrag}
     >
       {bucketRanges(data.bookmarks).map((range) => (
         <span
