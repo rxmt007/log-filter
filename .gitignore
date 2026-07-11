@@ -35,3 +35,7 @@ desktop.ini
 # ── 日志 / 临时 ──
 *.log
 .superpowers/
+
+# ── 本地参考素材 / 附件(不入库)──
+.local-reference-assets/
+refs/
