@@ -1,5 +1,13 @@
 import { create } from "zustand";
-import type { AppConfig, FilterSpec, RowsView, SearchSpec, Status, ThemeMode } from "@/types";
+import type {
+  AppConfig,
+  FilterSpec,
+  RowsView,
+  ScrollRequest,
+  SearchSpec,
+  Status,
+  ThemeMode,
+} from "@/types";
 
 type FilterFieldKey =
   | "pid"
@@ -24,6 +32,8 @@ interface SessionState {
   currentSearchLine: number | null;
   selectedLine: number | null;
   selectedResultIndex: number | null;
+  viewportResultIndex: number;
+  scrollRequest: ScrollRequest | null;
   bookmarks: number[];
   bookmarkRevision: number;
   setStatus: (s: Status) => void;
@@ -42,7 +52,16 @@ interface SessionState {
   setCurrentSearchLine: (line: number | null) => void;
   setSelectedLine: (line: number | null) => void;
   setSelectedResultIndex: (index: number | null) => void;
+  setViewportResultIndex: (index: number) => void;
   selectRow: (line: number | null, resultIndex: number | null) => void;
+  navigateToResultIndex: (
+    index: number,
+    options?: {
+      lineNo?: number | null;
+      align?: ScrollRequest["align"];
+      reason?: ScrollRequest["reason"];
+    },
+  ) => void;
 }
 
 export const LEVEL_BITS = {
@@ -118,6 +137,8 @@ export const useSession = create<SessionState>()((set) => ({
   currentSearchLine: null,
   selectedLine: null,
   selectedResultIndex: null,
+  viewportResultIndex: 0,
+  scrollRequest: null,
   bookmarks: [],
   bookmarkRevision: 0,
   // 索引进度事件用它更新状态(不换 session)。
@@ -134,6 +155,8 @@ export const useSession = create<SessionState>()((set) => ({
       currentSearchLine: null,
       selectedLine: null,
       selectedResultIndex: null,
+      viewportResultIndex: 0,
+      scrollRequest: null,
       bookmarks: [],
       bookmarkRevision: s.bookmarkRevision + 1,
     })),
@@ -146,7 +169,11 @@ export const useSession = create<SessionState>()((set) => ({
     })),
   setFilteredLines: (count) =>
     set((s) => ({
-      selectedResultIndex: null,
+      selectedResultIndex:
+        s.selectedResultIndex != null && s.selectedResultIndex < count
+          ? s.selectedResultIndex
+          : null,
+      viewportResultIndex: count > 0 ? Math.min(s.viewportResultIndex, count - 1) : 0,
       status: { ...s.status, filteredLines: count },
       filterResultRevision: s.filterResultRevision + 1,
     })),
@@ -188,5 +215,31 @@ export const useSession = create<SessionState>()((set) => ({
     set({ currentSearchLine: line, selectedLine: line, selectedResultIndex: null }),
   setSelectedLine: (line) => set({ selectedLine: line }),
   setSelectedResultIndex: (selectedResultIndex) => set({ selectedResultIndex }),
+  setViewportResultIndex: (index) =>
+    set((s) => ({
+      viewportResultIndex:
+        s.status.filteredLines > 0
+          ? Math.min(Math.max(0, index), s.status.filteredLines - 1)
+          : 0,
+    })),
   selectRow: (selectedLine, selectedResultIndex) => set({ selectedLine, selectedResultIndex }),
+  navigateToResultIndex: (index, options) =>
+    set((s) => {
+      const safeIndex =
+        s.status.filteredLines > 0
+          ? Math.min(Math.max(0, index), s.status.filteredLines - 1)
+          : Math.max(0, index);
+      const nonce = (s.scrollRequest?.nonce ?? 0) + 1;
+      return {
+        selectedLine: options?.lineNo ?? s.selectedLine,
+        selectedResultIndex: safeIndex,
+        viewportResultIndex: safeIndex,
+        scrollRequest: {
+          index: safeIndex,
+          align: options?.align ?? "center",
+          reason: options?.reason ?? "bookmark",
+          nonce,
+        },
+      };
+    }),
 }));

@@ -4,6 +4,8 @@ import { useSession } from "@/store/session";
 import type { MinimapData } from "@/types";
 
 const BUCKETS = 180;
+const VIEWPORT_HEIGHT_RATIO = 0.08;
+const VIEWPORT_MIN_HEIGHT = 22;
 
 function bucketRanges(buckets: number[]) {
   const sorted = [...new Set(buckets)].sort((a, b) => a - b);
@@ -32,10 +34,30 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function pointerToResultIndex(clientY: number, rect: DOMRect, resultCount: number) {
+function viewportHeightPx(rect: DOMRect) {
+  return Math.max(VIEWPORT_MIN_HEIGHT, rect.height * VIEWPORT_HEIGHT_RATIO);
+}
+
+function maxViewportTopPx(rect: DOMRect) {
+  return Math.max(0, rect.height - viewportHeightPx(rect));
+}
+
+function indexToViewportTopPx(index: number, rect: DOMRect, resultCount: number) {
+  if (resultCount <= 1) return 0;
+  return clamp((index / (resultCount - 1)) * maxViewportTopPx(rect), 0, maxViewportTopPx(rect));
+}
+
+function viewportTopPxToResultIndex(topPx: number, rect: DOMRect, resultCount: number) {
   if (resultCount <= 0 || rect.height <= 0) return null;
-  const frac = clamp((clientY - rect.top) / rect.height, 0, 1);
-  return clamp(Math.floor(frac * resultCount), 0, resultCount - 1);
+  if (resultCount === 1) return 0;
+  const maxTop = maxViewportTopPx(rect);
+  const frac = maxTop > 0 ? clamp(topPx / maxTop, 0, 1) : 0;
+  return clamp(Math.round(frac * (resultCount - 1)), 0, resultCount - 1);
+}
+
+function pointerToResultIndex(clientY: number, rect: DOMRect, resultCount: number, grabOffset: number) {
+  const topPx = clientY - rect.top - grabOffset;
+  return viewportTopPxToResultIndex(topPx, rect, resultCount);
 }
 
 export function Minimap() {
@@ -43,11 +65,12 @@ export function Minimap() {
   const sessionId = useSession((s) => s.sessionId);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const filterResultRevision = useSession((s) => s.filterResultRevision);
-  const selectedResultIndex = useSession((s) => s.selectedResultIndex);
-  const setSelectedResultIndex = useSession((s) => s.setSelectedResultIndex);
+  const viewportResultIndex = useSession((s) => s.viewportResultIndex);
+  const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
   const [data, setData] = useState<MinimapData>({ bookmarks: [], errors: [] });
   const [dragging, setDragging] = useState(false);
   const draggingRef = useRef(false);
+  const grabOffsetRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
   const pendingIndexRef = useRef<number | null>(null);
   const resultCount = status.filteredLines;
@@ -61,18 +84,23 @@ export function Minimap() {
         const next = pendingIndexRef.current;
         pendingIndexRef.current = null;
         if (next != null) {
-          setSelectedResultIndex(next);
+          navigateToResultIndex(next, { align: "start", reason: "minimap" });
         }
       });
     },
-    [setSelectedResultIndex],
+    [navigateToResultIndex],
   );
 
   const updateFromPointer = useCallback(
     (event: PointerEvent<HTMLElement>) => {
       if (!resultCount) return;
       const rect = event.currentTarget.getBoundingClientRect();
-      const resultIndex = pointerToResultIndex(event.clientY, rect, resultCount);
+      const resultIndex = pointerToResultIndex(
+        event.clientY,
+        rect,
+        resultCount,
+        grabOffsetRef.current ?? 0,
+      );
       if (resultIndex != null) {
         scheduleResultIndex(resultIndex);
       }
@@ -82,6 +110,7 @@ export function Minimap() {
 
   const endDrag = useCallback(() => {
     draggingRef.current = false;
+    grabOffsetRef.current = null;
     setDragging(false);
   }, []);
 
@@ -111,7 +140,7 @@ export function Minimap() {
   }, []);
 
   const viewportTop = resultCount
-    ? Math.min(92, Math.max(0, ((selectedResultIndex ?? 0) / resultCount) * 100))
+    ? Math.min(92, Math.max(0, (viewportResultIndex / Math.max(1, resultCount - 1)) * 92))
     : 0;
 
   return (
@@ -123,6 +152,12 @@ export function Minimap() {
       onPointerDown={(event) => {
         if (!resultCount) return;
         event.preventDefault();
+        const rect = event.currentTarget.getBoundingClientRect();
+        const pointerY = event.clientY - rect.top;
+        const viewportTopPx = indexToViewportTopPx(viewportResultIndex, rect, resultCount);
+        const insideViewport =
+          pointerY >= viewportTopPx && pointerY <= viewportTopPx + viewportHeightPx(rect);
+        grabOffsetRef.current = insideViewport ? pointerY - viewportTopPx : 0;
         draggingRef.current = true;
         setDragging(true);
         try {
@@ -130,7 +165,9 @@ export function Minimap() {
         } catch {
           // Pointer capture can fail if the pointer was already canceled; dragging still ends safely.
         }
-        updateFromPointer(event);
+        if (!insideViewport) {
+          updateFromPointer(event);
+        }
       }}
       onPointerMove={(event) => {
         if (!draggingRef.current) return;
@@ -138,7 +175,7 @@ export function Minimap() {
         updateFromPointer(event);
       }}
       onPointerUp={(event) => {
-        updateFromPointer(event);
+        event.preventDefault();
         endDrag();
       }}
       onPointerCancel={endDrag}

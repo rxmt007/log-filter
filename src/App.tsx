@@ -15,7 +15,7 @@ export default function App() {
   const setFilteredLines = useSession((s) => s.setFilteredLines);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const selectedLine = useSession((s) => s.selectedLine);
-  const selectRow = useSession((s) => s.selectRow);
+  const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const theme = useSession((s) => s.theme);
@@ -68,13 +68,17 @@ export default function App() {
       const direction = event.key === "F2" ? "previous" : "next";
       nextBookmark(selectedLine ?? 1, direction).then((target) => {
         if (target) {
-          selectRow(target.lineNo, target.resultIndex);
+          navigateToResultIndex(target.resultIndex, {
+            lineNo: target.lineNo,
+            align: "center",
+            reason: "bookmark",
+          });
         }
       });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedLine, selectRow]);
+  }, [navigateToResultIndex, selectedLine]);
 
   const appStyle = {
     "--lf-font-size": `${appConfig.fontSize}px`,

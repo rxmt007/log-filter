@@ -49,6 +49,13 @@ export interface SearchResult {
   firstLine: number | null;
 }
 
+export interface ScrollRequest {
+  index: number;
+  align: "auto" | "center" | "start";
+  reason: "minimap" | "bookmark" | "search";
+  nonce: number;
+}
+
 export interface MinimapData {
   bookmarks: number[];
   errors: number[];
