@@ -105,6 +105,16 @@ impl Default for TableConfig {
 
 impl TableConfig {
     pub fn normalized(self) -> Self {
+        let all_configured_columns_hidden = TABLE_COLUMN_SPECS.iter().all(|spec| {
+            self.columns
+                .iter()
+                .find(|column| column.id == spec.id)
+                .is_some_and(|column| !column.visible)
+        });
+        if all_configured_columns_hidden {
+            return Self::default();
+        }
+
         let columns = TABLE_COLUMN_SPECS
             .iter()
             .map(|spec| {
@@ -336,6 +346,70 @@ visible = false
             .iter()
             .any(|column| column.id == "unknown"));
         assert_eq!(config.table.columns.len(), 9);
+    }
+
+    #[test]
+    fn hiding_every_table_column_restores_default_visibility() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+theme = "light"
+encoding = "UTF-8"
+font_size = 13
+row_height = 20
+
+[[table.columns]]
+id = "bookmark"
+width = 24
+visible = false
+
+[[table.columns]]
+id = "lineNo"
+width = 58
+visible = false
+
+[[table.columns]]
+id = "date"
+width = 50
+visible = false
+
+[[table.columns]]
+id = "time"
+width = 98
+visible = false
+
+[[table.columns]]
+id = "level"
+width = 40
+visible = false
+
+[[table.columns]]
+id = "pid"
+width = 54
+visible = false
+
+[[table.columns]]
+id = "tid"
+width = 54
+visible = false
+
+[[table.columns]]
+id = "tag"
+width = 154
+visible = false
+
+[[table.columns]]
+id = "message"
+width = 360
+visible = false
+"#,
+        )
+        .unwrap();
+
+        let config = load_config(&path).unwrap();
+        assert!(config.table.columns.iter().all(|column| column.visible));
     }
 
     #[test]
