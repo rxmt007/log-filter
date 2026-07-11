@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bookmark } from "lucide-react";
-import { getRows, listBookmarks, toggleBookmark } from "@/lib/ipc";
-import type { Row, SearchSpec, TableColumnConfig } from "@/types";
+import { Bookmark, Columns3 } from "lucide-react";
+import { getRows, listBookmarks, saveAppConfig, toggleBookmark } from "@/lib/ipc";
+import type { AppConfig, Row, SearchSpec, TableColumnConfig } from "@/types";
 import { ALL_LEVELS, useSession } from "@/store/session";
 
 const WINDOW = 200;
@@ -30,6 +30,12 @@ interface ColumnDefinition {
 
 interface ColumnState extends ColumnDefinition {
   visible: boolean;
+}
+
+interface ResizeState {
+  columnId: ColumnId;
+  startX: number;
+  startWidth: number;
 }
 
 const TABLE_COLUMNS: ColumnDefinition[] = [
@@ -66,6 +72,17 @@ function gridTemplateFor(columns: ColumnState[]) {
       column.id === "message" ? `minmax(${column.width}px, 1fr)` : `${column.width}px`,
     )
     .join(" ");
+}
+
+function toConfigColumns(columns: ColumnState[]): TableColumnConfig[] {
+  return TABLE_COLUMNS.map((definition) => {
+    const column = columns.find((item) => item.id === definition.id);
+    return {
+      id: definition.id,
+      width: column?.width ?? definition.width,
+      visible: definition.id === "message" ? true : column?.visible ?? true,
+    };
+  });
 }
 
 function highlightText(text: string, query: string, regex: boolean, caseSensitive: boolean): ReactNode {
@@ -148,13 +165,17 @@ export function LogTable() {
   const scrollRequest = useSession((s) => s.scrollRequest);
   const selectRow = useSession((s) => s.selectRow);
   const setViewportResultIndex = useSession((s) => s.setViewportResultIndex);
+  const setAppConfig = useSession((s) => s.setAppConfig);
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
   const cache = useRef<Map<number, Row>>(new Map());
   const filled = useRef<Map<number, number>>(new Map());
   const inflight = useRef<Set<number>>(new Set());
   const cacheEpoch = useRef(0);
+  const appConfigRef = useRef(appConfig);
+  const resizeRef = useRef<ResizeState | null>(null);
   const [, force] = useState(0);
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const rowHeight = appConfig.rowHeight;
   const defaultResultOrder =
     filter.levels === ALL_LEVELS &&
@@ -168,6 +189,103 @@ export function LogTable() {
   const columns = useMemo(() => normalizeColumns(appConfig.table.columns), [appConfig.table.columns]);
   const visibleColumns = useMemo(() => columns.filter((column) => column.visible), [columns]);
   const gridTemplateColumns = useMemo(() => gridTemplateFor(visibleColumns), [visibleColumns]);
+
+  useEffect(() => {
+    appConfigRef.current = appConfig;
+  }, [appConfig]);
+
+  const applyColumnUpdate = useCallback(
+    (updater: (columns: ColumnState[]) => ColumnState[]) => {
+      const currentConfig = appConfigRef.current;
+      const currentColumns = normalizeColumns(currentConfig.table.columns);
+      const nextColumns = updater(currentColumns).map((column) =>
+        column.id === "message" ? { ...column, visible: true } : column,
+      );
+      const nextConfig: AppConfig = {
+        ...currentConfig,
+        table: { columns: toConfigColumns(nextColumns) },
+      };
+      appConfigRef.current = nextConfig;
+      setAppConfig(nextConfig);
+      return nextConfig;
+    },
+    [setAppConfig],
+  );
+
+  const persistConfig = useCallback(
+    async (config: AppConfig) => {
+      try {
+        const saved = await saveAppConfig(config);
+        appConfigRef.current = saved;
+        setAppConfig(saved);
+      } catch (err) {
+        console.error("save table columns failed", err);
+      }
+    },
+    [setAppConfig],
+  );
+
+  const startColumnResize = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, columnId: ColumnId) => {
+      const column = columns.find((item) => item.id === columnId);
+      if (!column) return;
+      event.preventDefault();
+      event.stopPropagation();
+      resizeRef.current = {
+        columnId,
+        startX: event.clientX,
+        startWidth: column.width,
+      };
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may fail if the pointer is canceled; window listeners still clean up.
+      }
+
+      const finishResize = () => {
+        window.removeEventListener("pointermove", resizeColumn);
+        window.removeEventListener("pointerup", finishResize);
+        window.removeEventListener("pointercancel", finishResize);
+        resizeRef.current = null;
+        void persistConfig(appConfigRef.current);
+      };
+
+      const resizeColumn = (moveEvent: PointerEvent) => {
+        const resize = resizeRef.current;
+        if (!resize) return;
+        const definition = TABLE_COLUMNS.find((item) => item.id === resize.columnId);
+        if (!definition) return;
+        const width = clamp(
+          resize.startWidth + moveEvent.clientX - resize.startX,
+          definition.min,
+          definition.max,
+        );
+        applyColumnUpdate((currentColumns) =>
+          currentColumns.map((item) =>
+            item.id === resize.columnId ? { ...item, width } : item,
+          ),
+        );
+      };
+
+      window.addEventListener("pointermove", resizeColumn);
+      window.addEventListener("pointerup", finishResize);
+      window.addEventListener("pointercancel", finishResize);
+    },
+    [applyColumnUpdate, columns, persistConfig],
+  );
+
+  const toggleColumnVisibility = useCallback(
+    (columnId: ColumnId) => {
+      if (columnId === "message") return;
+      const nextConfig = applyColumnUpdate((currentColumns) =>
+        currentColumns.map((column) =>
+          column.id === columnId ? { ...column, visible: !column.visible } : column,
+        ),
+      );
+      void persistConfig(nextConfig);
+    },
+    [applyColumnUpdate, persistConfig],
+  );
 
   useEffect(() => {
     cacheEpoch.current += 1;
@@ -263,12 +381,45 @@ export function LogTable() {
 
   return (
     <div className="lf-table-shell">
-      <div className="lf-table-header" style={{ gridTemplateColumns }}>
-        {visibleColumns.map((column) => (
-          <div className="lf-table-header-cell" key={column.id}>
-            {column.label}
+      <div className="lf-table-header-wrap">
+        <div className="lf-table-header" style={{ gridTemplateColumns }}>
+          {visibleColumns.map((column) => (
+            <div className="lf-table-header-cell" key={column.id}>
+              <span>{column.label}</span>
+              <span
+                aria-hidden="true"
+                className="lf-column-resize-handle"
+                onPointerDown={(event) => startColumnResize(event, column.id)}
+              />
+            </div>
+          ))}
+        </div>
+        <button
+          className="lf-column-menu-button"
+          title="显示列"
+          type="button"
+          onClick={() => setColumnMenuOpen((open) => !open)}
+        >
+          <Columns3 />
+        </button>
+        {columnMenuOpen && (
+          <div className="lf-column-menu">
+            {TABLE_COLUMNS.map((definition) => {
+              const column = columns.find((item) => item.id === definition.id);
+              return (
+                <label key={definition.id}>
+                  <input
+                    checked={column?.visible ?? true}
+                    disabled={definition.id === "message"}
+                    type="checkbox"
+                    onChange={() => toggleColumnVisibility(definition.id)}
+                  />
+                  <span>{definition.label || "书签"}</span>
+                </label>
+              );
+            })}
           </div>
-        ))}
+        )}
       </div>
       <div ref={parentRef} className="lf-table-scroll">
         {total === 0 ? (

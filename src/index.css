@@ -704,7 +704,14 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
   background: var(--lf-bg);
+}
+
+.lf-table-header-wrap {
+  position: relative;
+  flex: none;
+  height: 28px;
 }
 
 .lf-table-header {
@@ -718,7 +725,8 @@
   font-weight: 600;
 }
 
-.lf-table-header div {
+.lf-table-header-cell {
+  position: relative;
   height: 28px;
   line-height: 28px;
   padding: 0 6px;
@@ -728,8 +736,100 @@
   border-right: 1px solid var(--lf-border);
 }
 
-.lf-table-header div:first-child {
+.lf-table-header-cell:first-child {
   padding: 0;
+}
+
+.lf-table-header-cell > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.lf-column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 2;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+}
+
+.lf-column-resize-handle:hover {
+  background: color-mix(in oklab, var(--lf-accent), transparent 68%);
+}
+
+.lf-column-menu-button {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 5;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--lf-header), transparent 10%);
+  color: var(--lf-text-dim);
+  cursor: pointer;
+}
+
+.lf-column-menu-button:hover {
+  border-color: var(--lf-border-strong);
+  background: var(--lf-panel-2);
+  color: var(--lf-text);
+}
+
+.lf-column-menu-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lf-column-menu {
+  position: absolute;
+  top: 28px;
+  right: 6px;
+  z-index: 20;
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--lf-border);
+  border-radius: 7px;
+  background: var(--lf-panel-2);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.lf-column-menu label {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 7px;
+  border-radius: 5px;
+  color: var(--lf-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lf-column-menu label:hover {
+  background: var(--lf-hover);
+}
+
+.lf-column-menu input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--lf-accent);
+}
+
+.lf-column-menu input:disabled + span {
+  color: var(--lf-text-faint);
 }
 
 .lf-table-scroll {
