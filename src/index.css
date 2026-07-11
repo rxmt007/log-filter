@@ -136,6 +136,8 @@
   #root {
     height: 100%;
     margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   button,
@@ -836,6 +838,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   font-family: var(--lf-mono);
   font-size: 12px;
 }

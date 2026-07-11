@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type {
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+  WheelEvent as ReactWheelEvent,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Bookmark, Columns3 } from "lucide-react";
 import { getRows, listBookmarks, saveAppConfig, toggleBookmark } from "@/lib/ipc";
@@ -292,6 +296,26 @@ export function LogTable() {
     [applyColumnUpdate, persistConfig],
   );
 
+  const handleTableWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    const deltaY = event.deltaY;
+    if (deltaY === 0) return;
+
+    const maxScrollTop = element.scrollHeight - element.clientHeight;
+    if (maxScrollTop <= 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    const atTop = element.scrollTop <= 0;
+    const atBottom = element.scrollTop >= maxScrollTop - 1;
+    if ((atTop && deltaY < 0) || (atBottom && deltaY > 0)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
+
   useEffect(() => {
     cacheEpoch.current += 1;
     cache.current.clear();
@@ -428,7 +452,7 @@ export function LogTable() {
           </div>
         )}
       </div>
-      <div ref={parentRef} className="lf-table-scroll">
+      <div ref={parentRef} className="lf-table-scroll" onWheelCapture={handleTableWheel}>
         {total === 0 ? (
           <div className="lf-empty-state">{emptyText}</div>
         ) : (

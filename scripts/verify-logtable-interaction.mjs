@@ -46,5 +46,11 @@ expectContract("table has resize handle", files.table.includes("lf-column-resize
 expectContract("table has column menu", files.table.includes("lf-column-menu"));
 expectContract("css styles resize handle", files.css.includes(".lf-column-resize-handle"));
 expectContract("css styles column menu", files.css.includes(".lf-column-menu"));
+expectContract("root scroll is isolated from table overscroll", files.css.includes("overscroll-behavior: none"));
+expectContract("table scroll contains boundary overscroll", files.css.includes("overscroll-behavior: contain"));
+expectContract(
+  "table captures wheel at vertical boundaries",
+  files.table.includes("handleTableWheel") && files.table.includes("onWheelCapture={handleTableWheel}"),
+);
 
 console.log("log table interaction contracts verified");
