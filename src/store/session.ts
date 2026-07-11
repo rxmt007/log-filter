@@ -216,12 +216,13 @@ export const useSession = create<SessionState>()((set) => ({
   setSelectedLine: (line) => set({ selectedLine: line }),
   setSelectedResultIndex: (selectedResultIndex) => set({ selectedResultIndex }),
   setViewportResultIndex: (index) =>
-    set((s) => ({
-      viewportResultIndex:
+    set((s) => {
+      const viewportResultIndex =
         s.status.filteredLines > 0
           ? Math.min(Math.max(0, index), s.status.filteredLines - 1)
-          : 0,
-    })),
+          : 0;
+      return viewportResultIndex === s.viewportResultIndex ? {} : { viewportResultIndex };
+    }),
   selectRow: (selectedLine, selectedResultIndex) => set({ selectedLine, selectedResultIndex }),
   navigateToResultIndex: (index, options) =>
     set((s) => {
