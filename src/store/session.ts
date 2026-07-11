@@ -87,6 +87,19 @@ export const DEFAULT_CONFIG: AppConfig = {
   encoding: "UTF-8",
   fontSize: 13,
   rowHeight: 20,
+  table: {
+    columns: [
+      { id: "bookmark", width: 24, visible: true },
+      { id: "lineNo", width: 58, visible: true },
+      { id: "date", width: 50, visible: true },
+      { id: "time", width: 98, visible: true },
+      { id: "level", width: 40, visible: true },
+      { id: "pid", width: 54, visible: true },
+      { id: "tid", width: 54, visible: true },
+      { id: "tag", width: 154, visible: true },
+      { id: "message", width: 360, visible: true },
+    ],
+  },
   configPath: "",
 };
 

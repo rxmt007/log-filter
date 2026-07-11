@@ -181,6 +181,58 @@ impl From<logcore::split::SplitSummary> for SplitSummaryDto {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct TableColumnConfigDto {
+    pub id: String,
+    pub width: u16,
+    pub visible: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TableConfigDto {
+    pub columns: Vec<TableColumnConfigDto>,
+}
+
+impl Default for TableConfigDto {
+    fn default() -> Self {
+        logcore::config::TableConfig::default().into()
+    }
+}
+
+impl From<logcore::config::TableConfig> for TableConfigDto {
+    fn from(value: logcore::config::TableConfig) -> Self {
+        Self {
+            columns: value
+                .columns
+                .into_iter()
+                .map(|column| TableColumnConfigDto {
+                    id: column.id,
+                    width: column.width,
+                    visible: column.visible,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<TableConfigDto> for logcore::config::TableConfig {
+    fn from(value: TableConfigDto) -> Self {
+        Self {
+            columns: value
+                .columns
+                .into_iter()
+                .map(|column| logcore::config::TableColumnConfig {
+                    id: column.id,
+                    width: column.width,
+                    visible: column.visible,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AppConfigDto {
     pub theme: String,
     pub adb_path: Option<String>,
@@ -188,6 +240,8 @@ pub struct AppConfigDto {
     pub encoding: String,
     pub font_size: u16,
     pub row_height: u16,
+    #[serde(default)]
+    pub table: TableConfigDto,
     pub config_path: String,
 }
 
@@ -207,6 +261,7 @@ impl AppConfigDto {
             encoding: config.encoding,
             font_size: config.font_size,
             row_height: config.row_height,
+            table: config.table.into(),
             config_path: config_path.to_string_lossy().to_string(),
         }
     }
@@ -234,6 +289,7 @@ impl TryFrom<AppConfigDto> for logcore::config::AppConfig {
             encoding: value.encoding,
             font_size: value.font_size,
             row_height: value.row_height,
+            table: value.table.into(),
         }
         .normalized())
     }

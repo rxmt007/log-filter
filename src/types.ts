@@ -63,6 +63,16 @@ export type RowsView = "all" | "filtered" | "bookmarks" | "errors";
 
 export type ThemeMode = "light" | "dark";
 
+export interface TableColumnConfig {
+  id: string;
+  width: number;
+  visible: boolean;
+}
+
+export interface TableConfig {
+  columns: TableColumnConfig[];
+}
+
 export interface AppConfig {
   theme: ThemeMode;
   adbPath: string | null;
@@ -70,6 +80,7 @@ export interface AppConfig {
   encoding: string;
   fontSize: number;
   rowHeight: number;
+  table: TableConfig;
   configPath: string;
 }
 

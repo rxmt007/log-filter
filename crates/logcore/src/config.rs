@@ -12,6 +12,124 @@ pub enum ThemeMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableColumnConfig {
+    pub id: String,
+    pub width: u16,
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableConfig {
+    pub columns: Vec<TableColumnConfig>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TableColumnSpec {
+    id: &'static str,
+    width: u16,
+    min: u16,
+    max: u16,
+}
+
+const TABLE_COLUMN_SPECS: [TableColumnSpec; 9] = [
+    TableColumnSpec {
+        id: "bookmark",
+        width: 24,
+        min: 22,
+        max: 36,
+    },
+    TableColumnSpec {
+        id: "lineNo",
+        width: 58,
+        min: 52,
+        max: 120,
+    },
+    TableColumnSpec {
+        id: "date",
+        width: 50,
+        min: 48,
+        max: 90,
+    },
+    TableColumnSpec {
+        id: "time",
+        width: 98,
+        min: 82,
+        max: 160,
+    },
+    TableColumnSpec {
+        id: "level",
+        width: 40,
+        min: 36,
+        max: 60,
+    },
+    TableColumnSpec {
+        id: "pid",
+        width: 54,
+        min: 48,
+        max: 100,
+    },
+    TableColumnSpec {
+        id: "tid",
+        width: 54,
+        min: 48,
+        max: 100,
+    },
+    TableColumnSpec {
+        id: "tag",
+        width: 154,
+        min: 110,
+        max: 260,
+    },
+    TableColumnSpec {
+        id: "message",
+        width: 360,
+        min: 220,
+        max: 1200,
+    },
+];
+
+impl Default for TableConfig {
+    fn default() -> Self {
+        Self {
+            columns: TABLE_COLUMN_SPECS
+                .iter()
+                .map(|spec| TableColumnConfig {
+                    id: spec.id.to_string(),
+                    width: spec.width,
+                    visible: true,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl TableConfig {
+    pub fn normalized(self) -> Self {
+        let columns = TABLE_COLUMN_SPECS
+            .iter()
+            .map(|spec| {
+                let configured = self.columns.iter().find(|column| column.id == spec.id);
+                let width = configured
+                    .map(|column| column.width)
+                    .unwrap_or(spec.width)
+                    .clamp(spec.min, spec.max);
+                let visible = if spec.id == "message" {
+                    true
+                } else {
+                    configured.map(|column| column.visible).unwrap_or(true)
+                };
+                TableColumnConfig {
+                    id: spec.id.to_string(),
+                    width,
+                    visible,
+                }
+            })
+            .collect();
+        Self { columns }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppConfig {
     pub theme: ThemeMode,
     pub adb_path: Option<PathBuf>,
@@ -19,6 +137,8 @@ pub struct AppConfig {
     pub encoding: String,
     pub font_size: u16,
     pub row_height: u16,
+    #[serde(default)]
+    pub table: TableConfig,
 }
 
 impl Default for AppConfig {
@@ -30,6 +150,7 @@ impl Default for AppConfig {
             encoding: "UTF-8".to_string(),
             font_size: 13,
             row_height: 20,
+            table: TableConfig::default(),
         }
     }
 }
@@ -41,6 +162,7 @@ impl AppConfig {
         }
         self.font_size = self.font_size.clamp(10, 20);
         self.row_height = self.row_height.clamp(16, 32);
+        self.table = self.table.normalized();
         self
     }
 }
@@ -124,6 +246,99 @@ mod tests {
     }
 
     #[test]
+    fn default_config_includes_complete_table_columns() {
+        let config = AppConfig::default();
+        let ids: Vec<&str> = config
+            .table
+            .columns
+            .iter()
+            .map(|column| column.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "bookmark", "lineNo", "date", "time", "level", "pid", "tid", "tag", "message",
+            ]
+        );
+        assert!(config.table.columns.iter().all(|column| column.visible));
+        assert!(config.table.columns.iter().all(|column| column.width > 0));
+    }
+
+    #[test]
+    fn toml_round_trip_preserves_table_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = AppConfig::default();
+        config.table.columns.iter_mut().for_each(|column| {
+            if column.id == "tag" {
+                column.width = 210;
+            }
+            if column.id == "pid" {
+                column.visible = false;
+            }
+        });
+
+        save_config(&path, &config).unwrap();
+        let loaded = load_config(&path).unwrap();
+        assert_eq!(loaded.table, config.table);
+    }
+
+    #[test]
+    fn table_columns_are_normalized_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+theme = "light"
+encoding = "UTF-8"
+font_size = 13
+row_height = 20
+
+[[table.columns]]
+id = "tag"
+width = 999
+visible = false
+
+[[table.columns]]
+id = "unknown"
+width = 77
+visible = true
+
+[[table.columns]]
+id = "message"
+width = 1
+visible = false
+"#,
+        )
+        .unwrap();
+
+        let config = load_config(&path).unwrap();
+        let tag = config
+            .table
+            .columns
+            .iter()
+            .find(|column| column.id == "tag")
+            .unwrap();
+        let message = config
+            .table
+            .columns
+            .iter()
+            .find(|column| column.id == "message")
+            .unwrap();
+        assert_eq!(tag.width, 260);
+        assert!(!tag.visible);
+        assert_eq!(message.width, 220);
+        assert!(message.visible);
+        assert!(!config
+            .table
+            .columns
+            .iter()
+            .any(|column| column.id == "unknown"));
+        assert_eq!(config.table.columns.len(), 9);
+    }
+
+    #[test]
     fn toml_round_trip_preserves_editable_fields() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -134,6 +349,7 @@ mod tests {
             encoding: "UTF-8".to_string(),
             font_size: 14,
             row_height: 22,
+            table: TableConfig::default(),
         };
 
         save_config(&path, &config).unwrap();
