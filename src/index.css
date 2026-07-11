@@ -596,23 +596,6 @@
   font-weight: 600;
 }
 
-.lf-view-toggle {
-  height: 22px;
-  border: 1px solid var(--lf-border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--lf-text-dim);
-  padding: 0 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.lf-view-toggle[data-active="true"] {
-  color: var(--lf-accent-strong);
-  border-color: var(--lf-accent);
-  background: var(--lf-accent-soft);
-}
-
 .lf-filter-fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(220px, 1fr));

@@ -12,10 +12,10 @@ interface DialogProps {
 }
 
 const VIEW_LABELS: Record<RowsView, string> = {
-  all: "全部",
-  filtered: "过滤",
-  bookmarks: "书签",
-  errors: "错误",
+  all: "全部日志",
+  filtered: "当前结果",
+  bookmarks: "已标记",
+  errors: "错误/Fatal",
 };
 
 function DialogShell({
@@ -49,10 +49,9 @@ function StatusLine({ text, tone }: { text: string; tone?: "error" | "ok" }) {
 
 export function ExportDialog({ onClose }: DialogProps) {
   const status = useSession((s) => s.status);
-  const view = useSession((s) => s.view);
   const selectedLine = useSession((s) => s.selectedLine);
   const [mode, setMode] = useState<"view" | "range">("view");
-  const [exportView, setExportView] = useState<RowsView>(view);
+  const [exportView, setExportView] = useState<RowsView>("filtered");
   const [startLine, setStartLine] = useState(selectedLine ?? 1);
   const [endLine, setEndLine] = useState(selectedLine ?? Math.max(1, status.totalLines));
   const [path, setPath] = useState("");
@@ -94,7 +93,7 @@ export function ExportDialog({ onClose }: DialogProps) {
       <div className="lf-dialog-body">
         <div className="lf-segmented">
           <button data-active={mode === "view"} type="button" onClick={() => setMode("view")}>
-            当前视图
+            当前结果
           </button>
           <button data-active={mode === "range"} type="button" onClick={() => setMode("range")}>
             行号范围
@@ -103,7 +102,7 @@ export function ExportDialog({ onClose }: DialogProps) {
 
         {mode === "view" ? (
           <label className="lf-form-field">
-            <span>视图</span>
+            <span>导出内容</span>
             <select value={exportView} onChange={(e) => setExportView(e.target.value as RowsView)}>
               {(Object.keys(VIEW_LABELS) as RowsView[]).map((key) => (
                 <option key={key} value={key}>

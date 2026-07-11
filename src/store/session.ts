@@ -133,6 +133,7 @@ export const useSession = create<SessionState>()((set) => ({
     })),
   setFilteredLines: (count) =>
     set((s) => ({
+      selectedResultIndex: null,
       status: { ...s.status, filteredLines: count },
       filterResultRevision: s.filterResultRevision + 1,
     })),

@@ -38,9 +38,13 @@ export default function App() {
     if (!hasFile) return;
     const timer = window.setTimeout(() => {
       const requestedRevision = filterRevision;
+      const requestedBookmarkRevision = bookmarkSensitiveRevision;
       setFilter(filter)
         .then((count) => {
-          if (useSession.getState().filterRevision !== requestedRevision) return;
+          const state = useSession.getState();
+          if (state.filterRevision !== requestedRevision) return;
+          const currentBookmarkRevision = state.filter.markedOnly ? state.bookmarkRevision : 0;
+          if (currentBookmarkRevision !== requestedBookmarkRevision) return;
           setFilteredLines(count);
         })
         .catch((err) => {
