@@ -37,5 +37,6 @@ desktop.ini
 .superpowers/
 
 # ── 本地参考素材 / 附件(不入库)──
+local-reference-assets/
 .local-reference-assets/
 refs/
