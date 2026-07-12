@@ -173,8 +173,9 @@
   --lf-row-marked: #dbeafe;
   --lf-row-marked-border: #2563eb;
   --lf-row-marked-icon: #1d4ed8;
-  --lf-row-copy-selected: #cfe3ff;
-  --lf-row-copy-selected-border: #3b82f6;
+  --lf-row-copy-selected: #b9d7ff;
+  --lf-row-copy-selected-border: #1d4ed8;
+  --lf-row-copy-selected-text: #123a7a;
   --lf-chip-v: #f1f2f4;
   --lf-chip-d: #e7f0fe;
   --lf-chip-i: #e6f6ed;
@@ -215,8 +216,9 @@
   --lf-row-marked: rgba(91, 157, 255, 0.2);
   --lf-row-marked-border: #8ebaff;
   --lf-row-marked-icon: #b7d3ff;
-  --lf-row-copy-selected: rgba(91, 157, 255, 0.28);
-  --lf-row-copy-selected-border: #8ebaff;
+  --lf-row-copy-selected: rgba(91, 157, 255, 0.34);
+  --lf-row-copy-selected-border: #b7d3ff;
+  --lf-row-copy-selected-text: #d7e6ff;
   --lf-chip-v: #252b33;
   --lf-chip-d: rgba(91, 157, 255, 0.17);
   --lf-chip-i: rgba(84, 213, 133, 0.14);
@@ -1137,6 +1139,11 @@
 .lf-table-row[data-level="F"] .lf-level,
 .lf-table-row[data-level="F"] .lf-tag,
 .lf-table-row[data-level="F"] .lf-message { color: var(--lf-lv-f); }
+
+.lf-table-row[data-copy-selected="true"] > span {
+  color: var(--lf-row-copy-selected-text);
+  font-weight: 650;
+}
 
 .lf-hit {
   background: var(--lf-hit-bg);
