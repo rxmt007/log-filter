@@ -1140,7 +1140,11 @@
 .lf-table-row[data-level="F"] .lf-tag,
 .lf-table-row[data-level="F"] .lf-message { color: var(--lf-lv-f); }
 
-.lf-table-row[data-copy-selected="true"] > span {
+.lf-table-row[data-copy-selected="true"] .lf-num,
+.lf-table-row[data-copy-selected="true"] .lf-meta,
+.lf-table-row[data-copy-selected="true"] .lf-level,
+.lf-table-row[data-copy-selected="true"] .lf-tag,
+.lf-table-row[data-copy-selected="true"] .lf-message {
   color: var(--lf-row-copy-selected-text);
   font-weight: 650;
 }

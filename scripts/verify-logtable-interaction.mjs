@@ -68,7 +68,8 @@ expectContract(
 expectContract("css defines copy-selected text token", files.css.includes("--lf-row-copy-selected-text"));
 expectContract(
   "css makes copy-selected row text override level colors",
-  files.css.includes('.lf-table-row[data-copy-selected="true"] > span'),
+  files.css.includes('.lf-table-row[data-copy-selected="true"] .lf-level') &&
+    files.css.includes('.lf-table-row[data-copy-selected="true"] .lf-message'),
 );
 
 console.log("log table interaction contracts verified");
