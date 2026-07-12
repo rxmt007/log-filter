@@ -274,6 +274,11 @@
   transform: translateX(-50%) translateY(0);
 }
 
+[data-tooltip-placement="bottom"]::after {
+  top: calc(100% + 7px);
+  bottom: auto;
+}
+
 .lf-main {
   flex: 1;
   min-height: 0;

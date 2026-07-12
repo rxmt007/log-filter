@@ -86,6 +86,44 @@ expectContract(
 );
 expectContract("toolbar declares tooltip text", files.toolbar.includes("data-tooltip"));
 expectContract("css styles shared tooltips", files.css.includes("[data-tooltip]::after"));
+expectContract(
+  "toolbar custom tooltip controls omit native title",
+  [
+    'title="Source file"',
+    'title="Current source"',
+    'title="Logcat command"',
+    'title="Start"',
+    'title="Pause"',
+    'title="Stop"',
+    'title="Clear"',
+    'title="Open file"',
+    'title="Export"',
+    'title="Split file"',
+    'title="Settings"',
+    'title="Theme"',
+    'title="All levels"',
+    'title={LEVEL_TOOLTIPS[level]}',
+    'title="Marked only"',
+    'title="Case sensitive"',
+    'title="Regex search"',
+    'title="Highlight color"',
+    'title="Previous match"',
+    'title="Next match"',
+    'title="Regex filter"',
+  ].every((title) => !files.toolbar.includes(title)),
+);
+expectContract(
+  "table custom tooltip controls omit native title",
+  !files.table.includes('title="Show columns"'),
+);
+expectContract(
+  "top toolbar tooltips open downward",
+  (files.toolbar.match(/data-tooltip-placement="bottom"/g) ?? []).length >= 3,
+);
+expectContract(
+  "css supports bottom tooltip placement",
+  files.css.includes('[data-tooltip-placement="bottom"]::after'),
+);
 expectContract("table tracks continuous selection range", files.table.includes("selectionRange"));
 expectContract("table collects continuous selected rows", files.table.includes("collectRowsInRange"));
 expectContract("table supports context menu bookmark actions", files.table.includes("bookmarkMenu"));

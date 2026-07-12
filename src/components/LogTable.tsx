@@ -610,7 +610,6 @@ export function LogTable() {
           aria-label="Show columns"
           className="lf-column-menu-button"
           data-tooltip="Show columns"
-          title="Show columns"
           type="button"
           onClick={() => setColumnMenuOpen((open) => !open)}
         >

@@ -129,7 +129,7 @@ export function Toolbar() {
             aria-label="Source file"
             className="lf-select-button"
             data-tooltip="Source file"
-            title="Source file"
+            data-tooltip-placement="bottom"
             type="button"
           >
             <FolderOpen />
@@ -140,7 +140,7 @@ export function Toolbar() {
             aria-label="Current source"
             className="lf-select-button lf-device"
             data-tooltip="Current source"
-            title="Current source"
+            data-tooltip-placement="bottom"
             type="button"
           >
             <span className="lf-device-dot" />
@@ -151,7 +151,7 @@ export function Toolbar() {
             aria-label="Logcat command"
             className="lf-select-button lf-command"
             data-tooltip="Logcat command"
-            title="Logcat command"
+            data-tooltip-placement="bottom"
             type="button"
           >
             <span>命令</span>
@@ -166,7 +166,6 @@ export function Toolbar() {
           className="lf-run-button"
           data-tooltip="Start"
           size="icon-sm"
-          title="Start"
         >
           <Play />
         </Button>
@@ -174,7 +173,6 @@ export function Toolbar() {
           aria-label="Pause"
           data-tooltip="Pause"
           size="icon-sm"
-          title="Pause"
           variant="ghost"
         >
           <Pause />
@@ -183,7 +181,6 @@ export function Toolbar() {
           aria-label="Stop"
           data-tooltip="Stop"
           size="icon-sm"
-          title="Stop"
           variant="ghost"
         >
           <Square />
@@ -192,7 +189,6 @@ export function Toolbar() {
           aria-label="Clear"
           data-tooltip="Clear"
           size="icon-sm"
-          title="Clear"
           variant="ghost"
         >
           <Trash2 />
@@ -202,7 +198,6 @@ export function Toolbar() {
           aria-label="Open file"
           data-tooltip="Open file"
           size="icon-sm"
-          title="Open file"
           variant="ghost"
           onClick={onOpen}
         >
@@ -212,7 +207,6 @@ export function Toolbar() {
           aria-label="Export"
           data-tooltip="Export"
           size="icon-sm"
-          title="Export"
           variant="ghost"
           onClick={() => setDialog("export")}
         >
@@ -222,7 +216,6 @@ export function Toolbar() {
           aria-label="Split file"
           data-tooltip="Split file"
           size="icon-sm"
-          title="Split file"
           variant="ghost"
           onClick={() => setDialog("split")}
         >
@@ -232,7 +225,6 @@ export function Toolbar() {
           aria-label="Settings"
           data-tooltip="Settings"
           size="icon-sm"
-          title="Settings"
           variant="ghost"
           onClick={() => setDialog("settings")}
         >
@@ -242,7 +234,6 @@ export function Toolbar() {
           aria-label="Theme"
           data-tooltip="Theme"
           size="icon-sm"
-          title="Theme"
           variant="ghost"
           onClick={toggleTheme}
         >
@@ -256,7 +247,6 @@ export function Toolbar() {
             className="lf-level-chip lf-level-all"
             data-active={filter.levels === ALL_LEVELS}
             data-tooltip="All levels"
-            title="All levels"
             type="button"
             onClick={() => setFilter({ levels: ALL_LEVELS })}
           >
@@ -272,7 +262,6 @@ export function Toolbar() {
                 data-level={level}
                 data-active={on}
                 data-tooltip={LEVEL_TOOLTIPS[level]}
-                title={LEVEL_TOOLTIPS[level]}
                 type="button"
                 onClick={() => toggleLevel(bit)}
               >
@@ -286,7 +275,6 @@ export function Toolbar() {
             className="lf-level-chip lf-marked-only-chip"
             data-active={filter.markedOnly}
             data-tooltip="Marked only"
-            title="Marked only"
             type="button"
             onClick={() => setFilter({ markedOnly: !filter.markedOnly })}
           >
@@ -309,7 +297,6 @@ export function Toolbar() {
             data-active={search.caseSensitive}
             data-tooltip="Case sensitive"
             type="button"
-            title="Case sensitive"
             onClick={() => setSearch({ caseSensitive: !search.caseSensitive })}
           >
             Aa
@@ -320,7 +307,6 @@ export function Toolbar() {
             data-active={search.regex}
             data-tooltip="Regex search"
             type="button"
-            title="Regex search"
             onClick={() => setSearch({ regex: !search.regex })}
           >
             .*
@@ -328,14 +314,12 @@ export function Toolbar() {
           <span
             className="lf-highlight-swatch"
             data-tooltip="Highlight color"
-            title="Highlight color"
           />
           <span className="lf-search-divider" />
           <button
             aria-label="Previous match"
             data-tooltip="Previous match"
             type="button"
-            title="Previous match"
             onClick={() => jumpSearch("previous")}
           >
             <ChevronUp />
@@ -344,7 +328,6 @@ export function Toolbar() {
             aria-label="Next match"
             data-tooltip="Next match"
             type="button"
-            title="Next match"
             onClick={() => jumpSearch("next")}
           >
             <ChevronDown />
@@ -390,7 +373,6 @@ export function Toolbar() {
                     className="lf-mini-toggle"
                     data-active={value.regex}
                     data-tooltip="Regex filter"
-                    title="Regex filter"
                     type="button"
                     onClick={(e) => {
                       e.preventDefault();
