@@ -61,6 +61,14 @@ export interface FilterField {
   regex: boolean;
 }
 
+export interface HighlightRule {
+  enabled: boolean;
+  pattern: string;
+  regex: boolean;
+  caseSensitive: boolean;
+  color: string;
+}
+
 export interface FilterSpec {
   levels: number;
   markedOnly: boolean;
@@ -70,6 +78,7 @@ export interface FilterSpec {
   tagExclude: FilterField;
   wordInclude: FilterField;
   wordExclude: FilterField;
+  highlights: HighlightRule[];
 }
 
 export interface SearchSpec {
@@ -99,7 +108,7 @@ export interface SearchProgress {
 export interface ScrollRequest {
   index: number;
   align: "auto" | "center" | "start" | "end";
-  reason: "minimap" | "bookmark" | "search";
+  reason: "minimap" | "bookmark" | "search" | "jump";
   nonce: number;
 }
 
@@ -137,6 +146,13 @@ export interface AppConfig {
   fontSize: number;
   rowHeight: number;
   table: TableConfig;
+  recentFiles: string[];
+  lastFilter: FilterSpec | null;
+  commandBuffers: LogcatBuffer[];
+  window: {
+    width: number;
+    height: number;
+  };
   configPath: string;
 }
 

@@ -25,6 +25,7 @@ pub fn run() {
             commands::toggle_bookmark,
             commands::list_bookmarks,
             commands::next_bookmark,
+            commands::line_to_result_index,
             commands::get_minimap,
             commands::export_logs,
             commands::split_log_file,

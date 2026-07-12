@@ -314,6 +314,13 @@ export function SettingsDialog({ onClose }: DialogProps) {
           <input readOnly value={configName} />
         </label>
         <label className="lf-form-field">
+          <span>编码</span>
+          <select value={draft.encoding} onChange={(e) => patch({ encoding: e.target.value })}>
+            <option value="UTF-8">UTF-8</option>
+            <option value="Local">本地</option>
+          </select>
+        </label>
+        <label className="lf-form-field">
           <span>存储位置</span>
           <div className="lf-path-row">
             <input

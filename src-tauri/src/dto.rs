@@ -85,7 +85,7 @@ pub struct StreamControlDto {
     pub session_path: Option<String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterFieldDto {
     pub enabled: bool,
@@ -103,7 +103,41 @@ impl From<FilterFieldDto> for logcore::filter::FilterField {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightRuleDto {
+    pub enabled: bool,
+    pub pattern: String,
+    pub regex: bool,
+    pub case_sensitive: bool,
+    pub color: String,
+}
+
+impl From<HighlightRuleDto> for logcore::filter::HighlightRule {
+    fn from(value: HighlightRuleDto) -> Self {
+        Self {
+            enabled: value.enabled,
+            pattern: value.pattern,
+            regex: value.regex,
+            case_sensitive: value.case_sensitive,
+            color: value.color,
+        }
+    }
+}
+
+impl From<logcore::filter::HighlightRule> for HighlightRuleDto {
+    fn from(value: logcore::filter::HighlightRule) -> Self {
+        Self {
+            enabled: value.enabled,
+            pattern: value.pattern,
+            regex: value.regex,
+            case_sensitive: value.case_sensitive,
+            color: value.color,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterSpecDto {
     pub levels: u8,
@@ -114,6 +148,8 @@ pub struct FilterSpecDto {
     pub tag_exclude: FilterFieldDto,
     pub word_include: FilterFieldDto,
     pub word_exclude: FilterFieldDto,
+    #[serde(default)]
+    pub highlights: Vec<HighlightRuleDto>,
 }
 
 impl From<FilterSpecDto> for logcore::filter::FilterSpec {
@@ -127,6 +163,33 @@ impl From<FilterSpecDto> for logcore::filter::FilterSpec {
             tag_exclude: value.tag_exclude.into(),
             word_include: value.word_include.into(),
             word_exclude: value.word_exclude.into(),
+            highlights: value.highlights.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<logcore::filter::FilterSpec> for FilterSpecDto {
+    fn from(value: logcore::filter::FilterSpec) -> Self {
+        Self {
+            levels: value.levels.bits(),
+            marked_only: value.marked_only,
+            pid: FilterFieldDto::from(value.pid),
+            tid: FilterFieldDto::from(value.tid),
+            tag_include: FilterFieldDto::from(value.tag_include),
+            tag_exclude: FilterFieldDto::from(value.tag_exclude),
+            word_include: FilterFieldDto::from(value.word_include),
+            word_exclude: FilterFieldDto::from(value.word_exclude),
+            highlights: value.highlights.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<logcore::filter::FilterField> for FilterFieldDto {
+    fn from(value: logcore::filter::FilterField) -> Self {
+        Self {
+            enabled: value.enabled,
+            pattern: value.pattern,
+            regex: value.regex,
         }
     }
 }
@@ -265,6 +328,31 @@ pub struct TableConfigDto {
     pub columns: Vec<TableColumnConfigDto>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowConfigDto {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl From<logcore::config::WindowConfig> for WindowConfigDto {
+    fn from(value: logcore::config::WindowConfig) -> Self {
+        Self {
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
+impl From<WindowConfigDto> for logcore::config::WindowConfig {
+    fn from(value: WindowConfigDto) -> Self {
+        Self {
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
 impl Default for TableConfigDto {
     fn default() -> Self {
         logcore::config::TableConfig::default().into()
@@ -314,7 +402,19 @@ pub struct AppConfigDto {
     pub row_height: u16,
     #[serde(default)]
     pub table: TableConfigDto,
+    #[serde(default)]
+    pub recent_files: Vec<String>,
+    #[serde(default)]
+    pub last_filter: Option<FilterSpecDto>,
+    #[serde(default)]
+    pub command_buffers: Vec<String>,
+    #[serde(default = "default_window_config")]
+    pub window: WindowConfigDto,
     pub config_path: String,
+}
+
+fn default_window_config() -> WindowConfigDto {
+    logcore::config::WindowConfig::default().into()
 }
 
 impl AppConfigDto {
@@ -334,6 +434,14 @@ impl AppConfigDto {
             font_size: config.font_size,
             row_height: config.row_height,
             table: config.table.into(),
+            recent_files: config
+                .recent_files
+                .into_iter()
+                .map(|path| path.to_string_lossy().to_string())
+                .collect(),
+            last_filter: Some(config.last_filter.into()),
+            command_buffers: config.command_buffers,
+            window: config.window.into(),
             config_path: config_path.to_string_lossy().to_string(),
         }
     }
@@ -362,6 +470,15 @@ impl TryFrom<AppConfigDto> for logcore::config::AppConfig {
             font_size: value.font_size,
             row_height: value.row_height,
             table: value.table.into(),
+            recent_files: value
+                .recent_files
+                .into_iter()
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .collect(),
+            last_filter: value.last_filter.map(Into::into).unwrap_or_default(),
+            command_buffers: value.command_buffers,
+            window: value.window.into(),
         }
         .normalized())
     }
@@ -453,6 +570,13 @@ mod tests {
             font_size: 99,
             row_height: 1,
             table: TableConfigDto::default(),
+            recent_files: Vec::new(),
+            last_filter: None,
+            command_buffers: vec!["kernel".to_string(), "events".to_string()],
+            window: WindowConfigDto {
+                width: 1,
+                height: 9999,
+            },
             config_path: String::new(),
         };
 
@@ -463,6 +587,9 @@ mod tests {
         assert_eq!(converted.encoding, "UTF-8");
         assert_eq!(converted.font_size, 20);
         assert_eq!(converted.row_height, 16);
+        assert_eq!(converted.command_buffers, vec!["events"]);
+        assert_eq!(converted.window.width, 960);
+        assert_eq!(converted.window.height, 2160);
 
         let bad = AppConfigDto {
             theme: "system".to_string(),

@@ -1,3 +1,4 @@
+use crate::filter::FilterSpec;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -21,6 +22,21 @@ pub struct TableColumnConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TableConfig {
     pub columns: Vec<TableColumnConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowConfig {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self {
+            width: 1180,
+            height: 720,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -149,6 +165,14 @@ pub struct AppConfig {
     pub row_height: u16,
     #[serde(default)]
     pub table: TableConfig,
+    #[serde(default)]
+    pub recent_files: Vec<PathBuf>,
+    #[serde(default)]
+    pub last_filter: FilterSpec,
+    #[serde(default)]
+    pub command_buffers: Vec<String>,
+    #[serde(default)]
+    pub window: WindowConfig,
 }
 
 impl Default for AppConfig {
@@ -161,6 +185,10 @@ impl Default for AppConfig {
             font_size: 13,
             row_height: 20,
             table: TableConfig::default(),
+            recent_files: Vec::new(),
+            last_filter: FilterSpec::default(),
+            command_buffers: vec!["main".to_string()],
+            window: WindowConfig::default(),
         }
     }
 }
@@ -173,8 +201,40 @@ impl AppConfig {
         self.font_size = self.font_size.clamp(10, 20);
         self.row_height = self.row_height.clamp(16, 32);
         self.table = self.table.normalized();
+        self.recent_files = normalize_recent_files(self.recent_files);
+        if self.last_filter.highlights.is_empty() {
+            self.last_filter.highlights = FilterSpec::default().highlights;
+        }
+        if self.command_buffers.is_empty() {
+            self.command_buffers = vec!["main".to_string()];
+        }
+        self.command_buffers.retain(|buffer| {
+            matches!(
+                buffer.as_str(),
+                "main" | "system" | "radio" | "events" | "crash"
+            )
+        });
+        if self.command_buffers.is_empty() {
+            self.command_buffers = vec!["main".to_string()];
+        }
+        self.window.width = self.window.width.clamp(960, 3840);
+        self.window.height = self.window.height.clamp(560, 2160);
         self
     }
+}
+
+fn normalize_recent_files(files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for file in files {
+        if file.as_os_str().is_empty() || out.contains(&file) {
+            continue;
+        }
+        out.push(file);
+        if out.len() == 10 {
+            break;
+        }
+    }
+    out
 }
 
 pub fn load_config(path: &Path) -> io::Result<AppConfig> {
@@ -253,6 +313,8 @@ mod tests {
         assert_eq!(config.row_height, 20);
         assert_eq!(config.adb_path, None);
         assert_eq!(config.storage_dir, None);
+        assert_eq!(config.command_buffers, vec!["main"]);
+        assert_eq!(config.window, WindowConfig::default());
     }
 
     #[test]
@@ -289,6 +351,46 @@ mod tests {
         save_config(&path, &config).unwrap();
         let loaded = load_config(&path).unwrap();
         assert_eq!(loaded.table, config.table);
+    }
+
+    #[test]
+    fn normalizes_recent_files_command_buffers_and_window_size() {
+        let mut files = Vec::new();
+        for i in 0..12 {
+            files.push(PathBuf::from(format!("/tmp/{i}.log")));
+        }
+        files.push(PathBuf::from("/tmp/1.log"));
+
+        let config = AppConfig {
+            recent_files: files,
+            command_buffers: vec!["kernel".to_string(), "crash".to_string()],
+            window: WindowConfig {
+                width: 10,
+                height: 9999,
+            },
+            ..Default::default()
+        }
+        .normalized();
+
+        assert_eq!(config.recent_files.len(), 10);
+        assert_eq!(config.recent_files[1], PathBuf::from("/tmp/1.log"));
+        assert_eq!(config.command_buffers, vec!["crash"]);
+        assert_eq!(config.window.width, 960);
+        assert_eq!(config.window.height, 2160);
+    }
+
+    #[test]
+    fn normalized_config_restores_default_highlight_rules() {
+        let config = AppConfig {
+            last_filter: FilterSpec {
+                highlights: Vec::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .normalized();
+
+        assert_eq!(config.last_filter.highlights.len(), 3);
     }
 
     #[test]
@@ -422,6 +524,10 @@ visible = false
             font_size: 14,
             row_height: 22,
             table: TableConfig::default(),
+            recent_files: Vec::new(),
+            last_filter: FilterSpec::default(),
+            command_buffers: vec!["main".to_string()],
+            window: WindowConfig::default(),
         };
 
         save_config(&path, &config).unwrap();

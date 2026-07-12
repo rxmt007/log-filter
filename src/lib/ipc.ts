@@ -58,6 +58,9 @@ export const listBookmarks = () => invoke<number[]>("list_bookmarks");
 export const nextBookmark = (fromLineNo: number, direction: "next" | "previous") =>
   invoke<NavigationTarget | null>("next_bookmark", { fromLineNo, direction });
 
+export const lineToResultIndex = (lineNo: number) =>
+  invoke<NavigationTarget | null>("line_to_result_index", { lineNo });
+
 export const getMinimap = (buckets: number) => invoke<MinimapData>("get_minimap", { buckets });
 
 export const exportLogs = (request: ExportRequest) =>

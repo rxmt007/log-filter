@@ -19,7 +19,7 @@ import {
   type ColumnId,
   type ColumnState,
 } from "@/lib/table";
-import type { AppConfig, Row, SearchSpec } from "@/types";
+import type { AppConfig, FilterSpec, Row, SearchSpec } from "@/types";
 import { ALL_LEVELS, useSession } from "@/store/session";
 
 const WINDOW = 200;
@@ -63,8 +63,22 @@ function selectionIntersectsElement(selection: Selection, element: Element) {
   return false;
 }
 
-function highlightText(text: string, query: string, regex: boolean, caseSensitive: boolean) {
+function highlightText(
+  text: string,
+  query: string,
+  regex: boolean,
+  caseSensitive: boolean,
+  highlights: FilterSpec["highlights"],
+) {
   return splitHighlightTokens(text, {
+    highlights: highlights
+      .filter((rule) => rule.enabled && rule.pattern.trim())
+      .map((rule) => ({
+        query: rule.pattern,
+        regex: rule.regex,
+        caseSensitive: rule.caseSensitive,
+        color: rule.color,
+      })),
     search: { query, regex, caseSensitive },
   }).map((token, index) => {
     if (token.kind === "search") {
@@ -89,7 +103,12 @@ function fieldActive(field: { enabled: boolean; pattern: string }) {
   return field.enabled && field.pattern.trim().length > 0;
 }
 
-function renderCell(column: ColumnState, row: Row, search: SearchSpec) {
+function renderCell(
+  column: ColumnState,
+  row: Row,
+  search: SearchSpec,
+  highlights: FilterSpec["highlights"],
+) {
   switch (column.id) {
     case "bookmark":
       return row.marked ? <Bookmark /> : null;
@@ -108,7 +127,13 @@ function renderCell(column: ColumnState, row: Row, search: SearchSpec) {
     case "tag":
       return row.tag;
     case "message":
-      return highlightText(row.message, search.query, search.regex, search.caseSensitive);
+      return highlightText(
+        row.message,
+        search.query,
+        search.regex,
+        search.caseSensitive,
+        highlights,
+      );
   }
 }
 
@@ -541,7 +566,31 @@ export function LogTable() {
         onWheelCapture={handleTableWheel}
       >
         {total === 0 ? (
-          <div className="lf-empty-state">{emptyText}</div>
+          <div className="lf-empty-state">
+            <div className="lf-empty-icon">
+              <Columns3 />
+            </div>
+            <div className="lf-empty-title">
+              {status.totalBytes ? "当前结果没有命中行" : "打开 logcat 日志文件"}
+            </div>
+            <div className="lf-empty-copy">{emptyText}</div>
+            {!status.totalBytes && (
+              <div className="lf-empty-actions">
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new Event("lf:open-file"))}
+                >
+                  打开文件
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new Event("lf:focus-device"))}
+                >
+                  从设备抓取
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <div style={{ height: rv.getTotalSize(), position: "relative" }}>
             {items.map((vi) => {
@@ -584,7 +633,7 @@ export function LogTable() {
                         key={column.id}
                         title={column.id === "tag" ? row.tag : undefined}
                       >
-                        {renderCell(column, row, search)}
+                        {renderCell(column, row, search, filter.highlights)}
                       </span>
                     ))
                   ) : (

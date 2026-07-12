@@ -57,6 +57,7 @@ interface SessionState {
   setView: (view: RowsView) => void;
   setFilter: (patch: Partial<FilterSpec>) => void;
   setFilterField: (key: FilterFieldKey, patch: Partial<FilterSpec["pid"]>) => void;
+  setHighlightRule: (index: number, patch: Partial<FilterSpec["highlights"][number]>) => void;
   toggleLevel: (bit: number) => void;
   setSearch: (patch: Partial<SearchSpec>) => void;
   setSearchResult: (count: number, firstLine: number | null) => void;
@@ -98,6 +99,11 @@ export const DEFAULT_FILTER: FilterSpec = {
   tagExclude: field(),
   wordInclude: field(),
   wordExclude: field(),
+  highlights: [
+    { enabled: false, pattern: "", regex: false, caseSensitive: false, color: "yellow" },
+    { enabled: false, pattern: "", regex: false, caseSensitive: false, color: "green" },
+    { enabled: false, pattern: "", regex: false, caseSensitive: false, color: "blue" },
+  ],
 };
 
 const EMPTY: Status = {
@@ -130,6 +136,13 @@ export const DEFAULT_CONFIG: AppConfig = {
       { id: "tag", width: 154, visible: true },
       { id: "message", width: 360, visible: true },
     ],
+  },
+  recentFiles: [],
+  lastFilter: DEFAULT_FILTER,
+  commandBuffers: ["main"],
+  window: {
+    width: 1180,
+    height: 720,
   },
   configPath: "",
 };
@@ -238,6 +251,16 @@ export const useSession = create<SessionState>()((set) => ({
       filter: {
         ...s.filter,
         [key]: { ...s.filter[key], ...patch },
+      },
+      filterRevision: s.filterRevision + 1,
+    })),
+  setHighlightRule: (index, patch) =>
+    set((s) => ({
+      filter: {
+        ...s.filter,
+        highlights: s.filter.highlights.map((rule, ruleIndex) =>
+          ruleIndex === index ? { ...rule, ...patch } : rule,
+        ),
       },
       filterRevision: s.filterRevision + 1,
     })),

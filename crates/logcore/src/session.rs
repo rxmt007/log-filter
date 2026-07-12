@@ -235,6 +235,13 @@ impl Session {
         }
     }
 
+    pub fn result_index_for_line_no(&self, line_no: u64) -> Option<usize> {
+        if line_no == 0 {
+            return None;
+        }
+        self.current_result_index_for_source_idx(line_no - 1)
+    }
+
     fn source_idx_is_error(&self, source_idx: u64) -> bool {
         self.error_lines.binary_search(&source_idx).is_ok()
     }

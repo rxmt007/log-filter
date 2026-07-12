@@ -1,5 +1,6 @@
 use crate::model::LogEntry;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 const LEVEL_VERBOSE: u8 = 1 << 0;
 const LEVEL_DEBUG: u8 = 1 << 1;
@@ -10,7 +11,8 @@ const LEVEL_FATAL: u8 = 1 << 5;
 const LEVEL_ALL: u8 =
     LEVEL_VERBOSE | LEVEL_DEBUG | LEVEL_INFO | LEVEL_WARN | LEVEL_ERROR | LEVEL_FATAL;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
 pub struct LevelMask(u8);
 
 impl LevelMask {
@@ -66,7 +68,7 @@ impl Default for LevelMask {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FilterField {
     pub enabled: bool,
     pub pattern: String,
@@ -95,7 +97,28 @@ impl FilterField {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HighlightRule {
+    pub enabled: bool,
+    pub pattern: String,
+    pub regex: bool,
+    pub case_sensitive: bool,
+    pub color: String,
+}
+
+impl Default for HighlightRule {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pattern: String::new(),
+            regex: false,
+            case_sensitive: false,
+            color: "yellow".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FilterSpec {
     pub levels: LevelMask,
     pub marked_only: bool,
@@ -105,6 +128,8 @@ pub struct FilterSpec {
     pub tag_exclude: FilterField,
     pub word_include: FilterField,
     pub word_exclude: FilterField,
+    #[serde(default)]
+    pub highlights: Vec<HighlightRule>,
 }
 
 impl Default for FilterSpec {
@@ -118,6 +143,20 @@ impl Default for FilterSpec {
             tag_exclude: FilterField::default(),
             word_include: FilterField::default(),
             word_exclude: FilterField::default(),
+            highlights: vec![
+                HighlightRule {
+                    color: "yellow".to_string(),
+                    ..Default::default()
+                },
+                HighlightRule {
+                    color: "green".to_string(),
+                    ..Default::default()
+                },
+                HighlightRule {
+                    color: "blue".to_string(),
+                    ..Default::default()
+                },
+            ],
         }
     }
 }

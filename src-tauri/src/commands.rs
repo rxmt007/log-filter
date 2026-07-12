@@ -844,6 +844,17 @@ pub fn next_bookmark(
 }
 
 #[tauri::command]
+pub fn line_to_result_index(line_no: u64, state: State<AppState>) -> Option<NavigationTargetDto> {
+    let guard = state.lock_session();
+    let session = guard.as_ref()?;
+    let result_index = session.result_index_for_line_no(line_no)?;
+    Some(NavigationTargetDto {
+        line_no,
+        result_index,
+    })
+}
+
+#[tauri::command]
 pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
     let guard = state.lock_session();
     let Some(session) = guard.as_ref() else {

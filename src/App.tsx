@@ -1,4 +1,5 @@
-import { type CSSProperties, useEffect } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { Toolbar } from "@/components/Toolbar";
 import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
@@ -10,13 +11,19 @@ import {
   onIndexProgress,
   onSearchProgress,
   onStreamAppend,
-  setFilter,
+  openFile,
+  saveAppConfig,
+  setFilter as setFilterCommand,
 } from "@/lib/ipc";
+import { rememberRecentFile } from "@/lib/recent";
 import { useSession } from "@/store/session";
 
 export default function App() {
+  const [configReady, setConfigReady] = useState(false);
+  const beginSession = useSession((s) => s.beginSession);
   const setStatus = useSession((s) => s.setStatus);
   const filter = useSession((s) => s.filter);
+  const setFilterState = useSession((s) => s.setFilter);
   const filterRevision = useSession((s) => s.filterRevision);
   const sessionId = useSession((s) => s.sessionId);
   const hasFile = useSession((s) => s.status.totalBytes > 0);
@@ -28,14 +35,43 @@ export default function App() {
   const tailFollowing = useSession((s) => s.tailFollowing);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
+  const setLogcatBuffers = useSession((s) => s.setLogcatBuffers);
   const theme = useSession((s) => s.theme);
   const bookmarkSensitiveRevision = filter.markedOnly ? bookmarkRevision : 0;
+  const appConfigRef = useRef(appConfig);
+
+  useEffect(() => {
+    appConfigRef.current = appConfig;
+  }, [appConfig]);
 
   useEffect(() => {
     getConfig()
-      .then(setAppConfig)
-      .catch((err) => console.error("get_config failed", err));
-  }, [setAppConfig]);
+      .then((config) => {
+        setAppConfig(config);
+        if (config.lastFilter) setFilterState(config.lastFilter);
+        setLogcatBuffers(config.commandBuffers);
+        void getCurrentWindow().setSize(new LogicalSize(config.window.width, config.window.height));
+        setConfigReady(true);
+      })
+      .catch((err) => {
+        console.error("get_config failed", err);
+        setConfigReady(true);
+      });
+  }, [setAppConfig, setFilterState, setLogcatBuffers]);
+
+  const openPath = useCallback(
+    async (path: string) => {
+      const st = await openFile(path);
+      beginSession(st, path, "file");
+      const nextConfig = {
+        ...appConfigRef.current,
+        recentFiles: rememberRecentFile(appConfigRef.current.recentFiles, path),
+      };
+      const saved = await saveAppConfig(nextConfig);
+      setAppConfig(saved);
+    },
+    [beginSession, setAppConfig],
+  );
 
   useEffect(() => {
     const un = onIndexProgress(setStatus);
@@ -86,12 +122,80 @@ export default function App() {
   useEffect(() => {
     if (!hasFile) return;
     const timer = window.setTimeout(() => {
-      void setFilter(filter).catch((err) => {
+      void setFilterCommand(filter).catch((err) => {
         console.error("set_filter failed", err);
       });
     }, 220);
     return () => window.clearTimeout(timer);
   }, [filter, filterRevision, bookmarkSensitiveRevision, hasFile, sessionId]);
+
+  useEffect(() => {
+    if (!configReady) return;
+    const timer = window.setTimeout(() => {
+      const nextConfig = {
+        ...appConfigRef.current,
+        lastFilter: filter,
+      };
+      void saveAppConfig(nextConfig)
+        .then(setAppConfig)
+        .catch((err) => console.error("save last filter failed", err));
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [configReady, filter, filterRevision, setAppConfig]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.metaKey && !event.ctrlKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "o" || key === "f" || key === "g") {
+        event.preventDefault();
+      }
+      if (key === "o") window.dispatchEvent(new Event("lf:open-file"));
+      if (key === "f") window.dispatchEvent(new Event("lf:focus-search"));
+      if (key === "g") window.dispatchEvent(new Event("lf:focus-jump"));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const onDrop = (event: DragEvent) => {
+      event.preventDefault();
+      const file = event.dataTransfer?.files.item(0) as (File & { path?: string }) | null;
+      if (file?.path) {
+        void openPath(file.path).catch((err) => console.error("drop open failed", err));
+      }
+    };
+    const onDragOver = (event: DragEvent) => event.preventDefault();
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [openPath]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (!configReady) return;
+      const nextConfig = {
+        ...appConfigRef.current,
+        window: {
+          width: Math.round(window.innerWidth),
+          height: Math.round(window.innerHeight),
+        },
+      };
+      void saveAppConfig(nextConfig)
+        .then(setAppConfig)
+        .catch((err) => console.error("save window size failed", err));
+    };
+    const debounced = () => {
+      window.clearTimeout((debounced as { timer?: number }).timer);
+      (debounced as { timer?: number }).timer = window.setTimeout(onResize, 500);
+    };
+    window.addEventListener("resize", debounced);
+    return () => window.removeEventListener("resize", debounced);
+  }, [configReady, setAppConfig]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
