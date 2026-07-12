@@ -1,6 +1,7 @@
 pub mod adb;
 pub mod bookmarks;
 pub mod config;
+pub mod encoding;
 pub mod export;
 pub mod filter;
 pub mod indexer;

@@ -80,6 +80,10 @@ fn load_app_config() -> Result<logcore::config::AppConfig, String> {
     logcore::config::load_config(&path).map_err(|err| err.to_string())
 }
 
+fn config_encoding(config: &logcore::config::AppConfig) -> logcore::encoding::TextEncoding {
+    logcore::encoding::TextEncoding::from_config(&config.encoding)
+}
+
 fn resolve_adb_from_config(config: &logcore::config::AppConfig) -> Result<PathBuf, String> {
     logcore::adb::resolve_adb_path(config.adb_path.as_deref())
         .ok_or_else(|| "adb executable was not found".to_string())
@@ -347,8 +351,12 @@ fn append_search_for_range(
 #[tauri::command]
 pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result<Status, String> {
     stop_stream_task(state.inner(), false, true);
-    let session =
-        logcore::session::Session::open(&PathBuf::from(&path)).map_err(|e| e.to_string())?;
+    let config = load_app_config()?;
+    let session = logcore::session::Session::open_with_encoding(
+        &PathBuf::from(&path),
+        config_encoding(&config),
+    )
+    .map_err(|e| e.to_string())?;
     // 递增代号:上一个文件遗留的索引线程会在下一次循环检测到并自退。
     let my_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.next_filter_task_generation();
@@ -412,7 +420,9 @@ pub fn start_logcat(
     let buffers = parse_buffers(&request.buffers)?;
     let session_path = stream_session_path(&config)?;
     File::create(&session_path).map_err(|err| err.to_string())?;
-    let session = logcore::session::Session::open(&session_path).map_err(|err| err.to_string())?;
+    let session =
+        logcore::session::Session::open_with_encoding(&session_path, config_encoding(&config))
+            .map_err(|err| err.to_string())?;
     let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.next_filter_task_generation();
     state.next_search_task_generation();
@@ -471,8 +481,11 @@ pub fn clear_logcat(state: State<AppState>) -> Result<StreamControlDto, String> 
     };
     stop_stream_task(state.inner(), false, false);
     if let Some(path) = session_path {
+        let config = load_app_config()?;
         File::create(&path).map_err(|err| err.to_string())?;
-        let session = logcore::session::Session::open(&path).map_err(|err| err.to_string())?;
+        let session =
+            logcore::session::Session::open_with_encoding(&path, config_encoding(&config))
+                .map_err(|err| err.to_string())?;
         let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
         state.next_filter_task_generation();
         state.next_search_task_generation();
@@ -946,10 +959,22 @@ pub fn get_config() -> Result<AppConfigDto, String> {
 }
 
 #[tauri::command]
-pub fn set_config(config: AppConfigDto) -> Result<AppConfigDto, String> {
+pub fn set_config(
+    config: AppConfigDto,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<AppConfigDto, String> {
     let path = logcore::config::default_config_path();
     let config = logcore::config::AppConfig::try_from(config)?;
     logcore::config::save_config(&path, &config).map_err(|err| err.to_string())?;
+    {
+        let mut guard = state.lock_session();
+        if let Some(session) = guard.as_mut() {
+            session.set_encoding(config_encoding(&config));
+        }
+    }
+    let session_generation = state.generation.load(Ordering::SeqCst);
+    rerun_scans_after_index_done(state.inner(), &app, session_generation);
     Ok(AppConfigDto::from_config(config, path))
 }
 

@@ -1,4 +1,5 @@
 use crate::bookmarks::{BookmarkDirection, BookmarkStore};
+use crate::encoding::{ResolvedTextEncoding, TextEncoding};
 use crate::export::{write_raw_line, ExportSummary};
 use crate::filter::{FilterError, FilterMatcher, FilterSpec};
 use crate::indexer::{line_span, Indexer};
@@ -46,10 +47,15 @@ pub struct Session {
     bookmarks: BookmarkStore,
     error_lines: Vec<u64>,
     error_scan_lines: usize,
+    encoding: ResolvedTextEncoding,
 }
 
 impl Session {
     pub fn open(path: &Path) -> std::io::Result<Session> {
+        Self::open_with_encoding(path, TextEncoding::Utf8)
+    }
+
+    pub fn open_with_encoding(path: &Path, encoding: TextEncoding) -> std::io::Result<Session> {
         let source = MmapSource::open(path)?;
         let bookmarks = BookmarkStore::load_for_source(path).unwrap_or_default();
         Ok(Session {
@@ -64,7 +70,12 @@ impl Session {
             bookmarks,
             error_lines: Vec::new(),
             error_scan_lines: 0,
+            encoding: encoding.resolve(),
         })
+    }
+
+    pub fn set_encoding(&mut self, encoding: TextEncoding) {
+        self.encoding = encoding.resolve();
     }
 
     pub fn total_bytes(&self) -> usize {
@@ -575,7 +586,7 @@ impl Session {
     }
 
     fn parse_source_span(&self, start: usize, end: usize) -> LogEntry {
-        let text = String::from_utf8_lossy(&self.source.bytes()[start..end]);
+        let text = self.encoding.decode(&self.source.bytes()[start..end]);
         parse_line(&text)
     }
 

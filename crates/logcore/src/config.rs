@@ -1,3 +1,4 @@
+use crate::encoding::TextEncoding;
 use crate::filter::FilterSpec;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -195,9 +196,9 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn normalized(mut self) -> Self {
-        if self.encoding.trim().is_empty() {
-            self.encoding = "UTF-8".to_string();
-        }
+        self.encoding = TextEncoding::from_config(&self.encoding)
+            .config_label()
+            .to_string();
         self.font_size = self.font_size.clamp(10, 20);
         self.row_height = self.row_height.clamp(16, 32);
         self.table = self.table.normalized();
