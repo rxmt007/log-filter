@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
+  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
   WheelEvent as ReactWheelEvent,
@@ -41,6 +42,17 @@ interface ResizeState {
   columnId: ColumnId;
   startX: number;
   startWidth: number;
+}
+
+interface SelectionRange {
+  start: number;
+  end: number;
+}
+
+interface BookmarkMenuState {
+  x: number;
+  y: number;
+  range: SelectionRange;
 }
 
 interface FilledBlock {
@@ -125,12 +137,14 @@ function formatRowForClipboard(row: Row, columns: ColumnState[]) {
     .join("  ");
 }
 
-function setsEqual(left: Set<number>, right: Set<number>) {
-  if (left.size !== right.size) return false;
-  for (const item of left) {
-    if (!right.has(item)) return false;
-  }
-  return true;
+function normalizeSelectionRange(start: number, end: number): SelectionRange {
+  return start <= end ? { start, end } : { start: end, end: start };
+}
+
+function selectionRangeEqual(left: SelectionRange | null, right: SelectionRange | null) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.start === right.start && left.end === right.end;
 }
 
 function selectionIntersectsElement(selection: Selection, element: Element) {
@@ -231,7 +245,8 @@ export function LogTable() {
   const resizeRef = useRef<ResizeState | null>(null);
   const [, force] = useState(0);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
-  const [copySelectedRows, setCopySelectedRows] = useState<Set<number>>(() => new Set());
+  const [selectionRange, setSelectionRange] = useState<SelectionRange | null>(null);
+  const [bookmarkMenu, setBookmarkMenu] = useState<BookmarkMenuState | null>(null);
   const rowHeight = appConfig.rowHeight;
   const defaultResultOrder =
     filter.levels === ALL_LEVELS &&
@@ -364,15 +379,32 @@ export function LogTable() {
     return rows;
   }, []);
 
+  const collectRowsInRange = useCallback(
+    (range: SelectionRange | null = selectionRange) => {
+      if (!range) return [];
+      const rows: Array<{ index: number; row: Row }> = [];
+      for (let index = range.start; index <= range.end; index += 1) {
+        const row = cache.current.get(index);
+        if (row) rows.push({ index, row });
+      }
+      return rows;
+    },
+    [selectionRange],
+  );
+
   const refreshCopySelection = useCallback(() => {
     const indices = collectRowsFromSelection().map((item) => item.index);
-    const next = new Set(indices);
-    setCopySelectedRows((current) => (setsEqual(current, next) ? current : next));
+    if (indices.length === 0) {
+      setSelectionRange((current) => (current == null ? current : null));
+      return;
+    }
+    const next = normalizeSelectionRange(Math.min(...indices), Math.max(...indices));
+    setSelectionRange((current) => (selectionRangeEqual(current, next) ? current : next));
   }, [collectRowsFromSelection]);
 
   const handleTableCopy = useCallback(
     (event: ReactClipboardEvent<HTMLDivElement>) => {
-      const rows = collectRowsFromSelection();
+      const rows = collectRowsInRange();
       if (rows.length === 0) return;
       event.preventDefault();
       event.clipboardData.setData(
@@ -380,7 +412,7 @@ export function LogTable() {
         rows.map(({ row }) => formatRowForClipboard(row, visibleColumns)).join("\n"),
       );
     },
-    [collectRowsFromSelection, visibleColumns],
+    [collectRowsInRange, visibleColumns],
   );
 
   const handleTableWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
@@ -409,6 +441,8 @@ export function LogTable() {
     filledEpoch.current.clear();
     inflight.current.clear();
     parentRef.current?.scrollTo({ top: 0 });
+    setBookmarkMenu(null);
+    setSelectionRange(null);
     setViewportResultIndex(0);
     force((x) => x + 1);
   }, [sessionId, setViewportResultIndex]);
@@ -416,6 +450,8 @@ export function LogTable() {
   useEffect(() => {
     cacheEpoch.current += 1;
     inflight.current.clear();
+    setBookmarkMenu(null);
+    setSelectionRange(null);
     force((x) => x + 1);
   }, [filterResultRevision]);
 
@@ -423,6 +459,20 @@ export function LogTable() {
     document.addEventListener("selectionchange", refreshCopySelection);
     return () => document.removeEventListener("selectionchange", refreshCopySelection);
   }, [refreshCopySelection]);
+
+  useEffect(() => {
+    if (!bookmarkMenu) return;
+    const closeMenu = () => setBookmarkMenu(null);
+    const closeMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeMenuOnEscape);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeMenuOnEscape);
+    };
+  }, [bookmarkMenu]);
 
   const rv = useVirtualizer({
     count: total,
@@ -502,6 +552,45 @@ export function LogTable() {
     [setBookmarks],
   );
 
+  const openBookmarkMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>, index: number) => {
+      const row = cache.current.get(index);
+      if (!row) return;
+      event.preventDefault();
+      const range =
+        selectionRange && index >= selectionRange.start && index <= selectionRange.end
+          ? selectionRange
+          : { start: index, end: index };
+      setSelectionRange((current) => (selectionRangeEqual(current, range) ? current : range));
+      setBookmarkMenu({ x: event.clientX, y: event.clientY, range });
+      selectRow(row.lineNo, index);
+    },
+    [selectRow, selectionRange],
+  );
+
+  const applyBookmarkRange = useCallback(
+    async (targetMarked: boolean) => {
+      if (!bookmarkMenu) return;
+      const rows = collectRowsInRange(bookmarkMenu.range);
+      const touchedLines = new Set<number>();
+      for (const { row } of rows) {
+        if (touchedLines.has(row.lineNo) || row.marked === targetMarked) continue;
+        touchedLines.add(row.lineNo);
+        const marked = await toggleBookmark(row.lineNo);
+        cache.current.forEach((cached, index) => {
+          if (cached.lineNo === row.lineNo) {
+            cache.current.set(index, { ...cached, marked });
+          }
+        });
+      }
+      const bookmarks = await listBookmarks();
+      setBookmarks(bookmarks);
+      setBookmarkMenu(null);
+      force((x) => x + 1);
+    },
+    [bookmarkMenu, collectRowsInRange, setBookmarks],
+  );
+
   return (
     <div className="lf-table-shell">
       <div className="lf-table-header-wrap">
@@ -518,8 +607,10 @@ export function LogTable() {
           ))}
         </div>
         <button
+          aria-label="Show columns"
           className="lf-column-menu-button"
-          title="显示列"
+          data-tooltip="Show columns"
+          title="Show columns"
           type="button"
           onClick={() => setColumnMenuOpen((open) => !open)}
         >
@@ -563,7 +654,11 @@ export function LogTable() {
               return (
                 <div
                   className="lf-table-row"
-                  data-copy-selected={copySelectedRows.has(vi.index) || undefined}
+                  data-copy-selected={
+                    selectionRange && vi.index >= selectionRange.start && vi.index <= selectionRange.end
+                      ? true
+                      : undefined
+                  }
                   data-level={row?.level || ""}
                   data-marked={row?.marked || undefined}
                   data-result-index={vi.index}
@@ -574,6 +669,7 @@ export function LogTable() {
                     selectRow(row.lineNo, vi.index);
                   }}
                   onDoubleClick={() => row && toggleRowBookmark(row)}
+                  onContextMenu={(event) => openBookmarkMenu(event, vi.index)}
                   style={{
                     gridTemplateColumns,
                     height: rowHeight,
@@ -599,6 +695,21 @@ export function LogTable() {
           </div>
         )}
       </div>
+      {bookmarkMenu && (
+        <div
+          className="lf-table-context-menu"
+          style={{ left: bookmarkMenu.x, top: bookmarkMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button type="button" onClick={() => applyBookmarkRange(true)}>
+            标记选中行
+          </button>
+          <button type="button" onClick={() => applyBookmarkRange(false)}>
+            取消标记
+          </button>
+        </div>
+      )}
     </div>
   );
 }

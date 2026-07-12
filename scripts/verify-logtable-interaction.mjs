@@ -4,6 +4,7 @@ const files = {
   session: readFileSync("src/store/session.ts", "utf8"),
   minimap: readFileSync("src/components/Minimap.tsx", "utf8"),
   table: readFileSync("src/components/LogTable.tsx", "utf8"),
+  toolbar: readFileSync("src/components/Toolbar.tsx", "utf8"),
   css: readFileSync("src/index.css", "utf8"),
 };
 
@@ -71,5 +72,12 @@ expectContract(
   files.css.includes('.lf-table-row[data-copy-selected="true"] .lf-level') &&
     files.css.includes('.lf-table-row[data-copy-selected="true"] .lf-message'),
 );
+expectContract("toolbar declares tooltip text", files.toolbar.includes("data-tooltip"));
+expectContract("css styles shared tooltips", files.css.includes("[data-tooltip]::after"));
+expectContract("table tracks continuous selection range", files.table.includes("selectionRange"));
+expectContract("table collects continuous selected rows", files.table.includes("collectRowsInRange"));
+expectContract("table supports context menu bookmark actions", files.table.includes("bookmarkMenu"));
+expectContract("table exposes context menu handler", files.table.includes("onContextMenu"));
+expectContract("css styles table context menu", files.css.includes(".lf-table-context-menu"));
 
 console.log("log table interaction contracts verified");

@@ -241,6 +241,39 @@
   font-size: var(--lf-font-size);
 }
 
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  z-index: 60;
+  transform: translateX(-50%) translateY(2px);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 4px 7px;
+  border: 1px solid var(--lf-border-strong);
+  border-radius: 5px;
+  background: var(--lf-text);
+  color: var(--lf-bg);
+  font-size: 11px;
+  line-height: 1.2;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 .lf-main {
   flex: 1;
   min-height: 0;
@@ -846,6 +879,36 @@
   color: var(--lf-text-faint);
 }
 
+.lf-table-context-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 128px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--lf-border-strong);
+  border-radius: 7px;
+  background: var(--lf-panel-2);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+}
+
+.lf-table-context-menu button {
+  height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--lf-text);
+  padding: 0 9px;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lf-table-context-menu button:hover {
+  background: var(--lf-hover);
+}
+
 .lf-table-scroll {
   flex: 1;
   min-height: 0;
@@ -1146,7 +1209,7 @@
 .lf-table-row[data-copy-selected="true"] .lf-tag,
 .lf-table-row[data-copy-selected="true"] .lf-message {
   color: var(--lf-row-copy-selected-text);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .lf-hit {
