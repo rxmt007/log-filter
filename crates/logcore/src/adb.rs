@@ -136,8 +136,7 @@ pub fn build_logcat_command(
 pub fn list_devices(adb_path: &Path) -> io::Result<Vec<AdbDevice>> {
     let output = Command::new(adb_path).arg("devices").arg("-l").output()?;
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             String::from_utf8_lossy(&output.stderr).to_string(),
         ));
     }

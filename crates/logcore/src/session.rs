@@ -546,7 +546,12 @@ impl Session {
             let source_idx = match effective_view {
                 RowsView::All => view_idx,
                 RowsView::Filtered => self.filtered[view_idx] as usize,
-                RowsView::Bookmarks => (bookmark_lines[view_idx] - 1) as usize,
+                RowsView::Bookmarks => {
+                    let Some(line_no) = bookmark_lines.get(view_idx) else {
+                        continue;
+                    };
+                    (line_no - 1) as usize
+                }
                 RowsView::Errors => self.error_lines[view_idx] as usize,
             };
             if let Some(row) = self.parse_source_row(source_idx, frontier) {
@@ -1031,7 +1036,7 @@ mod tests {
     #[test]
     fn remap_and_index_step_reads_lines_appended_after_trailing_newline() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
-        write!(f, "04-20 12:06:02.125   146   179 D One: first\n").unwrap();
+        writeln!(f, "04-20 12:06:02.125   146   179 D One: first").unwrap();
         f.flush().unwrap();
         let mut s = Session::open(f.path()).unwrap();
 

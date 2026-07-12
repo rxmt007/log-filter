@@ -23,6 +23,18 @@ const SCAN_CHUNK_LINES: usize = 4096;
 const STREAM_READ_BUF: usize = 64 * 1024;
 const MAX_ROWS: usize = 512;
 
+struct StreamReaderArgs {
+    app_state: AppState,
+    app: AppHandle,
+    session_path: PathBuf,
+    session_generation: u64,
+    stream_generation: u64,
+    device_serial: String,
+    stdout: std::process::ChildStdout,
+    child: Arc<Mutex<std::process::Child>>,
+    start_rx: mpsc::Receiver<()>,
+}
+
 fn status_from(session: &logcore::session::Session, generation: u64) -> Status {
     Status {
         total_lines: session.total_lines(),
@@ -183,17 +195,17 @@ fn spawn_logcat_stream(
     let stream_generation = app_state.next_stream_generation();
     let serial = device.serial.clone();
     let (start_tx, start_rx) = mpsc::channel();
-    let handle = spawn_stream_reader(
-        app_state.clone(),
+    let handle = spawn_stream_reader(StreamReaderArgs {
+        app_state: app_state.clone(),
         app,
-        request.session_path.clone(),
-        request.session_generation,
+        session_path: request.session_path.clone(),
+        session_generation: request.session_generation,
         stream_generation,
-        serial.clone(),
+        device_serial: serial.clone(),
         stdout,
-        child.clone(),
+        child: child.clone(),
         start_rx,
-    );
+    });
 
     let mut runtime = app_state.lock_stream();
     runtime.task = Some(StreamTask {
@@ -208,18 +220,19 @@ fn spawn_logcat_stream(
     Ok(serial)
 }
 
-fn spawn_stream_reader(
-    app_state: AppState,
-    app: AppHandle,
-    session_path: PathBuf,
-    session_generation: u64,
-    stream_generation: u64,
-    device_serial: String,
-    stdout: std::process::ChildStdout,
-    child: Arc<Mutex<std::process::Child>>,
-    start_rx: mpsc::Receiver<()>,
-) -> JoinHandle<()> {
+fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
     std::thread::spawn(move || {
+        let StreamReaderArgs {
+            app_state,
+            app,
+            session_path,
+            session_generation,
+            stream_generation,
+            device_serial,
+            stdout,
+            child,
+            start_rx,
+        } = args;
         if start_rx.recv().is_ok() {
             if let Ok(mut writer) = OpenOptions::new().append(true).open(&session_path) {
                 let mut reader = BufReader::new(stdout);

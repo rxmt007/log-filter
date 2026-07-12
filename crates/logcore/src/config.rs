@@ -256,7 +256,7 @@ pub fn save_config(path: &Path, config: &AppConfig) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let text = toml::to_string_pretty(&config.clone().normalized())
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
+        .map_err(|err| io::Error::other(err.to_string()))?;
     fs::write(path, text)
 }
 

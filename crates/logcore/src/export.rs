@@ -19,7 +19,7 @@ mod tests {
 
     impl Write for FailingWriter {
         fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::Other, "boom"))
+            Err(io::Error::other("boom"))
         }
 
         fn flush(&mut self) -> io::Result<()> {

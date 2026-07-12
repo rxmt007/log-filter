@@ -132,7 +132,7 @@ impl Indexer {
 
     fn add_line_start(&mut self, offset: usize) {
         let line = self.total_lines;
-        if line % self.checkpoint_stride == 0 {
+        if line.is_multiple_of(self.checkpoint_stride) {
             self.checkpoints.push(LineCheckpoint {
                 line,
                 offset: offset as u64,

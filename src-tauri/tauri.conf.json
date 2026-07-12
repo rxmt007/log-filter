@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "LogFilter",
-        "width": 800,
-        "height": 600
+        "width": 1180,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 560
       }
     ],
     "security": {
@@ -23,7 +25,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["msi", "nsis", "dmg", "deb"],
+    "publisher": "rxmt007",
+    "shortDescription": "Cross-platform Android logcat viewer for huge log files",
+    "longDescription": "LogFilter is a cross-platform desktop Android logcat viewer with mmap-backed indexing, filtering, search, live adb capture, export, and large-file splitting.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

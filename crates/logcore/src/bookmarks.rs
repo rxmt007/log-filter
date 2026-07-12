@@ -99,8 +99,8 @@ impl BookmarkStore {
             source: path.to_string_lossy().to_string(),
             lines: self.list(),
         };
-        let text = toml::to_string_pretty(&sidecar)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string()))?;
+        let text =
+            toml::to_string_pretty(&sidecar).map_err(|err| io::Error::other(err.to_string()))?;
         fs::write(sidecar_path_for(path), text)
     }
 }

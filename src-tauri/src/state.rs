@@ -17,6 +17,7 @@ pub struct AppState {
     pub stream: Arc<Mutex<StreamRuntime>>,
 }
 
+#[derive(Default)]
 pub struct StreamRuntime {
     pub task: Option<StreamTask>,
     pub last_request: Option<StreamRequestState>,
@@ -37,16 +38,6 @@ pub struct StreamRequestState {
     pub buffers: Vec<String>,
     pub session_path: PathBuf,
     pub session_generation: u64,
-}
-
-impl Default for StreamRuntime {
-    fn default() -> Self {
-        Self {
-            task: None,
-            last_request: None,
-            paused: false,
-        }
-    }
 }
 
 impl AppState {
