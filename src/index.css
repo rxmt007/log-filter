@@ -173,9 +173,9 @@
   --lf-row-marked: #dbeafe;
   --lf-row-marked-border: #2563eb;
   --lf-row-marked-icon: #1d4ed8;
-  --lf-row-copy-selected: #b9d7ff;
+  --lf-row-copy-selected: #cfe3ff;
   --lf-row-copy-selected-border: #1d4ed8;
-  --lf-row-copy-selected-text: #123a7a;
+  --lf-row-copy-selected-text: #17345f;
   --lf-chip-v: #f1f2f4;
   --lf-chip-d: #e7f0fe;
   --lf-chip-i: #e6f6ed;
@@ -216,7 +216,7 @@
   --lf-row-marked: rgba(91, 157, 255, 0.2);
   --lf-row-marked-border: #8ebaff;
   --lf-row-marked-icon: #b7d3ff;
-  --lf-row-copy-selected: rgba(91, 157, 255, 0.34);
+  --lf-row-copy-selected: rgba(91, 157, 255, 0.24);
   --lf-row-copy-selected-border: #b7d3ff;
   --lf-row-copy-selected-text: #d7e6ff;
   --lf-chip-v: #252b33;
@@ -1127,6 +1127,13 @@
 
 .lf-table-row[data-copy-selected="true"] {
   border-left-color: var(--lf-row-copy-selected-border);
+  background: var(--lf-row-copy-selected);
+}
+
+.lf-table-row[data-copy-selected="true"][data-level="W"],
+.lf-table-row[data-copy-selected="true"][data-level="E"],
+.lf-table-row[data-copy-selected="true"][data-level="F"],
+.lf-table-row[data-copy-selected="true"][data-marked="true"] {
   background: var(--lf-row-copy-selected);
 }
 

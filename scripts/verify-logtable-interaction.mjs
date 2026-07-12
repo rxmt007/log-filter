@@ -72,6 +72,18 @@ expectContract(
   files.css.includes('.lf-table-row[data-copy-selected="true"] .lf-level') &&
     files.css.includes('.lf-table-row[data-copy-selected="true"] .lf-message'),
 );
+expectContract(
+  "css makes copy-selected rows override level backgrounds",
+  files.css.includes('.lf-table-row[data-copy-selected="true"][data-level="W"]') &&
+    files.css.includes('.lf-table-row[data-copy-selected="true"][data-level="E"]') &&
+    files.css.includes('.lf-table-row[data-copy-selected="true"][data-level="F"]') &&
+    files.css.includes('.lf-table-row[data-copy-selected="true"][data-marked="true"]'),
+);
+expectContract(
+  "css uses subdued copy-selected color tokens",
+  files.css.includes("--lf-row-copy-selected: #cfe3ff") &&
+    files.css.includes("--lf-row-copy-selected-text: #17345f"),
+);
 expectContract("toolbar declares tooltip text", files.toolbar.includes("data-tooltip"));
 expectContract("css styles shared tooltips", files.css.includes("[data-tooltip]::after"));
 expectContract("table tracks continuous selection range", files.table.includes("selectionRange"));
