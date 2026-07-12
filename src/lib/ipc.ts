@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppConfig,
+  DeviceList,
   ExportRequest,
   ExportSummary,
   FilterDone,
@@ -15,10 +16,26 @@ import type {
   SearchSpec,
   SplitRequest,
   SplitSummary,
+  StartLogcatRequest,
   Status,
+  StreamAppend,
+  StreamControl,
 } from "@/types";
 
 export const openFile = (path: string) => invoke<Status>("open_file", { path });
+
+export const listDevices = () => invoke<DeviceList>("list_devices");
+
+export const startLogcat = (request: StartLogcatRequest) =>
+  invoke<StreamControl>("start_logcat", { request });
+
+export const pauseLogcat = () => invoke<StreamControl>("pause_logcat");
+
+export const resumeLogcat = () => invoke<StreamControl>("resume_logcat");
+
+export const stopLogcat = () => invoke<StreamControl>("stop_logcat");
+
+export const clearLogcat = () => invoke<StreamControl>("clear_logcat");
 
 export const getStatus = () => invoke<Status>("get_status");
 
@@ -61,3 +78,6 @@ export const onFilterDone = (cb: (done: FilterDone) => void): Promise<UnlistenFn
 
 export const onSearchProgress = (cb: (progress: SearchProgress) => void): Promise<UnlistenFn> =>
   listen<SearchProgress>("search:progress", (e) => cb(e.payload));
+
+export const onStreamAppend = (cb: (append: StreamAppend) => void): Promise<UnlistenFn> =>
+  listen<StreamAppend>("stream:append", (e) => cb(e.payload));

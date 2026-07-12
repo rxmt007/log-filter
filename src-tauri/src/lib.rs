@@ -10,6 +10,12 @@ pub fn run() {
         .manage(state::AppState::new())
         .invoke_handler(tauri::generate_handler![
             commands::open_file,
+            commands::list_devices,
+            commands::start_logcat,
+            commands::pause_logcat,
+            commands::resume_logcat,
+            commands::stop_logcat,
+            commands::clear_logcat,
             commands::get_status,
             commands::get_rows,
             commands::set_filter,

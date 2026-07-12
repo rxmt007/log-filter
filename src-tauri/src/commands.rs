@@ -1,17 +1,26 @@
 use crate::dto::{
-    AppConfigDto, ExportRequest, ExportSummaryDto, FilterDoneDto, FilterSpecDto, MinimapDto,
-    NavigationTargetDto, Row, SearchProgressDto, SearchResult, SearchSpecDto, SplitRequest,
-    SplitSummaryDto, Status,
+    AppConfigDto, DeviceListDto, ExportRequest, ExportSummaryDto, FilterDoneDto, FilterSpecDto,
+    MinimapDto, NavigationTargetDto, Row, SearchProgressDto, SearchResult, SearchSpecDto,
+    SplitRequest, SplitSummaryDto, StartLogcatRequest, Status, StreamAppendDto, StreamControlDto,
 };
 use crate::state::AppState;
+use crate::state::{StreamRequestState, StreamTask};
 use logcore::filter::{FilterMatcher, FilterSpec};
 use logcore::search::{SearchMatcher, SearchSpec};
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
 const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
 const SCAN_CHUNK_LINES: usize = 4096;
+const STREAM_READ_BUF: usize = 64 * 1024;
 const MAX_ROWS: usize = 512;
 
 fn status_from(session: &logcore::session::Session, generation: u64) -> Status {
@@ -54,8 +63,277 @@ fn clamp_row_count(count: usize) -> usize {
     count.min(MAX_ROWS)
 }
 
+fn load_app_config() -> Result<logcore::config::AppConfig, String> {
+    let path = logcore::config::default_config_path();
+    logcore::config::load_config(&path).map_err(|err| err.to_string())
+}
+
+fn resolve_adb_from_config(config: &logcore::config::AppConfig) -> Result<PathBuf, String> {
+    logcore::adb::resolve_adb_path(config.adb_path.as_deref())
+        .ok_or_else(|| "adb executable was not found".to_string())
+}
+
+fn parse_buffers(buffers: &[String]) -> Result<Vec<logcore::adb::LogcatBuffer>, String> {
+    if buffers.is_empty() {
+        return Ok(vec![logcore::adb::LogcatBuffer::Main]);
+    }
+    buffers
+        .iter()
+        .map(|buffer| logcore::adb::LogcatBuffer::try_from(buffer.as_str()))
+        .collect()
+}
+
+fn stream_session_path(config: &logcore::config::AppConfig) -> Result<PathBuf, String> {
+    let base_dir = config
+        .storage_dir
+        .clone()
+        .unwrap_or_else(|| logcore::config::default_config_dir().join("sessions"));
+    fs::create_dir_all(&base_dir).map_err(|err| err.to_string())?;
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| err.to_string())?
+        .as_millis();
+    Ok(base_dir.join(format!("logcat-{millis}.log")))
+}
+
+fn stream_status(state: &AppState) -> StreamControlDto {
+    let status = {
+        let generation = state.generation.load(Ordering::SeqCst);
+        let guard = state.lock_session();
+        match guard.as_ref() {
+            Some(session) => status_from(session, generation),
+            None => empty_status(generation),
+        }
+    };
+    let stream = state.lock_stream();
+    StreamControlDto {
+        status,
+        running: stream.task.is_some(),
+        paused: stream.paused,
+        device_serial: stream
+            .task
+            .as_ref()
+            .map(|task| task.serial.clone())
+            .or_else(|| {
+                stream
+                    .last_request
+                    .as_ref()
+                    .and_then(|request| request.requested_serial.clone())
+            }),
+        session_path: stream
+            .last_request
+            .as_ref()
+            .map(|request| request.session_path.to_string_lossy().to_string()),
+    }
+}
+
+fn lock_child(child: &Arc<Mutex<std::process::Child>>) -> MutexGuard<'_, std::process::Child> {
+    match child.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn take_stream_task(
+    state: &AppState,
+    paused: bool,
+    clear_last_request: bool,
+) -> Option<StreamTask> {
+    state.next_stream_generation();
+    let mut runtime = state.lock_stream();
+    runtime.paused = paused;
+    if clear_last_request {
+        runtime.last_request = None;
+    }
+    runtime.task.take()
+}
+
+fn stop_stream_task(state: &AppState, paused: bool, clear_last_request: bool) {
+    let Some(task) = take_stream_task(state, paused, clear_last_request) else {
+        return;
+    };
+    {
+        let mut child = lock_child(&task.child);
+        let _ = child.kill();
+    }
+    let _ = task.handle.join();
+}
+
+fn spawn_logcat_stream(
+    app_state: AppState,
+    app: AppHandle,
+    request: StreamRequestState,
+) -> Result<String, String> {
+    let devices = logcore::adb::list_devices(&request.adb_path).map_err(|err| err.to_string())?;
+    let device = logcore::adb::select_online_device(&devices, request.requested_serial.as_deref())?;
+    let buffers = parse_buffers(&request.buffers)?;
+    let command =
+        logcore::adb::build_logcat_command(request.adb_path.clone(), &device.serial, &buffers);
+    let mut child = Command::new(&command.adb_path)
+        .args(&command.args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("failed to start adb logcat: {err}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture adb stdout".to_string())?;
+    let child = Arc::new(Mutex::new(child));
+    let stream_generation = app_state.next_stream_generation();
+    let serial = device.serial.clone();
+    let (start_tx, start_rx) = mpsc::channel();
+    let handle = spawn_stream_reader(
+        app_state.clone(),
+        app,
+        request.session_path.clone(),
+        request.session_generation,
+        stream_generation,
+        serial.clone(),
+        stdout,
+        child.clone(),
+        start_rx,
+    );
+
+    let mut runtime = app_state.lock_stream();
+    runtime.task = Some(StreamTask {
+        generation: stream_generation,
+        child,
+        handle,
+        serial: serial.clone(),
+    });
+    runtime.last_request = Some(request);
+    runtime.paused = false;
+    let _ = start_tx.send(());
+    Ok(serial)
+}
+
+fn spawn_stream_reader(
+    app_state: AppState,
+    app: AppHandle,
+    session_path: PathBuf,
+    session_generation: u64,
+    stream_generation: u64,
+    device_serial: String,
+    stdout: std::process::ChildStdout,
+    child: Arc<Mutex<std::process::Child>>,
+    start_rx: mpsc::Receiver<()>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        if start_rx.recv().is_ok() {
+            if let Ok(mut writer) = OpenOptions::new().append(true).open(&session_path) {
+                let mut reader = BufReader::new(stdout);
+                let mut buf = vec![0_u8; STREAM_READ_BUF];
+
+                loop {
+                    if app_state.generation.load(Ordering::SeqCst) != session_generation
+                        || !app_state.is_current_stream_task(stream_generation)
+                    {
+                        break;
+                    }
+
+                    let read = match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(read) => read,
+                        Err(_) => break,
+                    };
+                    if writer.write_all(&buf[..read]).is_err() || writer.flush().is_err() {
+                        break;
+                    }
+
+                    let update = {
+                        let mut guard = app_state.lock_session();
+                        let Some(session) = guard.as_mut() else {
+                            break;
+                        };
+                        let previous_total = session.total_lines();
+                        if session.remap_and_index_step(INDEX_BUDGET).is_err() {
+                            break;
+                        }
+                        let total_lines = session.total_lines();
+                        let filter_done =
+                            append_filter_for_range(session, previous_total, total_lines);
+                        let search_progress =
+                            append_search_for_range(session, previous_total, total_lines);
+                        let status = status_from(session, session_generation);
+                        (status, filter_done, search_progress)
+                    };
+
+                    let (status, filter_done, search_progress) = update;
+                    if let Some(filtered_lines) = filter_done {
+                        let _ = app.emit(
+                            "filter:done",
+                            FilterDoneDto {
+                                filtered_lines,
+                                generation: session_generation,
+                            },
+                        );
+                    }
+                    if let Some(summary) = search_progress {
+                        let _ = app.emit(
+                            "search:progress",
+                            SearchProgressDto {
+                                scanned: status.total_lines,
+                                matches: summary.count,
+                                first_line: summary.first,
+                                done: true,
+                                generation: session_generation,
+                            },
+                        );
+                    }
+                    let _ = app.emit(
+                        "stream:append",
+                        StreamAppendDto {
+                            appended_bytes: read as u64,
+                            status,
+                            device_serial: device_serial.clone(),
+                        },
+                    );
+                }
+            }
+        }
+
+        {
+            let mut child = lock_child(&child);
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let mut runtime = app_state.lock_stream();
+        if runtime
+            .task
+            .as_ref()
+            .is_some_and(|task| task.generation == stream_generation)
+        {
+            runtime.task = None;
+        }
+    })
+}
+
+fn append_filter_for_range(
+    session: &mut logcore::session::Session,
+    start: usize,
+    end: usize,
+) -> Option<usize> {
+    let spec = session.active_filter_spec()?;
+    let matcher = FilterMatcher::new(&spec).ok()?;
+    let matches = session.filter_indexed_range(&matcher, start, end);
+    Some(session.append_filter_results(&spec, matches))
+}
+
+fn append_search_for_range(
+    session: &mut logcore::session::Session,
+    start: usize,
+    end: usize,
+) -> Option<logcore::search::SearchSummary> {
+    let spec = session.active_search_spec()?;
+    let matcher = SearchMatcher::new(&spec).ok()?;
+    let matches = session.search_indexed_range(&matcher, start, end);
+    Some(session.append_search_results(&spec, matches))
+}
+
 #[tauri::command]
 pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result<Status, String> {
+    stop_stream_task(state.inner(), false, true);
     let session =
         logcore::session::Session::open(&PathBuf::from(&path)).map_err(|e| e.to_string())?;
     // 递增代号:上一个文件遗留的索引线程会在下一次循环检测到并自退。
@@ -96,6 +374,102 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
     });
 
     Ok(status)
+}
+
+#[tauri::command]
+pub fn list_devices() -> Result<DeviceListDto, String> {
+    let config = load_app_config()?;
+    let adb_path = resolve_adb_from_config(&config)?;
+    let devices = logcore::adb::list_devices(&adb_path).map_err(|err| err.to_string())?;
+    Ok(DeviceListDto {
+        adb_path: Some(adb_path.to_string_lossy().to_string()),
+        devices: devices.into_iter().map(Into::into).collect(),
+    })
+}
+
+#[tauri::command]
+pub fn start_logcat(
+    request: StartLogcatRequest,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<StreamControlDto, String> {
+    stop_stream_task(state.inner(), false, true);
+    let config = load_app_config()?;
+    let adb_path = resolve_adb_from_config(&config)?;
+    let buffers = parse_buffers(&request.buffers)?;
+    let session_path = stream_session_path(&config)?;
+    File::create(&session_path).map_err(|err| err.to_string())?;
+    let session = logcore::session::Session::open(&session_path).map_err(|err| err.to_string())?;
+    let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.next_filter_task_generation();
+    state.next_search_task_generation();
+    *state.lock_session() = Some(session);
+
+    let request_state = StreamRequestState {
+        adb_path,
+        requested_serial: request
+            .device_serial
+            .filter(|serial| !serial.trim().is_empty()),
+        buffers: buffers
+            .iter()
+            .map(|buffer| buffer.as_arg().to_string())
+            .collect(),
+        session_path,
+        session_generation,
+    };
+    spawn_logcat_stream(state.inner().clone(), app, request_state)?;
+    Ok(stream_status(state.inner()))
+}
+
+#[tauri::command]
+pub fn pause_logcat(state: State<AppState>) -> StreamControlDto {
+    stop_stream_task(state.inner(), true, false);
+    stream_status(state.inner())
+}
+
+#[tauri::command]
+pub fn resume_logcat(state: State<AppState>, app: AppHandle) -> Result<StreamControlDto, String> {
+    let request = {
+        let runtime = state.lock_stream();
+        runtime
+            .last_request
+            .clone()
+            .ok_or_else(|| "no paused logcat session to resume".to_string())?
+    };
+    stop_stream_task(state.inner(), true, false);
+    spawn_logcat_stream(state.inner().clone(), app, request)?;
+    Ok(stream_status(state.inner()))
+}
+
+#[tauri::command]
+pub fn stop_logcat(state: State<AppState>) -> StreamControlDto {
+    stop_stream_task(state.inner(), false, false);
+    stream_status(state.inner())
+}
+
+#[tauri::command]
+pub fn clear_logcat(state: State<AppState>) -> Result<StreamControlDto, String> {
+    let session_path = {
+        let runtime = state.lock_stream();
+        runtime
+            .last_request
+            .as_ref()
+            .map(|request| request.session_path.clone())
+    };
+    stop_stream_task(state.inner(), false, false);
+    if let Some(path) = session_path {
+        File::create(&path).map_err(|err| err.to_string())?;
+        let session = logcore::session::Session::open(&path).map_err(|err| err.to_string())?;
+        let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        state.next_filter_task_generation();
+        state.next_search_task_generation();
+        *state.lock_session() = Some(session);
+        let mut runtime = state.lock_stream();
+        if let Some(request) = runtime.last_request.as_mut() {
+            request.session_generation = session_generation;
+        }
+    }
+    Ok(stream_status(state.inner()))
 }
 
 fn rerun_scans_after_index_done(app_state: &AppState, app: &AppHandle, session_generation: u64) {
@@ -311,7 +685,16 @@ fn spawn_filter_task(
         let filtered_lines = {
             let mut guard = app_state.lock_session();
             match guard.as_mut() {
-                Some(session) => session.apply_filter_results(&spec, matches),
+                Some(session) => {
+                    let mut count = session.apply_filter_results(&spec, matches);
+                    let current_total = session.total_lines();
+                    if current_total > total_lines {
+                        let extra =
+                            session.filter_indexed_range(&matcher, total_lines, current_total);
+                        count = session.append_filter_results(&spec, extra);
+                    }
+                    count
+                }
                 None => return,
             }
         };
@@ -386,7 +769,16 @@ fn spawn_search_task(
         let summary = {
             let mut guard = app_state.lock_session();
             match guard.as_mut() {
-                Some(session) => session.apply_search_results(&spec, matches),
+                Some(session) => {
+                    let mut summary = session.apply_search_results(&spec, matches);
+                    let current_total = session.total_lines();
+                    if current_total > total_lines {
+                        let extra =
+                            session.search_indexed_range(&matcher, total_lines, current_total);
+                        summary = session.append_search_results(&spec, extra);
+                    }
+                    summary
+                }
                 None => return,
             }
         };
@@ -566,5 +958,22 @@ mod tests {
     fn clamps_visible_row_requests_to_ipc_limit() {
         assert_eq!(clamp_row_count(32), 32);
         assert_eq!(clamp_row_count(MAX_ROWS + 1), MAX_ROWS);
+    }
+
+    #[test]
+    fn parses_logcat_buffers_and_rejects_unknown_values() {
+        let buffers = parse_buffers(&["main".to_string(), "crash".to_string()]).unwrap();
+        assert_eq!(
+            buffers,
+            vec![
+                logcore::adb::LogcatBuffer::Main,
+                logcore::adb::LogcatBuffer::Crash
+            ]
+        );
+        assert_eq!(
+            parse_buffers(&[]).unwrap(),
+            vec![logcore::adb::LogcatBuffer::Main]
+        );
+        assert!(parse_buffers(&["kernel".to_string()]).is_err());
     }
 }

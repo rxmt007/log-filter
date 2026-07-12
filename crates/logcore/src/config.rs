@@ -266,9 +266,7 @@ mod tests {
             .collect();
         assert_eq!(
             ids,
-            vec![
-                "bookmark", "lineNo", "date", "time", "level", "pid", "tid", "tag", "message",
-            ]
+            vec!["bookmark", "lineNo", "date", "time", "level", "pid", "tid", "tag", "message",]
         );
         assert!(config.table.columns.iter().all(|column| column.visible));
         assert!(config.table.columns.iter().all(|column| column.width > 0));

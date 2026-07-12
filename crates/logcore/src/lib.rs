@@ -1,3 +1,4 @@
+pub mod adb;
 pub mod bookmarks;
 pub mod config;
 pub mod export;

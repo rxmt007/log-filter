@@ -415,6 +415,30 @@
   white-space: nowrap;
 }
 
+.lf-select-control {
+  position: relative;
+}
+
+.lf-select-control select {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lf-select-control select:disabled {
+  cursor: default;
+  color: var(--lf-text-dim);
+  opacity: 1;
+}
+
 .lf-device {
   flex: 5 1 0;
 }
@@ -429,6 +453,12 @@
 
 .lf-command {
   flex: 8 1 0;
+}
+
+.lf-command select {
+  font-family: var(--lf-mono);
+  font-size: 11px;
+  color: var(--lf-text-dim);
 }
 
 .lf-command code {

@@ -21,6 +21,40 @@ export interface Status {
   generation: number;
 }
 
+export interface AdbDevice {
+  serial: string;
+  state: string;
+  model: string | null;
+  product: string | null;
+  online: boolean;
+}
+
+export interface DeviceList {
+  adbPath: string | null;
+  devices: AdbDevice[];
+}
+
+export type LogcatBuffer = "main" | "system" | "radio" | "events" | "crash";
+
+export interface StartLogcatRequest {
+  deviceSerial?: string | null;
+  buffers: LogcatBuffer[];
+}
+
+export interface StreamAppend {
+  appendedBytes: number;
+  status: Status;
+  deviceSerial: string;
+}
+
+export interface StreamControl {
+  status: Status;
+  running: boolean;
+  paused: boolean;
+  deviceSerial: string | null;
+  sessionPath: string | null;
+}
+
 export interface FilterField {
   enabled: boolean;
   pattern: string;
@@ -64,7 +98,7 @@ export interface SearchProgress {
 
 export interface ScrollRequest {
   index: number;
-  align: "auto" | "center" | "start";
+  align: "auto" | "center" | "start" | "end";
   reason: "minimap" | "bookmark" | "search";
   nonce: number;
 }
@@ -82,6 +116,8 @@ export interface NavigationTarget {
 export type RowsView = "all" | "filtered" | "bookmarks" | "errors";
 
 export type ThemeMode = "light" | "dark";
+
+export type SourceMode = "file" | "adb";
 
 export interface TableColumnConfig {
   id: string;

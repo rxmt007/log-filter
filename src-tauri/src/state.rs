@@ -1,6 +1,9 @@
 use logcore::session::Session;
+use std::path::PathBuf;
+use std::process::Child;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
 
 /// 全局应用状态:当前会话 + 打开代号(generation)。
 /// 代号用于让被后续 open 取代的旧索引线程自行退出。
@@ -10,6 +13,40 @@ pub struct AppState {
     pub generation: Arc<AtomicU64>,
     pub filter_task_generation: Arc<AtomicU64>,
     pub search_task_generation: Arc<AtomicU64>,
+    pub stream_generation: Arc<AtomicU64>,
+    pub stream: Arc<Mutex<StreamRuntime>>,
+}
+
+pub struct StreamRuntime {
+    pub task: Option<StreamTask>,
+    pub last_request: Option<StreamRequestState>,
+    pub paused: bool,
+}
+
+pub struct StreamTask {
+    pub generation: u64,
+    pub child: Arc<Mutex<Child>>,
+    pub handle: JoinHandle<()>,
+    pub serial: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamRequestState {
+    pub adb_path: PathBuf,
+    pub requested_serial: Option<String>,
+    pub buffers: Vec<String>,
+    pub session_path: PathBuf,
+    pub session_generation: u64,
+}
+
+impl Default for StreamRuntime {
+    fn default() -> Self {
+        Self {
+            task: None,
+            last_request: None,
+            paused: false,
+        }
+    }
 }
 
 impl AppState {
@@ -19,6 +56,8 @@ impl AppState {
             generation: Arc::new(AtomicU64::new(0)),
             filter_task_generation: Arc::new(AtomicU64::new(0)),
             search_task_generation: Arc::new(AtomicU64::new(0)),
+            stream_generation: Arc::new(AtomicU64::new(0)),
+            stream: Arc::new(Mutex::new(StreamRuntime::default())),
         }
     }
 
@@ -49,6 +88,21 @@ impl AppState {
 
     pub fn is_current_search_task(&self, task_generation: u64) -> bool {
         self.search_task_generation.load(Ordering::SeqCst) == task_generation
+    }
+
+    pub fn lock_stream(&self) -> MutexGuard<'_, StreamRuntime> {
+        match self.stream.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    pub fn next_stream_generation(&self) -> u64 {
+        self.stream_generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn is_current_stream_task(&self, task_generation: u64) -> bool {
+        self.stream_generation.load(Ordering::SeqCst) == task_generation
     }
 }
 
@@ -89,5 +143,16 @@ mod tests {
         let second_search = state.next_search_task_generation();
         assert!(!state.is_current_search_task(first_search));
         assert!(state.is_current_search_task(second_search));
+    }
+
+    #[test]
+    fn stream_task_generation_cancels_stale_work() {
+        let state = AppState::new();
+
+        let first = state.next_stream_generation();
+        let second = state.next_stream_generation();
+
+        assert!(!state.is_current_stream_task(first));
+        assert!(state.is_current_stream_task(second));
     }
 }

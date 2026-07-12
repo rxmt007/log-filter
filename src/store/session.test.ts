@@ -22,6 +22,11 @@ describe("session store", () => {
       selectedResultIndex: 50,
       viewportResultIndex: 75,
       scrollRequest: null,
+      sourceMode: "file",
+      selectedDeviceSerial: null,
+      devices: [],
+      streamRunning: false,
+      streamPaused: false,
     });
   });
 
@@ -39,5 +44,30 @@ describe("session store", () => {
     expect(useSession.getState().viewportResultIndex).toBe(19);
     expect(useSession.getState().status.filteredLines).toBe(20);
     expect(useSession.getState().filterResultRevision).toBe(1);
+  });
+
+  it("selects the first online adb device and applies stream control state", () => {
+    useSession.getState().setDevices([
+      { serial: "offline", state: "offline", model: null, product: null, online: false },
+      { serial: "usb", state: "device", model: "Pixel", product: null, online: true },
+    ]);
+
+    expect(useSession.getState().selectedDeviceSerial).toBe("usb");
+
+    useSession.getState().setStreamControl({
+      status: { ...status, totalLines: 2, filteredLines: 2 },
+      running: true,
+      paused: false,
+      deviceSerial: "usb",
+      sessionPath: "/tmp/logcat.log",
+    });
+
+    expect(useSession.getState()).toMatchObject({
+      sourceMode: "adb",
+      streamRunning: true,
+      streamPaused: false,
+      sourcePath: "/tmp/logcat.log",
+      selectedDeviceSerial: "usb",
+    });
   });
 });

@@ -9,6 +9,7 @@ import {
   onFilterDone,
   onIndexProgress,
   onSearchProgress,
+  onStreamAppend,
   setFilter,
 } from "@/lib/ipc";
 import { useSession } from "@/store/session";
@@ -24,6 +25,7 @@ export default function App() {
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const selectedLine = useSession((s) => s.selectedLine);
   const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
+  const tailFollowing = useSession((s) => s.tailFollowing);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const theme = useSession((s) => s.theme);
@@ -63,6 +65,23 @@ export default function App() {
       un.then((f) => f());
     };
   }, [setSearchResult]);
+
+  useEffect(() => {
+    const un = onStreamAppend((append) => {
+      const state = useSession.getState();
+      if (append.status.generation < state.status.generation) return;
+      setStatus(append.status);
+      if (state.tailFollowing && append.status.filteredLines > 0) {
+        navigateToResultIndex(append.status.filteredLines - 1, {
+          align: "end",
+          reason: "minimap",
+        });
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [navigateToResultIndex, setStatus, tailFollowing]);
 
   useEffect(() => {
     if (!hasFile) return;

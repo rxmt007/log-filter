@@ -30,6 +30,61 @@ pub struct Status {
     pub generation: u64,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AdbDeviceDto {
+    pub serial: String,
+    pub state: String,
+    pub model: Option<String>,
+    pub product: Option<String>,
+    pub online: bool,
+}
+
+impl From<logcore::adb::AdbDevice> for AdbDeviceDto {
+    fn from(value: logcore::adb::AdbDevice) -> Self {
+        let online = value.online();
+        Self {
+            serial: value.serial,
+            state: value.state,
+            model: value.model,
+            product: value.product,
+            online,
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceListDto {
+    pub adb_path: Option<String>,
+    pub devices: Vec<AdbDeviceDto>,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StartLogcatRequest {
+    pub device_serial: Option<String>,
+    pub buffers: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamAppendDto {
+    pub appended_bytes: u64,
+    pub status: Status,
+    pub device_serial: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamControlDto {
+    pub status: Status,
+    pub running: bool,
+    pub paused: bool,
+    pub device_serial: Option<String>,
+    pub session_path: Option<String>,
+}
+
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterFieldDto {
@@ -348,6 +403,42 @@ mod tests {
                 "firstLine": 42,
                 "done": true,
                 "generation": 9
+            })
+        );
+    }
+
+    #[test]
+    fn stream_append_event_serializes_nested_status() {
+        let payload = StreamAppendDto {
+            appended_bytes: 128,
+            status: Status {
+                total_lines: 2,
+                filtered_lines: 2,
+                bookmark_lines: 0,
+                error_lines: 1,
+                indexed_bytes: 128,
+                total_bytes: 128,
+                indexing: false,
+                generation: 4,
+            },
+            device_serial: "usb".to_string(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            json!({
+                "appendedBytes": 128,
+                "status": {
+                    "totalLines": 2,
+                    "filteredLines": 2,
+                    "bookmarkLines": 0,
+                    "errorLines": 1,
+                    "indexedBytes": 128,
+                    "totalBytes": 128,
+                    "indexing": false,
+                    "generation": 4
+                },
+                "deviceSerial": "usb"
             })
         );
     }

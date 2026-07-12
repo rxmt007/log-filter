@@ -83,6 +83,17 @@ impl Session {
         self.indexer.is_done(self.source.len())
     }
 
+    /// 重新映射源文件。用于 adb/logcat 等会增长的会话文件。
+    pub fn remap_source(&mut self) -> io::Result<()> {
+        self.source = MmapSource::open(&self.source_path)?;
+        Ok(())
+    }
+
+    pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<bool> {
+        self.remap_source()?;
+        Ok(self.index_step(budget))
+    }
+
     /// 后台按预算步进索引;返回是否已完成。
     pub fn index_step(&mut self, budget: usize) -> bool {
         self.indexer.step(self.source.bytes(), budget);
@@ -395,6 +406,20 @@ impl Session {
         count
     }
 
+    pub fn append_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u64>) -> usize {
+        if !spec.is_active() {
+            self.filtered.clear();
+            self.filter_active = false;
+            return self.total_lines();
+        }
+        self.filter_spec = spec.clone();
+        self.filter_active = true;
+        self.filtered.extend(matches);
+        self.filtered.sort_unstable();
+        self.filtered.dedup();
+        self.filtered.len()
+    }
+
     pub fn filtered_count(&self) -> usize {
         if self.filter_active {
             self.filtered.len()
@@ -455,6 +480,17 @@ impl Session {
     pub fn apply_search_results(&mut self, spec: &SearchSpec, matches: Vec<u64>) -> SearchSummary {
         self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
         self.search_matches = matches;
+        SearchSummary {
+            count: self.search_matches.len(),
+            first: self.search_matches.first().map(|idx| idx + 1),
+        }
+    }
+
+    pub fn append_search_results(&mut self, spec: &SearchSpec, matches: Vec<u64>) -> SearchSummary {
+        self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
+        self.search_matches.extend(matches);
+        self.search_matches.sort_unstable();
+        self.search_matches.dedup();
         SearchSummary {
             count: self.search_matches.len(),
             first: self.search_matches.first().map(|idx| idx + 1),
@@ -983,5 +1019,51 @@ mod tests {
             "get_rows latency regressed to {:?}",
             read_elapsed
         );
+    }
+
+    #[test]
+    fn remap_and_index_step_reads_lines_appended_after_trailing_newline() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "04-20 12:06:02.125   146   179 D One: first\n").unwrap();
+        f.flush().unwrap();
+        let mut s = Session::open(f.path()).unwrap();
+
+        s.remap_and_index_step(usize::MAX).unwrap();
+        assert_eq!(s.total_lines(), 1);
+
+        write!(f, "04-20 12:06:02.225   200   220 I Two: second").unwrap();
+        f.flush().unwrap();
+        s.remap_and_index_step(usize::MAX).unwrap();
+
+        assert_eq!(s.total_lines(), 2);
+        let rows = s.get_rows(1, 1);
+        assert_eq!(rows[0].0, 2);
+        assert_eq!(rows[0].1.tag, "Two");
+    }
+
+    #[test]
+    fn appends_filter_results_for_newly_indexed_range() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "04-20 12:06:02.125   146   179 D One: first").unwrap();
+        f.flush().unwrap();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let spec = FilterSpec {
+            tag_include: FilterField::plain(true, "Two"),
+            ..Default::default()
+        };
+        assert_eq!(s.set_filter(&spec).unwrap(), 0);
+
+        writeln!(f, "04-20 12:06:02.225   200   220 I Two: second").unwrap();
+        f.flush().unwrap();
+        let previous_total = s.total_lines();
+        s.remap_and_index_step(usize::MAX).unwrap();
+        let matcher = FilterMatcher::new(&spec).unwrap();
+        let matches = s.filter_indexed_range(&matcher, previous_total, s.total_lines());
+        assert_eq!(s.append_filter_results(&spec, matches), 1);
+
+        let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, 2);
     }
 }

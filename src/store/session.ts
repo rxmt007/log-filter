@@ -1,11 +1,15 @@
 import { create } from "zustand";
 import type {
+  AdbDevice,
   AppConfig,
   FilterSpec,
+  LogcatBuffer,
   RowsView,
   ScrollRequest,
   SearchSpec,
+  SourceMode,
   Status,
+  StreamControl,
   ThemeMode,
 } from "@/types";
 
@@ -15,6 +19,13 @@ interface SessionState {
   status: Status;
   sessionId: number; // 每打开一个新文件自增,供表格清缓存
   sourcePath: string | null;
+  sourceMode: SourceMode;
+  devices: AdbDevice[];
+  selectedDeviceSerial: string | null;
+  logcatBuffers: LogcatBuffer[];
+  streamRunning: boolean;
+  streamPaused: boolean;
+  tailFollowing: boolean;
   view: RowsView;
   appConfig: AppConfig;
   theme: ThemeMode;
@@ -31,8 +42,14 @@ interface SessionState {
   bookmarks: number[];
   bookmarkRevision: number;
   setStatus: (s: Status) => void;
-  beginSession: (s: Status, sourcePath?: string) => void;
+  beginSession: (s: Status, sourcePath?: string | null, sourceMode?: SourceMode) => void;
   setSourcePath: (sourcePath: string | null) => void;
+  setSourceMode: (sourceMode: SourceMode) => void;
+  setDevices: (devices: AdbDevice[]) => void;
+  setSelectedDeviceSerial: (serial: string | null) => void;
+  setLogcatBuffers: (buffers: LogcatBuffer[]) => void;
+  setStreamControl: (control: StreamControl) => void;
+  setTailFollowing: (tailFollowing: boolean) => void;
   setAppConfig: (config: AppConfig) => void;
   setTheme: (theme: ThemeMode) => void;
   setFilteredLines: (count: number) => void;
@@ -121,6 +138,13 @@ export const useSession = create<SessionState>()((set) => ({
   status: EMPTY,
   sessionId: 0,
   sourcePath: null,
+  sourceMode: "file",
+  devices: [],
+  selectedDeviceSerial: null,
+  logcatBuffers: ["main"],
+  streamRunning: false,
+  streamPaused: false,
+  tailFollowing: true,
   view: "all",
   appConfig: DEFAULT_CONFIG,
   theme: DEFAULT_CONFIG.theme,
@@ -139,11 +163,15 @@ export const useSession = create<SessionState>()((set) => ({
   // 索引进度事件用它更新状态(不换 session)。
   setStatus: (status) => set((s) => (status.generation >= s.status.generation ? { status } : {})),
   // 打开新文件时用它:更新状态并自增 sessionId。
-  beginSession: (status, sourcePath) =>
+  beginSession: (status, sourcePath, sourceMode) =>
     set((s) => ({
       status,
       sessionId: s.sessionId + 1,
       sourcePath: sourcePath ?? s.sourcePath,
+      sourceMode: sourceMode ?? s.sourceMode,
+      streamRunning: sourceMode === "file" ? false : s.streamRunning,
+      streamPaused: sourceMode === "file" ? false : s.streamPaused,
+      tailFollowing: true,
       view: "all",
       searchCount: 0,
       currentSearchLine: null,
@@ -155,6 +183,28 @@ export const useSession = create<SessionState>()((set) => ({
       bookmarkRevision: s.bookmarkRevision + 1,
     })),
   setSourcePath: (sourcePath) => set({ sourcePath }),
+  setSourceMode: (sourceMode) => set({ sourceMode }),
+  setDevices: (devices) =>
+    set((s) => ({
+      devices,
+      selectedDeviceSerial:
+        s.selectedDeviceSerial && devices.some((device) => device.serial === s.selectedDeviceSerial)
+          ? s.selectedDeviceSerial
+          : (devices.find((device) => device.online)?.serial ?? null),
+    })),
+  setSelectedDeviceSerial: (selectedDeviceSerial) => set({ selectedDeviceSerial }),
+  setLogcatBuffers: (logcatBuffers) =>
+    set({ logcatBuffers: logcatBuffers.length > 0 ? logcatBuffers : ["main"] }),
+  setStreamControl: (control) =>
+    set({
+      status: control.status,
+      streamRunning: control.running,
+      streamPaused: control.paused,
+      selectedDeviceSerial: control.deviceSerial,
+      sourcePath: control.sessionPath,
+      sourceMode: "adb",
+    }),
+  setTailFollowing: (tailFollowing) => set({ tailFollowing }),
   setAppConfig: (appConfig) => set({ appConfig, theme: appConfig.theme }),
   setTheme: (theme) =>
     set((s) => ({

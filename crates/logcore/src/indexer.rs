@@ -14,6 +14,7 @@ pub struct Indexer {
     total_lines: usize,
     cursor: usize,
     checkpoint_stride: usize,
+    last_line_start: usize,
 }
 
 impl Indexer {
@@ -27,28 +28,28 @@ impl Indexer {
             total_lines: 0,
             cursor: 0,
             checkpoint_stride: checkpoint_stride.max(1),
+            last_line_start: 0,
         }
     }
 
     /// 从内部 cursor 起,最多处理 `budget` 字节。返回本次处理的字节数。
     pub fn step(&mut self, bytes: &[u8], budget: usize) -> usize {
-        if self.total_lines == 0 && !bytes.is_empty() {
-            self.total_lines = 1;
-            self.checkpoints.push(LineCheckpoint { line: 0, offset: 0 });
+        if self.cursor < bytes.len() {
+            if self.total_lines == 0 {
+                self.add_line_start(0);
+            } else if self.cursor > 0
+                && bytes[self.cursor - 1] == b'\n'
+                && self.last_line_start != self.cursor
+            {
+                self.add_line_start(self.cursor);
+            }
         }
         let end = self.cursor.saturating_add(budget).min(bytes.len());
         let chunk = &bytes[self.cursor..end];
         for pos in memchr_iter(b'\n', chunk) {
-            let abs_next = (self.cursor + pos + 1) as u64;
-            if (abs_next as usize) < bytes.len() {
-                let next_line = self.total_lines;
-                if next_line % self.checkpoint_stride == 0 {
-                    self.checkpoints.push(LineCheckpoint {
-                        line: next_line,
-                        offset: abs_next,
-                    });
-                }
-                self.total_lines += 1;
+            let abs_next = self.cursor + pos + 1;
+            if abs_next < bytes.len() {
+                self.add_line_start(abs_next);
             }
         }
         let processed = end - self.cursor;
@@ -128,6 +129,18 @@ impl Indexer {
             .checked_sub(1)?;
         self.checkpoints.get(idx).copied()
     }
+
+    fn add_line_start(&mut self, offset: usize) {
+        let line = self.total_lines;
+        if line % self.checkpoint_stride == 0 {
+            self.checkpoints.push(LineCheckpoint {
+                line,
+                offset: offset as u64,
+            });
+        }
+        self.total_lines += 1;
+        self.last_line_start = offset;
+    }
 }
 
 fn next_line_start(bytes: &[u8], offset: usize) -> Option<usize> {
@@ -194,6 +207,21 @@ mod tests {
                 b.line_span(bytes, i, bytes.len())
             );
         }
+    }
+
+    #[test]
+    fn growing_file_counts_line_added_after_trailing_newline() {
+        let mut ix = Indexer::new();
+        let first = b"line1\n";
+        ix.step(first, first.len());
+        assert_eq!(ix.total_lines(), 1);
+        assert!(ix.is_done(first.len()));
+
+        let grown = b"line1\nline2";
+        ix.step(grown, grown.len());
+
+        assert_eq!(ix.total_lines(), 2);
+        assert_eq!(ix.line_span(grown, 1, grown.len()), Some((6, 11)));
     }
 
     #[test]

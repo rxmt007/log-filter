@@ -126,6 +126,7 @@ export function LogTable() {
   const scrollRequest = useSession((s) => s.scrollRequest);
   const selectRow = useSession((s) => s.selectRow);
   const setViewportResultIndex = useSession((s) => s.setViewportResultIndex);
+  const setTailFollowing = useSession((s) => s.setTailFollowing);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
@@ -386,11 +387,20 @@ export function LogTable() {
 
   const items = rv.getVirtualItems();
   const firstVisibleIndex = items[0]?.index ?? null;
+  const lastVisibleIndex = items[items.length - 1]?.index ?? null;
 
   useEffect(() => {
     if (firstVisibleIndex == null) return;
     setViewportResultIndex(firstVisibleIndex);
   }, [firstVisibleIndex, setViewportResultIndex]);
+
+  useEffect(() => {
+    if (lastVisibleIndex == null || total === 0) {
+      setTailFollowing(true);
+      return;
+    }
+    setTailFollowing(lastVisibleIndex >= total - 2);
+  }, [lastVisibleIndex, setTailFollowing, total]);
 
   const ensureBlock = useCallback(async (block: number, totalNow: number) => {
     const want = Math.min(WINDOW, totalNow - block);

@@ -18,9 +18,20 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExportDialog, SettingsDialog, SplitDialog } from "@/components/ToolDialogs";
-import { openFile, saveAppConfig, searchLogs, searchNext } from "@/lib/ipc";
+import {
+  clearLogcat,
+  listDevices,
+  openFile,
+  pauseLogcat,
+  resumeLogcat,
+  saveAppConfig,
+  searchLogs,
+  searchNext,
+  startLogcat,
+  stopLogcat,
+} from "@/lib/ipc";
 import { ALL_LEVELS, LEVEL_BITS, useSession } from "@/store/session";
-import type { FilterSpec, ThemeMode } from "@/types";
+import type { FilterSpec, LogcatBuffer, SourceMode, ThemeMode } from "@/types";
 
 const LEVELS = [
   ["V", LEVEL_BITS.V],
@@ -54,10 +65,29 @@ const FILTER_FIELDS: Array<{
   { key: "wordExclude", label: "内容屏蔽", badge: "-", placeholder: "heartbeat" },
 ];
 
+const LOGCAT_BUFFERS: Array<{ value: LogcatBuffer; label: string }> = [
+  { value: "main", label: "main" },
+  { value: "system", label: "system" },
+  { value: "radio", label: "radio" },
+  { value: "events", label: "events" },
+  { value: "crash", label: "crash" },
+];
+
 export function Toolbar() {
   const [dialog, setDialog] = useState<"export" | "split" | "settings" | null>(null);
   const beginSession = useSession((s) => s.beginSession);
   const status = useSession((s) => s.status);
+  const sourceMode = useSession((s) => s.sourceMode);
+  const setSourceMode = useSession((s) => s.setSourceMode);
+  const devices = useSession((s) => s.devices);
+  const setDevices = useSession((s) => s.setDevices);
+  const selectedDeviceSerial = useSession((s) => s.selectedDeviceSerial);
+  const setSelectedDeviceSerial = useSession((s) => s.setSelectedDeviceSerial);
+  const logcatBuffers = useSession((s) => s.logcatBuffers);
+  const setLogcatBuffers = useSession((s) => s.setLogcatBuffers);
+  const streamRunning = useSession((s) => s.streamRunning);
+  const streamPaused = useSession((s) => s.streamPaused);
+  const setStreamControl = useSession((s) => s.setStreamControl);
   const appConfig = useSession((s) => s.appConfig);
   const theme = useSession((s) => s.theme);
   const setAppConfig = useSession((s) => s.setAppConfig);
@@ -77,7 +107,76 @@ export function Toolbar() {
     const path = await open({ multiple: false, directory: false });
     if (typeof path === "string") {
       const st = await openFile(path);
-      beginSession(st, path);
+      beginSession(st, path, "file");
+    }
+  };
+
+  const refreshDevices = useCallback(async () => {
+    try {
+      const result = await listDevices();
+      setDevices(result.devices);
+    } catch (err) {
+      console.error("list_devices failed", err);
+      setDevices([]);
+    }
+  }, [setDevices]);
+
+  useEffect(() => {
+    if (sourceMode !== "adb") return;
+    void refreshDevices();
+    const timer = window.setInterval(() => {
+      void refreshDevices();
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [refreshDevices, sourceMode]);
+
+  const onSourceChange = (next: SourceMode) => {
+    setSourceMode(next);
+    if (next === "adb") void refreshDevices();
+  };
+
+  const runCapture = async () => {
+    setSourceMode("adb");
+    try {
+      if (streamPaused) {
+        const control = await resumeLogcat();
+        setStreamControl(control);
+        return;
+      }
+      const control = await startLogcat({
+        deviceSerial: selectedDeviceSerial,
+        buffers: logcatBuffers,
+      });
+      setStreamControl(control);
+      beginSession(control.status, control.sessionPath, "adb");
+    } catch (err) {
+      console.error("start/resume logcat failed", err);
+    }
+  };
+
+  const pauseCapture = async () => {
+    try {
+      setStreamControl(await pauseLogcat());
+    } catch (err) {
+      console.error("pause logcat failed", err);
+    }
+  };
+
+  const stopCapture = async () => {
+    try {
+      setStreamControl(await stopLogcat());
+    } catch (err) {
+      console.error("stop logcat failed", err);
+    }
+  };
+
+  const clearCapture = async () => {
+    try {
+      const control = await clearLogcat();
+      setStreamControl(control);
+      beginSession(control.status, control.sessionPath, "adb");
+    } catch (err) {
+      console.error("clear logcat failed", err);
     }
   };
 
@@ -125,57 +224,116 @@ export function Toolbar() {
   );
 
   const countLabel = search.query ? `${currentSearchLine ?? "-"} / ${searchCount}` : "0 / 0";
+  const selectedBuffer = logcatBuffers[0] ?? "main";
 
   return (
     <>
       <div className="lf-toolbar">
         <div className="lf-toolbar-row lf-toolbar-row-top">
-          <button
-            aria-label="Source file"
-            className="lf-select-button"
+          <label
+            aria-label="Source"
+            className="lf-select-button lf-select-control"
             data-tooltip="Source file"
             data-tooltip-placement="bottom"
-            type="button"
           >
             <FolderOpen />
-            <span>来源:文件</span>
+            <select
+              value={sourceMode}
+              onChange={(event) => onSourceChange(event.target.value as SourceMode)}
+            >
+              <option value="file">来源: 文件</option>
+              <option value="adb">来源: ADB</option>
+            </select>
             <ChevronDown />
-          </button>
-          <button
-            aria-label="Current source"
-            className="lf-select-button lf-device"
+          </label>
+          <label
+            aria-label="Current device"
+            className="lf-select-button lf-select-control lf-device"
             data-tooltip="Current source"
             data-tooltip-placement="bottom"
-            type="button"
           >
             <span className="lf-device-dot" />
-            <span>{status.totalBytes ? "本地日志文件" : "无设备"}</span>
+            <select
+              value={selectedDeviceSerial ?? ""}
+              disabled={sourceMode !== "adb"}
+              onChange={(event) => setSelectedDeviceSerial(event.target.value || null)}
+            >
+              {sourceMode !== "adb" ? (
+                <option value="">本地日志文件</option>
+              ) : devices.length ? (
+                devices.map((device) => (
+                  <option disabled={!device.online} key={device.serial} value={device.serial}>
+                    {device.model ?? device.serial} · {device.state}
+                  </option>
+                ))
+              ) : (
+                <option value="">无在线设备</option>
+              )}
+            </select>
             <ChevronDown />
-          </button>
-          <button
+          </label>
+          <label
             aria-label="Logcat command"
-            className="lf-select-button lf-command"
+            className="lf-select-button lf-select-control lf-command"
             data-tooltip="Logcat command"
             data-tooltip-placement="bottom"
-            type="button"
           >
             <span>命令</span>
-            <code>logcat -v threadtime</code>
+            <select
+              value={selectedBuffer}
+              onChange={(event) => setLogcatBuffers([event.target.value as LogcatBuffer])}
+            >
+              {LOGCAT_BUFFERS.map((buffer) => (
+                <option key={buffer.value} value={buffer.value}>
+                  logcat -v threadtime -b {buffer.label}
+                </option>
+              ))}
+            </select>
             <ChevronDown />
-          </button>
+          </label>
         </div>
 
         <div className="lf-toolbar-row lf-toolbar-row-actions">
-          <Button aria-label="Start" className="lf-run-button" data-tooltip="Start" size="icon-sm">
+          <Button
+            aria-label={streamPaused ? "Resume" : "Start"}
+            className="lf-run-button"
+            data-tooltip={streamPaused ? "Resume" : "Start"}
+            disabled={streamRunning}
+            size="icon-sm"
+            onClick={runCapture}
+          >
             <Play />
           </Button>
-          <Button aria-label="Pause" data-tooltip="Pause" size="icon-sm" variant="ghost">
+          <Button
+            aria-label="Pause"
+            data-tooltip="Pause"
+            disabled={!streamRunning}
+            size="icon-sm"
+            variant="ghost"
+            onClick={pauseCapture}
+          >
             <Pause />
           </Button>
-          <Button aria-label="Stop" data-tooltip="Stop" size="icon-sm" variant="ghost">
+          <Button
+            aria-label="Stop"
+            data-tooltip="Stop"
+            disabled={!streamRunning && !streamPaused}
+            size="icon-sm"
+            variant="ghost"
+            onClick={stopCapture}
+          >
             <Square />
           </Button>
-          <Button aria-label="Clear" data-tooltip="Clear" size="icon-sm" variant="ghost">
+          <Button
+            aria-label="Clear"
+            data-tooltip="Clear"
+            disabled={
+              sourceMode !== "adb" || (!streamRunning && !streamPaused && !status.totalBytes)
+            }
+            size="icon-sm"
+            variant="ghost"
+            onClick={clearCapture}
+          >
             <Trash2 />
           </Button>
           <span className="lf-separator" />
