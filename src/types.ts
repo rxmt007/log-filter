@@ -49,6 +49,19 @@ export interface SearchResult {
   firstLine: number | null;
 }
 
+export interface FilterDone {
+  filteredLines: number;
+  generation: number;
+}
+
+export interface SearchProgress {
+  scanned: number;
+  matches: number;
+  firstLine: number | null;
+  done: boolean;
+  generation: number;
+}
+
 export interface ScrollRequest {
   index: number;
   align: "auto" | "center" | "start";

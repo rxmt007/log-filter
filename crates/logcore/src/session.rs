@@ -42,6 +42,7 @@ pub struct Session {
     filter_active: bool,
     filter_spec: FilterSpec,
     search_matches: Vec<u64>,
+    search_spec: Option<SearchSpec>,
     bookmarks: BookmarkStore,
     error_lines: Vec<u64>,
     error_scan_lines: usize,
@@ -59,6 +60,7 @@ impl Session {
             filter_active: false,
             filter_spec: FilterSpec::default(),
             search_matches: Vec::new(),
+            search_spec: None,
             bookmarks,
             error_lines: Vec::new(),
             error_scan_lines: 0,
@@ -205,7 +207,7 @@ impl Session {
     fn current_result_source_idx(&self, result_idx: usize) -> Option<usize> {
         if self.filter_active {
             self.filtered.get(result_idx).map(|idx| *idx as usize)
-        } else if result_idx < self.indexer.offsets().len() {
+        } else if result_idx < self.indexer.total_lines() {
             Some(result_idx)
         } else {
             None
@@ -215,7 +217,7 @@ impl Session {
     fn current_result_index_for_source_idx(&self, source_idx: u64) -> Option<usize> {
         if self.filter_active {
             self.filtered.binary_search(&source_idx).ok()
-        } else if (source_idx as usize) < self.indexer.offsets().len() {
+        } else if (source_idx as usize) < self.indexer.total_lines() {
             Some(source_idx as usize)
         } else {
             None
@@ -261,7 +263,7 @@ impl Session {
 
         match effective_view {
             RowsView::All => {
-                for source_idx in 0..self.indexer.offsets().len() {
+                for source_idx in 0..self.indexer.total_lines() {
                     self.write_source_line(source_idx, frontier, &mut writer, &mut summary)?;
                 }
             }
@@ -315,7 +317,7 @@ impl Session {
         }
         let mut writer = self.create_export_file(output)?;
         let frontier = self.indexed_frontier();
-        let total = self.indexer.offsets().len() as u64;
+        let total = self.indexer.total_lines() as u64;
         let start = start_line_no.min(total + 1);
         let end = end_line_no.min(total);
         let mut summary = ExportSummary {
@@ -331,27 +333,66 @@ impl Session {
     }
 
     pub fn set_filter(&mut self, spec: &FilterSpec) -> Result<usize, FilterError> {
+        if let Some(count) = self.set_filter_pending(spec)? {
+            return Ok(count);
+        }
+        let matcher = FilterMatcher::new(spec)?;
+        let matches = self.filter_indexed_range(&matcher, 0, self.total_lines());
+        Ok(self.apply_filter_results(spec, matches))
+    }
+
+    pub fn set_filter_pending(&mut self, spec: &FilterSpec) -> Result<Option<usize>, FilterError> {
         self.filter_spec = spec.clone();
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
-            return Ok(self.total_lines());
+            return Ok(Some(self.total_lines()));
         }
-        let matcher = FilterMatcher::new(spec)?;
+        FilterMatcher::new(spec)?;
+        Ok(None)
+    }
+
+    pub fn active_filter_spec(&self) -> Option<FilterSpec> {
+        self.filter_spec
+            .is_active()
+            .then(|| self.filter_spec.clone())
+    }
+
+    pub fn filter_indexed_range(
+        &self,
+        matcher: &FilterMatcher,
+        start: usize,
+        end: usize,
+    ) -> Vec<u64> {
         let frontier = self.indexed_frontier();
+        let end = end.min(self.total_lines());
         let mut matches = Vec::new();
-        for idx in 0..self.indexer.offsets().len() {
-            if let Some((_, entry)) = self.parse_source_row(idx, frontier) {
-                let marked = self.is_bookmarked(idx as u64 + 1);
-                if matcher.is_match_with_mark(&entry, marked) {
-                    matches.push(idx as u64);
-                }
+        for (idx, (span_start, span_end)) in (start.min(end)..end).zip(self.indexer.line_spans(
+            self.source.bytes(),
+            start,
+            end,
+            frontier,
+        )) {
+            let entry = self.parse_source_span(span_start, span_end);
+            let marked = self.is_bookmarked(idx as u64 + 1);
+            if matcher.is_match_with_mark(&entry, marked) {
+                matches.push(idx as u64);
             }
+        }
+        matches
+    }
+
+    pub fn apply_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u64>) -> usize {
+        self.filter_spec = spec.clone();
+        if !spec.is_active() {
+            self.filtered.clear();
+            self.filter_active = false;
+            return self.total_lines();
         }
         let count = matches.len();
         self.filtered = matches;
         self.filter_active = true;
-        Ok(count)
+        count
     }
 
     pub fn filtered_count(&self) -> usize {
@@ -363,21 +404,61 @@ impl Session {
     }
 
     pub fn search(&mut self, spec: &SearchSpec) -> Result<SearchSummary, SearchError> {
+        if !self.set_search_pending(spec)? {
+            return Ok(SearchSummary::from_matches(&self.search_matches));
+        }
         let matcher = SearchMatcher::new(spec)?;
+        let matches = self.search_indexed_range(&matcher, 0, self.total_lines());
+        Ok(self.apply_search_results(spec, matches))
+    }
+
+    pub fn set_search_pending(&mut self, spec: &SearchSpec) -> Result<bool, SearchError> {
+        if spec.query.is_empty() {
+            self.search_spec = None;
+            self.search_matches.clear();
+            return Ok(false);
+        }
+        SearchMatcher::new(spec)?;
+        self.search_spec = Some(spec.clone());
+        Ok(true)
+    }
+
+    pub fn active_search_spec(&self) -> Option<SearchSpec> {
+        self.search_spec
+            .clone()
+            .filter(|spec| !spec.query.is_empty())
+    }
+
+    pub fn search_indexed_range(
+        &self,
+        matcher: &SearchMatcher,
+        start: usize,
+        end: usize,
+    ) -> Vec<u64> {
         let frontier = self.indexed_frontier();
+        let end = end.min(self.total_lines());
         let mut matches = Vec::new();
-        for idx in 0..self.indexer.offsets().len() {
-            if let Some((_, entry)) = self.parse_source_row(idx, frontier) {
-                if matcher.is_entry_match(&entry) {
-                    matches.push(idx as u64);
-                }
+        for (idx, (span_start, span_end)) in (start.min(end)..end).zip(self.indexer.line_spans(
+            self.source.bytes(),
+            start,
+            end,
+            frontier,
+        )) {
+            let entry = self.parse_source_span(span_start, span_end);
+            if matcher.is_entry_match(&entry) {
+                matches.push(idx as u64);
             }
         }
+        matches
+    }
+
+    pub fn apply_search_results(&mut self, spec: &SearchSpec, matches: Vec<u64>) -> SearchSummary {
+        self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
         self.search_matches = matches;
-        Ok(SearchSummary {
+        SearchSummary {
             count: self.search_matches.len(),
             first: self.search_matches.first().map(|idx| idx + 1),
-        })
+        }
     }
 
     pub fn search_next(&self, from_line_no: u64, direction: SearchDirection) -> Option<u64> {
@@ -411,7 +492,7 @@ impl Session {
             Vec::new()
         };
         let view_len = match effective_view {
-            RowsView::All => self.indexer.offsets().len(),
+            RowsView::All => self.indexer.total_lines(),
             RowsView::Filtered => self.filtered.len(),
             RowsView::Bookmarks => bookmark_lines.len(),
             RowsView::Errors => self.error_lines.len(),
@@ -441,15 +522,17 @@ impl Session {
     }
 
     fn parse_source_row(&self, source_idx: usize, frontier: usize) -> Option<(u64, LogEntry)> {
-        let offsets = self.indexer.offsets();
-        let (start, end) = line_span(offsets, source_idx, frontier)?;
+        let (start, end) = line_span(&self.indexer, self.source.bytes(), source_idx, frontier)?;
+        Some((source_idx as u64 + 1, self.parse_source_span(start, end)))
+    }
+
+    fn parse_source_span(&self, start: usize, end: usize) -> LogEntry {
         let text = String::from_utf8_lossy(&self.source.bytes()[start..end]);
-        Some((source_idx as u64 + 1, parse_line(&text)))
+        parse_line(&text)
     }
 
     fn source_line_bytes(&self, source_idx: usize, frontier: usize) -> Option<&[u8]> {
-        let offsets = self.indexer.offsets();
-        let (start, end) = line_span(offsets, source_idx, frontier)?;
+        let (start, end) = line_span(&self.indexer, self.source.bytes(), source_idx, frontier)?;
         Some(&self.source.bytes()[start..end])
     }
 
@@ -509,7 +592,7 @@ impl Session {
 
     fn refresh_error_lines(&mut self) {
         let frontier = self.indexed_frontier();
-        let total = self.indexer.offsets().len();
+        let total = self.indexer.total_lines();
         for idx in self.error_scan_lines..total {
             if let Some((_, entry)) = self.parse_source_row(idx, frontier) {
                 if matches!(entry.level.as_str(), "E" | "F") {
@@ -541,7 +624,7 @@ fn bucket_for_zero_based(index: usize, total: usize, buckets: usize) -> Option<u
 mod tests {
     use super::*;
     use crate::bookmarks::BookmarkDirection;
-    use crate::filter::{FilterField, FilterSpec, LevelMask};
+    use crate::filter::{FilterField, FilterMatcher, FilterSpec, LevelMask};
     use crate::search::{SearchDirection, SearchSpec};
     use std::io::Write;
 
@@ -681,18 +764,10 @@ mod tests {
     fn minimap_uses_current_filtered_result_buckets() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         for i in 0..4 {
-            writeln!(
-                f,
-                "04-20 12:06:02.{i:03}   300   330 E Payment: error {i}"
-            )
-            .unwrap();
+            writeln!(f, "04-20 12:06:02.{i:03}   300   330 E Payment: error {i}").unwrap();
         }
         for i in 4..8 {
-            writeln!(
-                f,
-                "04-20 12:06:02.{i:03}   300   330 I Payment: info {i}"
-            )
-            .unwrap();
+            writeln!(f, "04-20 12:06:02.{i:03}   300   330 I Payment: info {i}").unwrap();
         }
         let mut s = Session::open(f.path()).unwrap();
         s.index_all();
@@ -718,6 +793,39 @@ mod tests {
         assert_eq!(s.search_next(2, SearchDirection::Next), Some(3));
         assert_eq!(s.search_next(3, SearchDirection::Next), Some(2));
         assert_eq!(s.search_next(2, SearchDirection::Previous), Some(3));
+    }
+
+    #[test]
+    fn pending_filter_spec_is_available_for_index_completion_rerun() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let spec = FilterSpec {
+            tag_include: FilterField::plain(true, "Network"),
+            ..Default::default()
+        };
+
+        assert_eq!(s.set_filter_pending(&spec).unwrap(), None);
+        assert_eq!(s.active_filter_spec(), Some(spec.clone()));
+
+        let matcher = FilterMatcher::new(&spec).unwrap();
+        let matches = s.filter_indexed_range(&matcher, 0, s.total_lines());
+        assert_eq!(s.apply_filter_results(&spec, matches), 2);
+    }
+
+    #[test]
+    fn empty_search_clears_active_search_spec_and_matches() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let spec = SearchSpec::plain("Network");
+        assert!(s.set_search_pending(&spec).unwrap());
+        assert_eq!(s.active_search_spec(), Some(spec));
+
+        let empty = SearchSpec::plain("");
+        assert!(!s.set_search_pending(&empty).unwrap());
+        assert_eq!(s.active_search_spec(), None);
+        assert_eq!(s.search_next(1, SearchDirection::Next), None);
     }
 
     #[test]

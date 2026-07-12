@@ -1,13 +1,17 @@
 use crate::dto::{
-    AppConfigDto, ExportRequest, ExportSummaryDto, FilterSpecDto, MinimapDto, NavigationTargetDto,
-    Row, SearchResult, SearchSpecDto, SplitRequest, SplitSummaryDto, Status,
+    AppConfigDto, ExportRequest, ExportSummaryDto, FilterDoneDto, FilterSpecDto, MinimapDto,
+    NavigationTargetDto, Row, SearchProgressDto, SearchResult, SearchSpecDto, SplitRequest,
+    SplitSummaryDto, Status,
 };
 use crate::state::AppState;
+use logcore::filter::{FilterMatcher, FilterSpec};
+use logcore::search::{SearchMatcher, SearchSpec};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, State};
 
 const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
+const SCAN_CHUNK_LINES: usize = 4096;
 const MAX_ROWS: usize = 512;
 
 fn status_from(session: &logcore::session::Session, generation: u64) -> Status {
@@ -52,6 +56,8 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
         logcore::session::Session::open(&PathBuf::from(&path)).map_err(|e| e.to_string())?;
     // 递增代号:上一个文件遗留的索引线程会在下一次循环检测到并自退。
     let my_gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.next_filter_task_generation();
+    state.next_search_task_generation();
     let status = status_from(&session, my_gen);
     *state.lock_session() = Some(session);
 
@@ -76,6 +82,7 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
             Some((st, done)) => {
                 let _ = app.emit("index:progress", st);
                 if done {
+                    rerun_scans_after_index_done(&app_state, &app, my_gen);
                     break;
                 }
             }
@@ -85,6 +92,36 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
     });
 
     Ok(status)
+}
+
+fn rerun_scans_after_index_done(app_state: &AppState, app: &AppHandle, session_generation: u64) {
+    let (filter_spec, search_spec) = {
+        let guard = app_state.lock_session();
+        match guard.as_ref() {
+            Some(session) => (session.active_filter_spec(), session.active_search_spec()),
+            None => (None, None),
+        }
+    };
+    if let Some(spec) = filter_spec {
+        let task_generation = app_state.next_filter_task_generation();
+        spawn_filter_task(
+            app_state.clone(),
+            app.clone(),
+            spec,
+            session_generation,
+            task_generation,
+        );
+    }
+    if let Some(spec) = search_spec {
+        let task_generation = app_state.next_search_task_generation();
+        spawn_search_task(
+            app_state.clone(),
+            app.clone(),
+            spec,
+            session_generation,
+            task_generation,
+        );
+    }
 }
 
 #[tauri::command]
@@ -125,14 +162,44 @@ pub fn get_rows(view: String, start: usize, count: usize, state: State<AppState>
 }
 
 #[tauri::command]
-pub fn set_filter(filter: FilterSpecDto, state: State<AppState>) -> Result<usize, String> {
-    let mut guard = state.lock_session();
-    let Some(session) = guard.as_mut() else {
-        return Ok(0);
+pub fn set_filter(
+    filter: FilterSpecDto,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<usize, String> {
+    let spec: FilterSpec = filter.into();
+    let task_generation = state.next_filter_task_generation();
+    let session_generation = state.generation.load(Ordering::SeqCst);
+    let (current_count, immediate) = {
+        let mut guard = state.lock_session();
+        let Some(session) = guard.as_mut() else {
+            return Ok(0);
+        };
+        let immediate = session
+            .set_filter_pending(&spec)
+            .map_err(|err| err.message)?;
+        (session.filtered_count(), immediate)
     };
-    session
-        .set_filter(&filter.into())
-        .map_err(|err| err.message)
+
+    if let Some(filtered_lines) = immediate {
+        let _ = app.emit(
+            "filter:done",
+            FilterDoneDto {
+                filtered_lines,
+                generation: session_generation,
+            },
+        );
+        return Ok(filtered_lines);
+    }
+
+    spawn_filter_task(
+        state.inner().clone(),
+        app,
+        spec,
+        session_generation,
+        task_generation,
+    );
+    Ok(current_count)
 }
 
 #[tauri::command]
@@ -142,19 +209,194 @@ pub fn get_filtered_count(state: State<AppState>) -> usize {
 }
 
 #[tauri::command]
-pub fn search(spec: SearchSpecDto, state: State<AppState>) -> Result<SearchResult, String> {
-    let mut guard = state.lock_session();
-    let Some(session) = guard.as_mut() else {
+pub fn search(
+    spec: SearchSpecDto,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<SearchResult, String> {
+    let spec: SearchSpec = spec.into();
+    let task_generation = state.next_search_task_generation();
+    let session_generation = state.generation.load(Ordering::SeqCst);
+    let active = {
+        let mut guard = state.lock_session();
+        let Some(session) = guard.as_mut() else {
+            return Ok(SearchResult {
+                count: 0,
+                first_line: None,
+            });
+        };
+        session
+            .set_search_pending(&spec)
+            .map_err(|err| err.message)?
+    };
+
+    if !active {
+        let _ = app.emit(
+            "search:progress",
+            SearchProgressDto {
+                scanned: 0,
+                matches: 0,
+                first_line: None,
+                done: true,
+                generation: session_generation,
+            },
+        );
         return Ok(SearchResult {
             count: 0,
             first_line: None,
         });
-    };
-    let summary = session.search(&spec.into()).map_err(|err| err.message)?;
+    }
+
+    spawn_search_task(
+        state.inner().clone(),
+        app,
+        spec,
+        session_generation,
+        task_generation,
+    );
     Ok(SearchResult {
-        count: summary.count,
-        first_line: summary.first,
+        count: 0,
+        first_line: None,
     })
+}
+
+fn spawn_filter_task(
+    app_state: AppState,
+    app: AppHandle,
+    spec: FilterSpec,
+    session_generation: u64,
+    task_generation: u64,
+) {
+    let Ok(matcher) = FilterMatcher::new(&spec) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let total_lines = {
+            let guard = app_state.lock_session();
+            match guard.as_ref() {
+                Some(session) => session.total_lines(),
+                None => return,
+            }
+        };
+        let mut matches = Vec::new();
+        let mut start = 0;
+        while start < total_lines {
+            if app_state.generation.load(Ordering::SeqCst) != session_generation
+                || !app_state.is_current_filter_task(task_generation)
+            {
+                return;
+            }
+            let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
+            let chunk = {
+                let guard = app_state.lock_session();
+                match guard.as_ref() {
+                    Some(session) => session.filter_indexed_range(&matcher, start, end),
+                    None => return,
+                }
+            };
+            matches.extend(chunk);
+            start = end;
+            std::thread::yield_now();
+        }
+
+        if app_state.generation.load(Ordering::SeqCst) != session_generation
+            || !app_state.is_current_filter_task(task_generation)
+        {
+            return;
+        }
+        let filtered_lines = {
+            let mut guard = app_state.lock_session();
+            match guard.as_mut() {
+                Some(session) => session.apply_filter_results(&spec, matches),
+                None => return,
+            }
+        };
+        let _ = app.emit(
+            "filter:done",
+            FilterDoneDto {
+                filtered_lines,
+                generation: session_generation,
+            },
+        );
+    });
+}
+
+fn spawn_search_task(
+    app_state: AppState,
+    app: AppHandle,
+    spec: SearchSpec,
+    session_generation: u64,
+    task_generation: u64,
+) {
+    let Ok(matcher) = SearchMatcher::new(&spec) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let total_lines = {
+            let guard = app_state.lock_session();
+            match guard.as_ref() {
+                Some(session) => session.total_lines(),
+                None => return,
+            }
+        };
+        let mut matches = Vec::new();
+        let mut first_line = None;
+        let mut start = 0;
+        while start < total_lines {
+            if app_state.generation.load(Ordering::SeqCst) != session_generation
+                || !app_state.is_current_search_task(task_generation)
+            {
+                return;
+            }
+            let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
+            let chunk = {
+                let guard = app_state.lock_session();
+                match guard.as_ref() {
+                    Some(session) => session.search_indexed_range(&matcher, start, end),
+                    None => return,
+                }
+            };
+            if first_line.is_none() {
+                first_line = chunk.first().map(|idx| idx + 1);
+            }
+            matches.extend(chunk);
+            let _ = app.emit(
+                "search:progress",
+                SearchProgressDto {
+                    scanned: end,
+                    matches: matches.len(),
+                    first_line,
+                    done: false,
+                    generation: session_generation,
+                },
+            );
+            start = end;
+            std::thread::yield_now();
+        }
+
+        if app_state.generation.load(Ordering::SeqCst) != session_generation
+            || !app_state.is_current_search_task(task_generation)
+        {
+            return;
+        }
+        let summary = {
+            let mut guard = app_state.lock_session();
+            match guard.as_mut() {
+                Some(session) => session.apply_search_results(&spec, matches),
+                None => return,
+            }
+        };
+        let _ = app.emit(
+            "search:progress",
+            SearchProgressDto {
+                scanned: total_lines,
+                matches: summary.count,
+                first_line: summary.first,
+                done: true,
+                generation: session_generation,
+            },
+        );
+    });
 }
 
 #[tauri::command]

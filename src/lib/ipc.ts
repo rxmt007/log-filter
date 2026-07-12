@@ -4,11 +4,13 @@ import type {
   AppConfig,
   ExportRequest,
   ExportSummary,
+  FilterDone,
   FilterSpec,
   MinimapData,
   NavigationTarget,
   Row,
   RowsView,
+  SearchProgress,
   SearchResult,
   SearchSpec,
   SplitRequest,
@@ -53,3 +55,9 @@ export const saveAppConfig = (config: AppConfig) => invoke<AppConfig>("set_confi
 
 export const onIndexProgress = (cb: (s: Status) => void): Promise<UnlistenFn> =>
   listen<Status>("index:progress", (e) => cb(e.payload));
+
+export const onFilterDone = (cb: (done: FilterDone) => void): Promise<UnlistenFn> =>
+  listen<FilterDone>("filter:done", (e) => cb(e.payload));
+
+export const onSearchProgress = (cb: (progress: SearchProgress) => void): Promise<UnlistenFn> =>
+  listen<SearchProgress>("search:progress", (e) => cb(e.payload));

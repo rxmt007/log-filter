@@ -103,6 +103,23 @@ pub struct SearchResult {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct FilterDoneDto {
+    pub filtered_lines: usize,
+    pub generation: u64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchProgressDto {
+    pub scanned: usize,
+    pub matches: usize,
+    pub first_line: Option<u64>,
+    pub done: bool,
+    pub generation: u64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MinimapDto {
     pub bookmarks: Vec<usize>,
     pub errors: Vec<usize>,

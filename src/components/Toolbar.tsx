@@ -94,17 +94,22 @@ export function Toolbar() {
   };
 
   useEffect(() => {
-    if (!status.totalBytes || !search.query.trim()) {
+    if (!status.totalBytes) {
       setSearchResult(0, null);
       return;
     }
+    if (!search.query.trim()) {
+      setSearchResult(0, null);
+      void searchLogs(search).catch((err) => {
+        console.error("clear search failed", err);
+      });
+      return;
+    }
     const timer = window.setTimeout(() => {
-      searchLogs(search)
-        .then((result) => setSearchResult(result.count, result.firstLine))
-        .catch((err) => {
-          console.error("search failed", err);
-          setSearchResult(0, null);
-        });
+      void searchLogs(search).catch((err) => {
+        console.error("search failed", err);
+        setSearchResult(0, null);
+      });
     }, 180);
     return () => window.clearTimeout(timer);
   }, [search, status.totalBytes, setSearchResult]);

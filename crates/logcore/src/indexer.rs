@@ -1,30 +1,54 @@
-use memchr::memchr_iter;
+use memchr::{memchr, memchr_iter};
 
-/// 增量构建行起始偏移。`offsets[i]` = 第 i 行首字节偏移;行数 = offsets.len()。
+const DEFAULT_CHECKPOINT_STRIDE: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LineCheckpoint {
+    line: usize,
+    offset: u64,
+}
+
+/// 增量构建检查点行索引。每隔固定行数记录一次行首偏移,定位具体行时从最近检查点前扫。
 pub struct Indexer {
-    offsets: Vec<u64>,
+    checkpoints: Vec<LineCheckpoint>,
+    total_lines: usize,
     cursor: usize,
+    checkpoint_stride: usize,
 }
 
 impl Indexer {
     pub fn new() -> Self {
+        Self::with_checkpoint_stride(DEFAULT_CHECKPOINT_STRIDE)
+    }
+
+    pub fn with_checkpoint_stride(checkpoint_stride: usize) -> Self {
         Self {
-            offsets: Vec::new(),
+            checkpoints: Vec::new(),
+            total_lines: 0,
             cursor: 0,
+            checkpoint_stride: checkpoint_stride.max(1),
         }
     }
 
     /// 从内部 cursor 起,最多处理 `budget` 字节。返回本次处理的字节数。
     pub fn step(&mut self, bytes: &[u8], budget: usize) -> usize {
-        if self.offsets.is_empty() && !bytes.is_empty() {
-            self.offsets.push(0);
+        if self.total_lines == 0 && !bytes.is_empty() {
+            self.total_lines = 1;
+            self.checkpoints.push(LineCheckpoint { line: 0, offset: 0 });
         }
         let end = self.cursor.saturating_add(budget).min(bytes.len());
         let chunk = &bytes[self.cursor..end];
         for pos in memchr_iter(b'\n', chunk) {
             let abs_next = (self.cursor + pos + 1) as u64;
             if (abs_next as usize) < bytes.len() {
-                self.offsets.push(abs_next);
+                let next_line = self.total_lines;
+                if next_line % self.checkpoint_stride == 0 {
+                    self.checkpoints.push(LineCheckpoint {
+                        line: next_line,
+                        offset: abs_next,
+                    });
+                }
+                self.total_lines += 1;
             }
         }
         let processed = end - self.cursor;
@@ -41,12 +65,74 @@ impl Indexer {
     }
 
     pub fn total_lines(&self) -> usize {
-        self.offsets.len()
+        self.total_lines
     }
 
-    pub fn offsets(&self) -> &[u64] {
-        &self.offsets
+    pub fn checkpoint_count(&self) -> usize {
+        self.checkpoints.len()
     }
+
+    pub fn line_span(&self, bytes: &[u8], i: usize, frontier: usize) -> Option<(usize, usize)> {
+        self.line_spans(bytes, i, i.saturating_add(1), frontier)
+            .into_iter()
+            .next()
+    }
+
+    pub fn line_spans(
+        &self,
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+        frontier: usize,
+    ) -> Vec<(usize, usize)> {
+        let end = end.min(self.total_lines);
+        if start >= end {
+            return Vec::new();
+        }
+        let frontier = frontier.min(bytes.len());
+        let Some(checkpoint) = self.checkpoint_before_or_at(start) else {
+            return Vec::new();
+        };
+        let mut line = checkpoint.line;
+        let mut offset = checkpoint.offset as usize;
+        while line < start {
+            let Some(next) = next_line_start(bytes, offset) else {
+                return Vec::new();
+            };
+            offset = next;
+            line += 1;
+        }
+
+        let mut spans = Vec::with_capacity(end - start);
+        while line < end {
+            let line_start = offset;
+            let line_end = if line + 1 < self.total_lines {
+                match next_line_start(bytes, offset) {
+                    Some(next) => next,
+                    None => frontier,
+                }
+            } else {
+                frontier
+            };
+            spans.push((line_start, line_end.min(frontier)));
+            offset = line_end;
+            line += 1;
+        }
+        spans
+    }
+
+    fn checkpoint_before_or_at(&self, line: usize) -> Option<LineCheckpoint> {
+        let idx = self
+            .checkpoints
+            .partition_point(|checkpoint| checkpoint.line <= line)
+            .checked_sub(1)?;
+        self.checkpoints.get(idx).copied()
+    }
+}
+
+fn next_line_start(bytes: &[u8], offset: usize) -> Option<usize> {
+    let relative = memchr(b'\n', bytes.get(offset..)?)?;
+    Some(offset + relative + 1)
 }
 
 impl Default for Indexer {
@@ -56,17 +142,13 @@ impl Default for Indexer {
 }
 
 /// 第 i 行的字节区间 [start, end)(end 含末尾换行,取文本时再裁剪)。
-pub fn line_span(offsets: &[u64], i: usize, total: usize) -> Option<(usize, usize)> {
-    if i >= offsets.len() {
-        return None;
-    }
-    let start = offsets[i] as usize;
-    let end = if i + 1 < offsets.len() {
-        offsets[i + 1] as usize
-    } else {
-        total
-    };
-    Some((start, end))
+pub fn line_span(
+    indexer: &Indexer,
+    bytes: &[u8],
+    i: usize,
+    frontier: usize,
+) -> Option<(usize, usize)> {
+    indexer.line_span(bytes, i, frontier)
 }
 
 #[cfg(test)]
@@ -79,10 +161,10 @@ mod tests {
         let mut ix = Indexer::new();
         ix.step(bytes, bytes.len());
         assert!(ix.is_done(bytes.len()));
-        assert_eq!(ix.offsets(), &[0, 2, 5]);
         assert_eq!(ix.total_lines(), 3);
-        assert_eq!(line_span(ix.offsets(), 1, bytes.len()), Some((2, 5)));
-        assert_eq!(line_span(ix.offsets(), 2, bytes.len()), Some((5, 8)));
+        assert_eq!(line_span(&ix, bytes, 0, bytes.len()), Some((0, 2)));
+        assert_eq!(line_span(&ix, bytes, 1, bytes.len()), Some((2, 5)));
+        assert_eq!(line_span(&ix, bytes, 2, bytes.len()), Some((5, 8)));
     }
 
     #[test]
@@ -90,8 +172,9 @@ mod tests {
         let bytes = b"a\nbb\n";
         let mut ix = Indexer::new();
         ix.step(bytes, bytes.len());
-        assert_eq!(ix.offsets(), &[0, 2]);
         assert_eq!(ix.total_lines(), 2);
+        assert_eq!(ix.line_span(bytes, 0, bytes.len()), Some((0, 2)));
+        assert_eq!(ix.line_span(bytes, 1, bytes.len()), Some((2, 5)));
     }
 
     #[test]
@@ -104,7 +187,13 @@ mod tests {
         while !b.is_done(bytes.len()) {
             b.step(bytes, 3);
         }
-        assert_eq!(a.offsets(), b.offsets());
+        assert_eq!(a.total_lines(), b.total_lines());
+        for i in 0..a.total_lines() {
+            assert_eq!(
+                a.line_span(bytes, i, bytes.len()),
+                b.line_span(bytes, i, bytes.len())
+            );
+        }
     }
 
     #[test]
@@ -113,5 +202,51 @@ mod tests {
         ix.step(b"", 0);
         assert_eq!(ix.total_lines(), 0);
         assert!(ix.is_done(0));
+    }
+
+    #[test]
+    fn checkpoint_index_does_not_store_every_line_start() {
+        let mut text = String::new();
+        for i in 0..32 {
+            text.push_str(&format!("line-{i}\n"));
+        }
+        let bytes = text.as_bytes();
+        let mut ix = Indexer::with_checkpoint_stride(8);
+
+        ix.step(bytes, bytes.len());
+
+        assert_eq!(ix.total_lines(), 32);
+        assert_eq!(ix.checkpoint_count(), 4);
+        assert!(
+            ix.checkpoint_count() < ix.total_lines(),
+            "checkpoint index must not keep one u64 offset per line"
+        );
+    }
+
+    #[test]
+    fn checkpoint_line_spans_are_correct_across_blocks() {
+        let bytes = b"aa\nbbbb\nc\nddddd\nee\nfffff\ng\nhhhh\n";
+        let mut ix = Indexer::with_checkpoint_stride(3);
+
+        ix.step(bytes, bytes.len());
+
+        assert_eq!(ix.line_span(bytes, 0, bytes.len()), Some((0, 3)));
+        assert_eq!(ix.line_span(bytes, 2, bytes.len()), Some((8, 10)));
+        assert_eq!(ix.line_span(bytes, 5, bytes.len()), Some((19, 25)));
+        assert_eq!(ix.line_span(bytes, 7, bytes.len()), Some((27, 32)));
+        assert_eq!(ix.line_span(bytes, 8, bytes.len()), None);
+    }
+
+    #[test]
+    fn checkpoint_line_spans_scan_ranges_sequentially() {
+        let bytes = b"aa\nbbbb\nc\nddddd\nee\nfffff\ng\nhhhh\n";
+        let mut ix = Indexer::with_checkpoint_stride(3);
+
+        ix.step(bytes, bytes.len());
+
+        assert_eq!(
+            ix.line_spans(bytes, 2, 6, bytes.len()),
+            vec![(8, 10), (10, 16), (16, 19), (19, 25)]
+        );
     }
 }

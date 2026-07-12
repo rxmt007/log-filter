@@ -3,7 +3,14 @@ import { Toolbar } from "@/components/Toolbar";
 import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
 import { Minimap } from "@/components/Minimap";
-import { getConfig, nextBookmark, onIndexProgress, setFilter } from "@/lib/ipc";
+import {
+  getConfig,
+  nextBookmark,
+  onFilterDone,
+  onIndexProgress,
+  onSearchProgress,
+  setFilter,
+} from "@/lib/ipc";
 import { useSession } from "@/store/session";
 
 export default function App() {
@@ -13,6 +20,7 @@ export default function App() {
   const sessionId = useSession((s) => s.sessionId);
   const hasFile = useSession((s) => s.status.totalBytes > 0);
   const setFilteredLines = useSession((s) => s.setFilteredLines);
+  const setSearchResult = useSession((s) => s.setSearchResult);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const selectedLine = useSession((s) => s.selectedLine);
   const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
@@ -35,31 +43,36 @@ export default function App() {
   }, [setStatus]);
 
   useEffect(() => {
+    const un = onFilterDone((done) => {
+      const state = useSession.getState();
+      if (done.generation !== state.status.generation) return;
+      setFilteredLines(done.filteredLines);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [setFilteredLines]);
+
+  useEffect(() => {
+    const un = onSearchProgress((progress) => {
+      const state = useSession.getState();
+      if (!progress.done || progress.generation !== state.status.generation) return;
+      setSearchResult(progress.matches, progress.firstLine);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [setSearchResult]);
+
+  useEffect(() => {
     if (!hasFile) return;
     const timer = window.setTimeout(() => {
-      const requestedRevision = filterRevision;
-      const requestedBookmarkRevision = bookmarkSensitiveRevision;
-      setFilter(filter)
-        .then((count) => {
-          const state = useSession.getState();
-          if (state.filterRevision !== requestedRevision) return;
-          const currentBookmarkRevision = state.filter.markedOnly ? state.bookmarkRevision : 0;
-          if (currentBookmarkRevision !== requestedBookmarkRevision) return;
-          setFilteredLines(count);
-        })
-        .catch((err) => {
-          console.error("set_filter failed", err);
-        });
+      void setFilter(filter).catch((err) => {
+        console.error("set_filter failed", err);
+      });
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [
-    filter,
-    filterRevision,
-    bookmarkSensitiveRevision,
-    hasFile,
-    sessionId,
-    setFilteredLines,
-  ]);
+  }, [filter, filterRevision, bookmarkSensitiveRevision, hasFile, sessionId]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

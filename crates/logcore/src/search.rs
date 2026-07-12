@@ -95,6 +95,8 @@ impl CompiledSearch {
             } => {
                 if *case_sensitive {
                     text.contains(needle)
+                } else if needle.is_ascii() {
+                    contains_case_insensitive_ascii(text, needle)
                 } else {
                     text.to_lowercase().contains(needle)
                 }
@@ -172,6 +174,16 @@ fn entry_matches(entry: &LogEntry, compiled: &CompiledSearch) -> bool {
         || compiled.is_match(&entry.message)
 }
 
+fn contains_case_insensitive_ascii(text: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let needle = needle.as_bytes();
+    text.as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +248,31 @@ mod tests {
         assert_eq!(next_match(&matches, 1, SearchDirection::Previous), Some(8));
         assert_eq!(next_match(&matches, 4, SearchDirection::Next), Some(8));
         assert_eq!(next_match(&matches, 4, SearchDirection::Previous), Some(3));
+    }
+
+    #[test]
+    fn ascii_case_insensitive_plain_search_matches_without_lowercase_copy() {
+        assert!(contains_case_insensitive_ascii(
+            "SocketTimeoutException",
+            "sockettimeout"
+        ));
+        assert!(contains_case_insensitive_ascii(
+            "abc NETWORK xyz",
+            "network"
+        ));
+        assert!(!contains_case_insensitive_ascii("Payment", "network"));
+    }
+
+    #[test]
+    fn case_insensitive_plain_search_keeps_unicode_behavior() {
+        let spec = SearchSpec {
+            query: "支付".to_string(),
+            regex: false,
+            case_sensitive: false,
+        };
+        let matches = search_entries(&[entry("Payment", "支付失败")], &spec)
+            .expect("unicode plain search should compile");
+
+        assert_eq!(matches, vec![0]);
     }
 }
