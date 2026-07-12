@@ -170,6 +170,9 @@
   --lf-row-w: #fefaf1;
   --lf-row-e: #fef5f4;
   --lf-row-f: #fceaea;
+  --lf-row-marked: #dbeafe;
+  --lf-row-marked-border: #2563eb;
+  --lf-row-marked-icon: #1d4ed8;
   --lf-chip-v: #f1f2f4;
   --lf-chip-d: #e7f0fe;
   --lf-chip-i: #e6f6ed;
@@ -207,6 +210,9 @@
   --lf-row-w: rgba(239, 183, 91, 0.11);
   --lf-row-e: rgba(255, 130, 121, 0.12);
   --lf-row-f: rgba(255, 95, 103, 0.17);
+  --lf-row-marked: rgba(91, 157, 255, 0.2);
+  --lf-row-marked-border: #8ebaff;
+  --lf-row-marked-icon: #b7d3ff;
   --lf-chip-v: #252b33;
   --lf-chip-d: rgba(91, 157, 255, 0.17);
   --lf-chip-i: rgba(84, 213, 133, 0.14);
@@ -1045,6 +1051,11 @@
 .lf-table-row[data-level="E"]:not([data-selected="true"]) { background: var(--lf-row-e); }
 .lf-table-row[data-level="F"]:not([data-selected="true"]) { background: var(--lf-row-f); font-weight: 700; }
 
+.lf-table-row[data-marked="true"]:not([data-selected="true"]) {
+  border-left-color: var(--lf-row-marked-border);
+  background: var(--lf-row-marked);
+}
+
 .lf-table-row > span {
   min-width: 0;
   overflow: hidden;
@@ -1066,6 +1077,10 @@
   height: 11px;
   fill: currentColor;
   stroke: currentColor;
+}
+
+.lf-table-row[data-marked="true"] .lf-bookmark-cell {
+  color: var(--lf-row-marked-icon);
 }
 
 .lf-num {

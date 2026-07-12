@@ -52,5 +52,8 @@ expectContract(
   "table captures wheel at vertical boundaries",
   files.table.includes("handleTableWheel") && files.table.includes("onWheelCapture={handleTableWheel}"),
 );
+expectContract("table exposes marked row state", files.table.includes("data-marked"));
+expectContract("css styles marked rows", files.css.includes('.lf-table-row[data-marked="true"]'));
+expectContract("css defines marked row color tokens", files.css.includes("--lf-row-marked"));
 
 console.log("log table interaction contracts verified");

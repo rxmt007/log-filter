@@ -467,6 +467,7 @@ export function LogTable() {
                 <div
                   className="lf-table-row"
                   data-level={row?.level || ""}
+                  data-marked={row?.marked || undefined}
                   data-selected={selected || undefined}
                   key={vi.key}
                   onClick={() => {
