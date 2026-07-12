@@ -114,6 +114,23 @@ describe("session store", () => {
     });
   });
 
+  it("keeps the selected row when empty search results are refreshed during streaming", () => {
+    useSession.setState({
+      sourceMode: "adb",
+      selectedLine: 42,
+      selectedResultIndex: 41,
+      currentSearchLine: null,
+      searchCount: 0,
+    });
+
+    useSession.getState().setSearchResult(0, null);
+
+    expect(useSession.getState().selectedLine).toBe(42);
+    expect(useSession.getState().selectedResultIndex).toBe(41);
+    expect(useSession.getState().currentSearchLine).toBeNull();
+    expect(useSession.getState().searchCount).toBe(0);
+  });
+
   it("pauses tail following when filter conditions change", () => {
     useSession.setState({ sourceMode: "adb", tailFollowing: true });
     useSession.getState().setFilter({ markedOnly: true });

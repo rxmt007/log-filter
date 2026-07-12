@@ -294,8 +294,6 @@ export const useSession = create<SessionState>()((set) => ({
     set({
       searchCount: count,
       currentSearchLine: firstLine,
-      selectedLine: firstLine,
-      selectedResultIndex: null,
     }),
   setCurrentSearchLine: (line) =>
     set({ currentSearchLine: line, selectedLine: line, selectedResultIndex: null }),
