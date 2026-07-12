@@ -1,64 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 import { getMinimap } from "@/lib/ipc";
+import {
+  bucketRanges,
+  indexToViewportTopPx,
+  MINIMAP_BUCKETS,
+  pointerToResultIndex,
+  rangeStyle,
+  viewportHeightPx,
+} from "@/lib/minimap";
 import { useSession } from "@/store/session";
 import type { MinimapData } from "@/types";
-
-const BUCKETS = 180;
-const VIEWPORT_HEIGHT_RATIO = 0.08;
-const VIEWPORT_MIN_HEIGHT = 22;
-
-function bucketRanges(buckets: number[]) {
-  const sorted = [...new Set(buckets)].sort((a, b) => a - b);
-  const ranges: Array<{ start: number; end: number }> = [];
-  for (const bucket of sorted) {
-    const last = ranges[ranges.length - 1];
-    if (last && bucket <= last.end + 1) {
-      last.end = bucket;
-    } else {
-      ranges.push({ start: bucket, end: bucket });
-    }
-  }
-  return ranges;
-}
-
-function rangeStyle(range: { start: number; end: number }) {
-  const start = (range.start / BUCKETS) * 100;
-  const end = ((range.end + 1) / BUCKETS) * 100;
-  return {
-    top: `${start}%`,
-    height: `${Math.max(0.7, end - start)}%`,
-  };
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function viewportHeightPx(rect: DOMRect) {
-  return Math.max(VIEWPORT_MIN_HEIGHT, rect.height * VIEWPORT_HEIGHT_RATIO);
-}
-
-function maxViewportTopPx(rect: DOMRect) {
-  return Math.max(0, rect.height - viewportHeightPx(rect));
-}
-
-function indexToViewportTopPx(index: number, rect: DOMRect, resultCount: number) {
-  if (resultCount <= 1) return 0;
-  return clamp((index / (resultCount - 1)) * maxViewportTopPx(rect), 0, maxViewportTopPx(rect));
-}
-
-function viewportTopPxToResultIndex(topPx: number, rect: DOMRect, resultCount: number) {
-  if (resultCount <= 0 || rect.height <= 0) return null;
-  if (resultCount === 1) return 0;
-  const maxTop = maxViewportTopPx(rect);
-  const frac = maxTop > 0 ? clamp(topPx / maxTop, 0, 1) : 0;
-  return clamp(Math.round(frac * (resultCount - 1)), 0, resultCount - 1);
-}
-
-function pointerToResultIndex(clientY: number, rect: DOMRect, resultCount: number, grabOffset: number) {
-  const topPx = clientY - rect.top - grabOffset;
-  return viewportTopPxToResultIndex(topPx, rect, resultCount);
-}
 
 export function Minimap() {
   const status = useSession((s) => s.status);
@@ -123,7 +81,7 @@ export function Minimap() {
       setData({ bookmarks: [], errors: [] });
       return;
     }
-    getMinimap(BUCKETS)
+    getMinimap(MINIMAP_BUCKETS)
       .then(setData)
       .catch(() => setData({ bookmarks: [], errors: [] }));
   }, [

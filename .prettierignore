@@ -1,0 +1,8 @@
+dist
+target
+src-tauri/target
+node_modules
+Cargo.lock
+pnpm-lock.yaml
+docs/design/*.dc.html
+docs/design/support.js

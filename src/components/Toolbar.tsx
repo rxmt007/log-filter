@@ -165,233 +165,210 @@ export function Toolbar() {
           </button>
         </div>
 
-      <div className="lf-toolbar-row lf-toolbar-row-actions">
-        <Button
-          aria-label="Start"
-          className="lf-run-button"
-          data-tooltip="Start"
-          size="icon-sm"
-        >
-          <Play />
-        </Button>
-        <Button
-          aria-label="Pause"
-          data-tooltip="Pause"
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Pause />
-        </Button>
-        <Button
-          aria-label="Stop"
-          data-tooltip="Stop"
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Square />
-        </Button>
-        <Button
-          aria-label="Clear"
-          data-tooltip="Clear"
-          size="icon-sm"
-          variant="ghost"
-        >
-          <Trash2 />
-        </Button>
-        <span className="lf-separator" />
-        <Button
-          aria-label="Open file"
-          data-tooltip="Open file"
-          size="icon-sm"
-          variant="ghost"
-          onClick={onOpen}
-        >
-          <FolderOpen />
-        </Button>
-        <Button
-          aria-label="Export"
-          data-tooltip="Export"
-          size="icon-sm"
-          variant="ghost"
-          onClick={() => setDialog("export")}
-        >
-          <Download />
-        </Button>
-        <Button
-          aria-label="Split file"
-          data-tooltip="Split file"
-          size="icon-sm"
-          variant="ghost"
-          onClick={() => setDialog("split")}
-        >
-          <Split />
-        </Button>
-        <Button
-          aria-label="Settings"
-          data-tooltip="Settings"
-          size="icon-sm"
-          variant="ghost"
-          onClick={() => setDialog("settings")}
-        >
-          <Settings />
-        </Button>
-        <Button
-          aria-label="Theme"
-          data-tooltip="Theme"
-          size="icon-sm"
-          variant="ghost"
-          onClick={toggleTheme}
-        >
-          {theme === "dark" ? <Sun /> : <Moon />}
-        </Button>
-        <span className="lf-separator" />
-        <span className="lf-level-label">级别</span>
-        <div className="lf-level-chips">
-          <button
-            aria-label="All levels"
-            className="lf-level-chip lf-level-all"
-            data-active={filter.levels === ALL_LEVELS}
-            data-tooltip="All levels"
-            type="button"
-            onClick={() => setFilter({ levels: ALL_LEVELS })}
+        <div className="lf-toolbar-row lf-toolbar-row-actions">
+          <Button aria-label="Start" className="lf-run-button" data-tooltip="Start" size="icon-sm">
+            <Play />
+          </Button>
+          <Button aria-label="Pause" data-tooltip="Pause" size="icon-sm" variant="ghost">
+            <Pause />
+          </Button>
+          <Button aria-label="Stop" data-tooltip="Stop" size="icon-sm" variant="ghost">
+            <Square />
+          </Button>
+          <Button aria-label="Clear" data-tooltip="Clear" size="icon-sm" variant="ghost">
+            <Trash2 />
+          </Button>
+          <span className="lf-separator" />
+          <Button
+            aria-label="Open file"
+            data-tooltip="Open file"
+            size="icon-sm"
+            variant="ghost"
+            onClick={onOpen}
           >
-            <b>全部</b>
-          </button>
-          {LEVELS.map(([level, bit]) => {
-            const on = (filter.levels & bit) !== 0;
-            return (
-              <button
-                aria-label={LEVEL_TOOLTIPS[level]}
-                key={level}
-                className="lf-level-chip"
-                data-level={level}
-                data-active={on}
-                data-tooltip={LEVEL_TOOLTIPS[level]}
-                type="button"
-                onClick={() => toggleLevel(bit)}
-              >
-                <span />
-                <b>{level}</b>
-              </button>
-            );
-          })}
-          <button
-            aria-label="Marked only"
-            className="lf-level-chip lf-marked-only-chip"
-            data-active={filter.markedOnly}
-            data-tooltip="Marked only"
-            type="button"
-            onClick={() => setFilter({ markedOnly: !filter.markedOnly })}
+            <FolderOpen />
+          </Button>
+          <Button
+            aria-label="Export"
+            data-tooltip="Export"
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setDialog("export")}
           >
-            <Bookmark />
-            <b>仅标记</b>
-          </button>
-        </div>
-        <div className="lf-spacer" />
-        <div className="lf-search-box">
-          <Search />
-          <input
-            value={search.query}
-            onChange={(e) => setSearch({ query: e.target.value })}
-            placeholder="查找日志…"
-          />
-          <span className="lf-search-count">{countLabel}</span>
-          <button
-            aria-label="Case sensitive"
-            className="lf-mini-toggle"
-            data-active={search.caseSensitive}
-            data-tooltip="Case sensitive"
-            type="button"
-            onClick={() => setSearch({ caseSensitive: !search.caseSensitive })}
+            <Download />
+          </Button>
+          <Button
+            aria-label="Split file"
+            data-tooltip="Split file"
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setDialog("split")}
           >
-            Aa
-          </button>
-          <button
-            aria-label="Regex search"
-            className="lf-mini-toggle"
-            data-active={search.regex}
-            data-tooltip="Regex search"
-            type="button"
-            onClick={() => setSearch({ regex: !search.regex })}
+            <Split />
+          </Button>
+          <Button
+            aria-label="Settings"
+            data-tooltip="Settings"
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setDialog("settings")}
           >
-            .*
-          </button>
-          <span
-            className="lf-highlight-swatch"
-            data-tooltip="Highlight color"
-          />
-          <span className="lf-search-divider" />
-          <button
-            aria-label="Previous match"
-            data-tooltip="Previous match"
-            type="button"
-            onClick={() => jumpSearch("previous")}
+            <Settings />
+          </Button>
+          <Button
+            aria-label="Theme"
+            data-tooltip="Theme"
+            size="icon-sm"
+            variant="ghost"
+            onClick={toggleTheme}
           >
-            <ChevronUp />
-          </button>
-          <button
-            aria-label="Next match"
-            data-tooltip="Next match"
-            type="button"
-            onClick={() => jumpSearch("next")}
-          >
-            <ChevronDown />
-          </button>
-        </div>
-      </div>
-
-      <div className="lf-filter-bar">
-        <div className="lf-filter-title">
-          <span>过滤条件</span>
-        </div>
-        <div className="lf-filter-fields">
-          {FILTER_FIELDS.map((field) => {
-            const value = filter[field.key];
-            return (
-              <label className="lf-filter-field" data-enabled={value.enabled} key={field.key}>
+            {theme === "dark" ? <Sun /> : <Moon />}
+          </Button>
+          <span className="lf-separator" />
+          <span className="lf-level-label">级别</span>
+          <div className="lf-level-chips">
+            <button
+              aria-label="All levels"
+              className="lf-level-chip lf-level-all"
+              data-active={filter.levels === ALL_LEVELS}
+              data-tooltip="All levels"
+              type="button"
+              onClick={() => setFilter({ levels: ALL_LEVELS })}
+            >
+              <b>全部</b>
+            </button>
+            {LEVELS.map(([level, bit]) => {
+              const on = (filter.levels & bit) !== 0;
+              return (
                 <button
-                  className="lf-switch"
-                  data-active={value.enabled}
+                  aria-label={LEVEL_TOOLTIPS[level]}
+                  key={level}
+                  className="lf-level-chip"
+                  data-level={level}
+                  data-active={on}
+                  data-tooltip={LEVEL_TOOLTIPS[level]}
                   type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setFilterField(field.key, { enabled: !value.enabled });
-                  }}
+                  onClick={() => toggleLevel(bit)}
                 >
                   <span />
+                  <b>{level}</b>
                 </button>
-                <span className={field.badge === "-" ? "lf-badge lf-badge-exclude" : "lf-badge"}>
-                  {field.badge ?? ""}
-                </span>
-                <span className="lf-filter-label">{field.label}</span>
-                <input
-                  value={value.pattern}
-                  placeholder={field.placeholder}
-                  onChange={(e) => setFilterField(field.key, { pattern: e.target.value })}
-                />
-                {(field.key === "tagInclude" ||
-                  field.key === "tagExclude" ||
-                  field.key === "wordInclude" ||
-                  field.key === "wordExclude") && (
+              );
+            })}
+            <button
+              aria-label="Marked only"
+              className="lf-level-chip lf-marked-only-chip"
+              data-active={filter.markedOnly}
+              data-tooltip="Marked only"
+              type="button"
+              onClick={() => setFilter({ markedOnly: !filter.markedOnly })}
+            >
+              <Bookmark />
+              <b>仅标记</b>
+            </button>
+          </div>
+          <div className="lf-spacer" />
+          <div className="lf-search-box">
+            <Search />
+            <input
+              value={search.query}
+              onChange={(e) => setSearch({ query: e.target.value })}
+              placeholder="查找日志…"
+            />
+            <span className="lf-search-count">{countLabel}</span>
+            <button
+              aria-label="Case sensitive"
+              className="lf-mini-toggle"
+              data-active={search.caseSensitive}
+              data-tooltip="Case sensitive"
+              type="button"
+              onClick={() => setSearch({ caseSensitive: !search.caseSensitive })}
+            >
+              Aa
+            </button>
+            <button
+              aria-label="Regex search"
+              className="lf-mini-toggle"
+              data-active={search.regex}
+              data-tooltip="Regex search"
+              type="button"
+              onClick={() => setSearch({ regex: !search.regex })}
+            >
+              .*
+            </button>
+            <span className="lf-highlight-swatch" data-tooltip="Highlight color" />
+            <span className="lf-search-divider" />
+            <button
+              aria-label="Previous match"
+              data-tooltip="Previous match"
+              type="button"
+              onClick={() => jumpSearch("previous")}
+            >
+              <ChevronUp />
+            </button>
+            <button
+              aria-label="Next match"
+              data-tooltip="Next match"
+              type="button"
+              onClick={() => jumpSearch("next")}
+            >
+              <ChevronDown />
+            </button>
+          </div>
+        </div>
+
+        <div className="lf-filter-bar">
+          <div className="lf-filter-title">
+            <span>过滤条件</span>
+          </div>
+          <div className="lf-filter-fields">
+            {FILTER_FIELDS.map((field) => {
+              const value = filter[field.key];
+              return (
+                <label className="lf-filter-field" data-enabled={value.enabled} key={field.key}>
                   <button
-                    aria-label={`${field.label} 正则`}
-                    className="lf-mini-toggle"
-                    data-active={value.regex}
-                    data-tooltip="Regex filter"
+                    className="lf-switch"
+                    data-active={value.enabled}
                     type="button"
                     onClick={(e) => {
                       e.preventDefault();
-                      setFilterField(field.key, { regex: !value.regex });
+                      setFilterField(field.key, { enabled: !value.enabled });
                     }}
                   >
-                    .*
+                    <span />
                   </button>
-                )}
-              </label>
-            );
-          })}
+                  <span className={field.badge === "-" ? "lf-badge lf-badge-exclude" : "lf-badge"}>
+                    {field.badge ?? ""}
+                  </span>
+                  <span className="lf-filter-label">{field.label}</span>
+                  <input
+                    value={value.pattern}
+                    placeholder={field.placeholder}
+                    onChange={(e) => setFilterField(field.key, { pattern: e.target.value })}
+                  />
+                  {(field.key === "tagInclude" ||
+                    field.key === "tagExclude" ||
+                    field.key === "wordInclude" ||
+                    field.key === "wordExclude") && (
+                    <button
+                      aria-label={`${field.label} 正则`}
+                      className="lf-mini-toggle"
+                      data-active={value.regex}
+                      data-tooltip="Regex filter"
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setFilterField(field.key, { regex: !value.regex });
+                      }}
+                    >
+                      .*
+                    </button>
+                  )}
+                </label>
+              );
+            })}
+          </div>
         </div>
-      </div>
       </div>
       {dialog === "export" && <ExportDialog onClose={() => setDialog(null)} />}
       {dialog === "split" && <SplitDialog onClose={() => setDialog(null)} />}

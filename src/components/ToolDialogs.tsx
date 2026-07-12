@@ -74,12 +74,12 @@ export function ExportDialog({ onClose }: DialogProps) {
     setMessage("");
     try {
       const result = await exportLogs(
-        mode === "range"
-          ? { mode, startLine, endLine, path }
-          : { mode, view: exportView, path },
+        mode === "range" ? { mode, startLine, endLine, path } : { mode, view: exportView, path },
       );
       setTone("ok");
-      setMessage(`已导出 ${result.writtenLines.toLocaleString()} 行 · ${result.writtenBytes.toLocaleString()} bytes`);
+      setMessage(
+        `已导出 ${result.writtenLines.toLocaleString()} 行 · ${result.writtenBytes.toLocaleString()} bytes`,
+      );
     } catch (err) {
       setTone("error");
       setMessage(String(err));
@@ -115,11 +115,21 @@ export function ExportDialog({ onClose }: DialogProps) {
           <div className="lf-form-grid-two">
             <label className="lf-form-field">
               <span>开始行</span>
-              <input min={1} type="number" value={startLine} onChange={(e) => setStartLine(Number(e.target.value))} />
+              <input
+                min={1}
+                type="number"
+                value={startLine}
+                onChange={(e) => setStartLine(Number(e.target.value))}
+              />
             </label>
             <label className="lf-form-field">
               <span>结束行</span>
-              <input min={1} type="number" value={endLine} onChange={(e) => setEndLine(Number(e.target.value))} />
+              <input
+                min={1}
+                type="number"
+                value={endLine}
+                onChange={(e) => setEndLine(Number(e.target.value))}
+              />
             </label>
           </div>
         )}
@@ -177,7 +187,9 @@ export function SplitDialog({ onClose }: DialogProps) {
     try {
       const result = await splitLogFile({ path, outDir, mode, value });
       setTone("ok");
-      setMessage(`已生成 ${result.parts.length.toLocaleString()} 个文件 · ${result.totalBytes.toLocaleString()} bytes`);
+      setMessage(
+        `已生成 ${result.parts.length.toLocaleString()} 个文件 · ${result.totalBytes.toLocaleString()} bytes`,
+      );
     } catch (err) {
       setTone("error");
       setMessage(String(err));
@@ -217,7 +229,12 @@ export function SplitDialog({ onClose }: DialogProps) {
           </label>
           <label className="lf-form-field">
             <span>{mode === "lines" ? "每份行数" : "每份字节"}</span>
-            <input min={1} type="number" value={value} onChange={(e) => setValue(Number(e.target.value))} />
+            <input
+              min={1}
+              type="number"
+              value={value}
+              onChange={(e) => setValue(Number(e.target.value))}
+            />
           </label>
         </div>
         <StatusLine text={message} tone={tone} />
@@ -277,10 +294,18 @@ export function SettingsDialog({ onClose }: DialogProps) {
     <DialogShell title="设置" onClose={onClose}>
       <div className="lf-dialog-body">
         <div className="lf-segmented">
-          <button data-active={draft.theme === "light"} type="button" onClick={() => patch({ theme: "light" })}>
+          <button
+            data-active={draft.theme === "light"}
+            type="button"
+            onClick={() => patch({ theme: "light" })}
+          >
             浅色
           </button>
-          <button data-active={draft.theme === "dark"} type="button" onClick={() => patch({ theme: "dark" })}>
+          <button
+            data-active={draft.theme === "dark"}
+            type="button"
+            onClick={() => patch({ theme: "dark" })}
+          >
             深色
           </button>
         </div>
@@ -291,7 +316,10 @@ export function SettingsDialog({ onClose }: DialogProps) {
         <label className="lf-form-field">
           <span>存储位置</span>
           <div className="lf-path-row">
-            <input value={draft.storageDir ?? ""} onChange={(e) => patch({ storageDir: e.target.value || null })} />
+            <input
+              value={draft.storageDir ?? ""}
+              onChange={(e) => patch({ storageDir: e.target.value || null })}
+            />
             <Button size="icon-sm" variant="ghost" title="选择目录" onClick={chooseStorage}>
               <FolderOpen />
             </Button>
@@ -300,7 +328,10 @@ export function SettingsDialog({ onClose }: DialogProps) {
         <label className="lf-form-field">
           <span>ADB 路径</span>
           <div className="lf-path-row">
-            <input value={draft.adbPath ?? ""} onChange={(e) => patch({ adbPath: e.target.value || null })} />
+            <input
+              value={draft.adbPath ?? ""}
+              onChange={(e) => patch({ adbPath: e.target.value || null })}
+            />
             <Button size="icon-sm" variant="ghost" title="选择 adb" onClick={chooseAdb}>
               <FolderOpen />
             </Button>
@@ -309,11 +340,23 @@ export function SettingsDialog({ onClose }: DialogProps) {
         <div className="lf-form-grid-two">
           <label className="lf-form-field">
             <span>字体</span>
-            <input min={10} max={20} type="number" value={draft.fontSize} onChange={(e) => patch({ fontSize: Number(e.target.value) })} />
+            <input
+              min={10}
+              max={20}
+              type="number"
+              value={draft.fontSize}
+              onChange={(e) => patch({ fontSize: Number(e.target.value) })}
+            />
           </label>
           <label className="lf-form-field">
             <span>行高</span>
-            <input min={16} max={32} type="number" value={draft.rowHeight} onChange={(e) => patch({ rowHeight: Number(e.target.value) })} />
+            <input
+              min={16}
+              max={32}
+              type="number"
+              value={draft.rowHeight}
+              onChange={(e) => patch({ rowHeight: Number(e.target.value) })}
+            />
           </label>
         </div>
         <StatusLine text={message} tone={tone} />

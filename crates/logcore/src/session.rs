@@ -593,11 +593,13 @@ impl Session {
     fn refresh_error_lines(&mut self) {
         let frontier = self.indexed_frontier();
         let total = self.indexer.total_lines();
-        for idx in self.error_scan_lines..total {
-            if let Some((_, entry)) = self.parse_source_row(idx, frontier) {
-                if matches!(entry.level.as_str(), "E" | "F") {
-                    self.error_lines.push(idx as u64);
-                }
+        for (idx, (span_start, span_end)) in (self.error_scan_lines..total).zip(
+            self.indexer
+                .line_spans(self.source.bytes(), self.error_scan_lines, total, frontier),
+        ) {
+            let entry = self.parse_source_span(span_start, span_end);
+            if matches!(entry.level.as_str(), "E" | "F") {
+                self.error_lines.push(idx as u64);
             }
         }
         self.error_scan_lines = total;
@@ -627,6 +629,7 @@ mod tests {
     use crate::filter::{FilterField, FilterMatcher, FilterSpec, LevelMask};
     use crate::search::{SearchDirection, SearchSpec};
     use std::io::Write;
+    use std::time::Instant;
 
     fn temp_log() -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();
@@ -942,6 +945,43 @@ mod tests {
             rows[0].1.message.len() < 1024,
             "frontier row leaked {} bytes",
             rows[0].1.message.len()
+        );
+    }
+
+    #[test]
+    fn synthetic_large_log_indexing_and_window_reads_stay_fast() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for i in 0..100_000 {
+            writeln!(
+                f,
+                "04-20 12:06:02.{:03}   146   179 D PerfTag: synthetic message {}",
+                i % 1000,
+                i
+            )
+            .unwrap();
+        }
+        let bytes = f.as_file().metadata().unwrap().len();
+        let mut s = Session::open(f.path()).unwrap();
+
+        let index_start = Instant::now();
+        s.index_all();
+        let index_elapsed = index_start.elapsed();
+        let throughput = bytes as f64 / index_elapsed.as_secs_f64();
+        assert_eq!(s.total_lines(), 100_000);
+        assert!(
+            throughput > 1_000_000.0,
+            "index throughput regressed to {throughput:.0} bytes/sec"
+        );
+
+        let read_start = Instant::now();
+        let rows = s.get_rows(90_000, 200);
+        let read_elapsed = read_start.elapsed();
+        assert_eq!(rows.len(), 200);
+        assert_eq!(rows[0].0, 90_001);
+        assert!(
+            read_elapsed.as_millis() < 250,
+            "get_rows latency regressed to {:?}",
+            read_elapsed
         );
     }
 }

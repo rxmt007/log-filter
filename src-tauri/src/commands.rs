@@ -50,6 +50,10 @@ fn rows_view_from_str(view: &str) -> Option<logcore::session::RowsView> {
     }
 }
 
+fn clamp_row_count(count: usize) -> usize {
+    count.min(MAX_ROWS)
+}
+
 #[tauri::command]
 pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result<Status, String> {
     let session =
@@ -139,7 +143,7 @@ pub fn get_rows(view: String, start: usize, count: usize, state: State<AppState>
     let Some(view) = rows_view_from_str(&view) else {
         return Vec::new();
     };
-    let count = count.min(MAX_ROWS);
+    let count = clamp_row_count(count);
     let guard = state.lock_session();
     match guard.as_ref() {
         Some(s) => s
@@ -531,4 +535,36 @@ pub fn set_config(config: AppConfigDto) -> Result<AppConfigDto, String> {
     let config = logcore::config::AppConfig::try_from(config)?;
     logcore::config::save_config(&path, &config).map_err(|err| err.to_string())?;
     Ok(AppConfigDto::from_config(config, path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_known_rows_views_and_rejects_unknown() {
+        assert_eq!(
+            rows_view_from_str("all"),
+            Some(logcore::session::RowsView::All)
+        );
+        assert_eq!(
+            rows_view_from_str("filtered"),
+            Some(logcore::session::RowsView::Filtered)
+        );
+        assert_eq!(
+            rows_view_from_str("bookmarks"),
+            Some(logcore::session::RowsView::Bookmarks)
+        );
+        assert_eq!(
+            rows_view_from_str("errors"),
+            Some(logcore::session::RowsView::Errors)
+        );
+        assert_eq!(rows_view_from_str("everything"), None);
+    }
+
+    #[test]
+    fn clamps_visible_row_requests_to_ipc_limit() {
+        assert_eq!(clamp_row_count(32), 32);
+        assert_eq!(clamp_row_count(MAX_ROWS + 1), MAX_ROWS);
+    }
 }

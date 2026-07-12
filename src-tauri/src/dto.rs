@@ -311,3 +311,72 @@ impl TryFrom<AppConfigDto> for logcore::config::AppConfig {
         .normalized())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn filter_done_event_serializes_with_camel_case_fields() {
+        let payload = FilterDoneDto {
+            filtered_lines: 12,
+            generation: 7,
+        };
+
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            json!({"filteredLines": 12, "generation": 7})
+        );
+    }
+
+    #[test]
+    fn search_progress_event_serializes_with_first_line() {
+        let payload = SearchProgressDto {
+            scanned: 100,
+            matches: 3,
+            first_line: Some(42),
+            done: true,
+            generation: 9,
+        };
+
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            json!({
+                "scanned": 100,
+                "matches": 3,
+                "firstLine": 42,
+                "done": true,
+                "generation": 9
+            })
+        );
+    }
+
+    #[test]
+    fn app_config_dto_rejects_unknown_theme_and_normalizes_numbers() {
+        let config = AppConfigDto {
+            theme: "dark".to_string(),
+            adb_path: Some(String::new()),
+            storage_dir: Some(String::new()),
+            encoding: String::new(),
+            font_size: 99,
+            row_height: 1,
+            table: TableConfigDto::default(),
+            config_path: String::new(),
+        };
+
+        let converted = logcore::config::AppConfig::try_from(config).unwrap();
+        assert_eq!(converted.theme, logcore::config::ThemeMode::Dark);
+        assert_eq!(converted.adb_path, None);
+        assert_eq!(converted.storage_dir, None);
+        assert_eq!(converted.encoding, "UTF-8");
+        assert_eq!(converted.font_size, 20);
+        assert_eq!(converted.row_height, 16);
+
+        let bad = AppConfigDto {
+            theme: "system".to_string(),
+            ..AppConfigDto::from_config(logcore::config::AppConfig::default(), PathBuf::new())
+        };
+        assert!(logcore::config::AppConfig::try_from(bad).is_err());
+    }
+}

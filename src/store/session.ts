@@ -9,13 +9,7 @@ import type {
   ThemeMode,
 } from "@/types";
 
-type FilterFieldKey =
-  | "pid"
-  | "tid"
-  | "tagInclude"
-  | "tagExclude"
-  | "wordInclude"
-  | "wordExclude";
+type FilterFieldKey = "pid" | "tid" | "tagInclude" | "tagExclude" | "wordInclude" | "wordExclude";
 
 interface SessionState {
   status: Status;
@@ -73,7 +67,8 @@ export const LEVEL_BITS = {
   F: 1 << 5,
 } as const;
 
-export const ALL_LEVELS = LEVEL_BITS.V | LEVEL_BITS.D | LEVEL_BITS.I | LEVEL_BITS.W | LEVEL_BITS.E | LEVEL_BITS.F;
+export const ALL_LEVELS =
+  LEVEL_BITS.V | LEVEL_BITS.D | LEVEL_BITS.I | LEVEL_BITS.W | LEVEL_BITS.E | LEVEL_BITS.F;
 
 const field = (enabled = false, pattern = "", regex = false) => ({ enabled, pattern, regex });
 
@@ -142,8 +137,7 @@ export const useSession = create<SessionState>()((set) => ({
   bookmarks: [],
   bookmarkRevision: 0,
   // 索引进度事件用它更新状态(不换 session)。
-  setStatus: (status) =>
-    set((s) => (status.generation >= s.status.generation ? { status } : {})),
+  setStatus: (status) => set((s) => (status.generation >= s.status.generation ? { status } : {})),
   // 打开新文件时用它:更新状态并自增 sessionId。
   beginSession: (status, sourcePath) =>
     set((s) => ({
@@ -202,8 +196,7 @@ export const useSession = create<SessionState>()((set) => ({
       filter: { ...s.filter, levels: s.filter.levels ^ bit },
       filterRevision: s.filterRevision + 1,
     })),
-  setSearch: (patch) =>
-    set((s) => ({ search: { ...s.search, ...patch } })),
+  setSearch: (patch) => set((s) => ({ search: { ...s.search, ...patch } })),
   setSearchResult: (count, firstLine) =>
     set({
       searchCount: count,
@@ -218,9 +211,7 @@ export const useSession = create<SessionState>()((set) => ({
   setViewportResultIndex: (index) =>
     set((s) => {
       const viewportResultIndex =
-        s.status.filteredLines > 0
-          ? Math.min(Math.max(0, index), s.status.filteredLines - 1)
-          : 0;
+        s.status.filteredLines > 0 ? Math.min(Math.max(0, index), s.status.filteredLines - 1) : 0;
       return viewportResultIndex === s.viewportResultIndex ? {} : { viewportResultIndex };
     }),
   selectRow: (selectedLine, selectedResultIndex) => set({ selectedLine, selectedResultIndex }),

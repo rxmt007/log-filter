@@ -3,40 +3,26 @@ import type {
   ClipboardEvent as ReactClipboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
-  ReactNode,
   WheelEvent as ReactWheelEvent,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Bookmark, Columns3 } from "lucide-react";
+import { splitHighlightTokens } from "@/lib/highlight";
 import { getRows, listBookmarks, saveAppConfig, toggleBookmark } from "@/lib/ipc";
-import type { AppConfig, Row, SearchSpec, TableColumnConfig } from "@/types";
+import {
+  clamp,
+  formatRowForClipboard,
+  gridTemplateFor,
+  normalizeColumns,
+  TABLE_COLUMNS,
+  toConfigColumns,
+  type ColumnId,
+  type ColumnState,
+} from "@/lib/table";
+import type { AppConfig, Row, SearchSpec } from "@/types";
 import { ALL_LEVELS, useSession } from "@/store/session";
 
 const WINDOW = 200;
-
-type ColumnId =
-  | "bookmark"
-  | "lineNo"
-  | "date"
-  | "time"
-  | "level"
-  | "pid"
-  | "tid"
-  | "tag"
-  | "message";
-
-interface ColumnDefinition {
-  id: ColumnId;
-  label: string;
-  className: string;
-  width: number;
-  min: number;
-  max: number;
-}
-
-interface ColumnState extends ColumnDefinition {
-  visible: boolean;
-}
 
 interface ResizeState {
   columnId: ColumnId;
@@ -60,83 +46,6 @@ interface FilledBlock {
   epoch: number;
 }
 
-const TABLE_COLUMNS: ColumnDefinition[] = [
-  { id: "bookmark", label: "", className: "lf-bookmark-cell", width: 24, min: 22, max: 36 },
-  { id: "lineNo", label: "行号", className: "lf-num", width: 58, min: 52, max: 120 },
-  { id: "date", label: "日期", className: "lf-meta", width: 50, min: 48, max: 90 },
-  { id: "time", label: "时间", className: "lf-meta", width: 98, min: 82, max: 160 },
-  { id: "level", label: "级别", className: "lf-level", width: 40, min: 36, max: 60 },
-  { id: "pid", label: "PID", className: "lf-num", width: 54, min: 48, max: 100 },
-  { id: "tid", label: "TID", className: "lf-num", width: 54, min: 48, max: 100 },
-  { id: "tag", label: "Tag", className: "lf-tag", width: 154, min: 110, max: 260 },
-  { id: "message", label: "消息", className: "lf-message", width: 360, min: 220, max: 1200 },
-];
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function normalizeColumns(config: TableColumnConfig[]): ColumnState[] {
-  const configured = new Map(config.map((column) => [column.id, column]));
-  return TABLE_COLUMNS.map((definition) => {
-    const column = configured.get(definition.id);
-    return {
-      ...definition,
-      width: clamp(column?.width ?? definition.width, definition.min, definition.max),
-      visible: definition.id === "message" ? true : column?.visible ?? true,
-    };
-  });
-}
-
-function gridTemplateFor(columns: ColumnState[]) {
-  return columns
-    .map((column) =>
-      column.id === "message" ? `minmax(${column.width}px, 1fr)` : `${column.width}px`,
-    )
-    .join(" ");
-}
-
-function toConfigColumns(columns: ColumnState[]): TableColumnConfig[] {
-  return TABLE_COLUMNS.map((definition) => {
-    const column = columns.find((item) => item.id === definition.id);
-    return {
-      id: definition.id,
-      width: column?.width ?? definition.width,
-      visible: definition.id === "message" ? true : column?.visible ?? true,
-    };
-  });
-}
-
-function cellTextForClipboard(column: ColumnState, row: Row) {
-  switch (column.id) {
-    case "bookmark":
-      return null;
-    case "lineNo":
-      return String(row.lineNo);
-    case "date":
-      return row.date;
-    case "time":
-      return row.time;
-    case "level":
-      return row.level;
-    case "pid":
-      return row.pid;
-    case "tid":
-      return row.tid;
-    case "tag":
-      return row.tag;
-    case "message":
-      return row.message;
-  }
-}
-
-function formatRowForClipboard(row: Row, columns: ColumnState[]) {
-  return columns
-    .map((column) => cellTextForClipboard(column, row))
-    .filter((value): value is string => value != null && value.length > 0)
-    .join("  ");
-}
-
 function normalizeSelectionRange(start: number, end: number): SelectionRange {
   return start <= end ? { start, end } : { start: end, end: start };
 }
@@ -154,43 +63,26 @@ function selectionIntersectsElement(selection: Selection, element: Element) {
   return false;
 }
 
-function highlightText(text: string, query: string, regex: boolean, caseSensitive: boolean): ReactNode {
-  if (!query) return text;
-  try {
-    if (regex) {
-      const re = new RegExp(query, caseSensitive ? "g" : "gi");
-      const out: ReactNode[] = [];
-      let last = 0;
-      for (const match of text.matchAll(re)) {
-        const index = match.index ?? 0;
-        const hit = match[0];
-        if (!hit) continue;
-        if (index > last) out.push(text.slice(last, index));
-        out.push(
-          <mark className="lf-hit" key={`${index}-${hit}`}>
-            {hit}
-          </mark>,
-        );
-        last = index + hit.length;
-      }
-      if (last === 0) return text;
-      if (last < text.length) out.push(text.slice(last));
-      return out;
+function highlightText(text: string, query: string, regex: boolean, caseSensitive: boolean) {
+  return splitHighlightTokens(text, {
+    search: { query, regex, caseSensitive },
+  }).map((token, index) => {
+    if (token.kind === "search") {
+      return (
+        <mark className="lf-hit" key={`${index}-${token.text}`}>
+          {token.text}
+        </mark>
+      );
     }
-    const haystack = caseSensitive ? text : text.toLowerCase();
-    const needle = caseSensitive ? query : query.toLowerCase();
-    const index = haystack.indexOf(needle);
-    if (index < 0) return text;
-    return (
-      <>
-        {text.slice(0, index)}
-        <mark className="lf-hit">{text.slice(index, index + query.length)}</mark>
-        {text.slice(index + query.length)}
-      </>
-    );
-  } catch {
-    return text;
-  }
+    if (token.kind === "highlight") {
+      return (
+        <mark className="lf-keyword-hit" data-color={token.color} key={`${index}-${token.text}`}>
+          {token.text}
+        </mark>
+      );
+    }
+    return token.text;
+  });
 }
 
 function fieldActive(field: { enabled: boolean; pattern: string }) {
@@ -257,7 +149,10 @@ export function LogTable() {
     !fieldActive(filter.tagExclude) &&
     !fieldActive(filter.wordInclude) &&
     !fieldActive(filter.wordExclude);
-  const columns = useMemo(() => normalizeColumns(appConfig.table.columns), [appConfig.table.columns]);
+  const columns = useMemo(
+    () => normalizeColumns(appConfig.table.columns),
+    [appConfig.table.columns],
+  );
   const visibleColumns = useMemo(() => columns.filter((column) => column.visible), [columns]);
   const gridTemplateColumns = useMemo(() => gridTemplateFor(visibleColumns), [visibleColumns]);
 
@@ -332,9 +227,7 @@ export function LogTable() {
           definition.max,
         );
         applyColumnUpdate((currentColumns) =>
-          currentColumns.map((item) =>
-            item.id === resize.columnId ? { ...item, width } : item,
-          ),
+          currentColumns.map((item) => (item.id === resize.columnId ? { ...item, width } : item)),
         );
       };
 
@@ -499,30 +392,27 @@ export function LogTable() {
     setViewportResultIndex(firstVisibleIndex);
   }, [firstVisibleIndex, setViewportResultIndex]);
 
-  const ensureBlock = useCallback(
-    async (block: number, totalNow: number) => {
-      const want = Math.min(WINDOW, totalNow - block);
-      if (want <= 0) return;
-      const filled = filledEpoch.current.get(block);
-      if (filled?.epoch === cacheEpoch.current && filled.count >= want) return;
-      if (inflight.current.has(block)) return;
-      const epoch = cacheEpoch.current;
-      inflight.current.add(block);
-      try {
-        const rows = await getRows("filtered", block, WINDOW);
-        if (cacheEpoch.current !== epoch) return;
-        rows.forEach((r, i) => cache.current.set(block + i, r));
-        for (let i = rows.length; i < want; i += 1) {
-          cache.current.delete(block + i);
-        }
-        filledEpoch.current.set(block, { count: rows.length, epoch });
-        force((x) => x + 1);
-      } finally {
-        inflight.current.delete(block);
+  const ensureBlock = useCallback(async (block: number, totalNow: number) => {
+    const want = Math.min(WINDOW, totalNow - block);
+    if (want <= 0) return;
+    const filled = filledEpoch.current.get(block);
+    if (filled?.epoch === cacheEpoch.current && filled.count >= want) return;
+    if (inflight.current.has(block)) return;
+    const epoch = cacheEpoch.current;
+    inflight.current.add(block);
+    try {
+      const rows = await getRows("filtered", block, WINDOW);
+      if (cacheEpoch.current !== epoch) return;
+      rows.forEach((r, i) => cache.current.set(block + i, r));
+      for (let i = rows.length; i < want; i += 1) {
+        cache.current.delete(block + i);
       }
-    },
-    [],
-  );
+      filledEpoch.current.set(block, { count: rows.length, epoch });
+      force((x) => x + 1);
+    } finally {
+      inflight.current.delete(block);
+    }
+  }, []);
 
   useEffect(() => {
     if (items.length === 0) return;
@@ -654,7 +544,9 @@ export function LogTable() {
                 <div
                   className="lf-table-row"
                   data-copy-selected={
-                    selectionRange && vi.index >= selectionRange.start && vi.index <= selectionRange.end
+                    selectionRange &&
+                    vi.index >= selectionRange.start &&
+                    vi.index <= selectionRange.end
                       ? true
                       : undefined
                   }
