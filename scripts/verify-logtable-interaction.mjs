@@ -55,5 +55,15 @@ expectContract(
 expectContract("table exposes marked row state", files.table.includes("data-marked"));
 expectContract("css styles marked rows", files.css.includes('.lf-table-row[data-marked="true"]'));
 expectContract("css defines marked row color tokens", files.css.includes("--lf-row-marked"));
+expectContract("table formats copied rows as inline fields", files.table.includes("formatRowForClipboard"));
+expectContract(
+  "table overrides native clipboard copy",
+  files.table.includes("handleTableCopy") && files.table.includes("onCopy={handleTableCopy}"),
+);
+expectContract("table exposes copy selection row state", files.table.includes("data-copy-selected"));
+expectContract(
+  "css styles native copy-selected rows",
+  files.css.includes('.lf-table-row[data-copy-selected="true"]'),
+);
 
 console.log("log table interaction contracts verified");

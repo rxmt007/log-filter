@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ClipboardEvent as ReactClipboardEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
   WheelEvent as ReactWheelEvent,
@@ -94,6 +95,51 @@ function toConfigColumns(columns: ColumnState[]): TableColumnConfig[] {
   });
 }
 
+function cellTextForClipboard(column: ColumnState, row: Row) {
+  switch (column.id) {
+    case "bookmark":
+      return null;
+    case "lineNo":
+      return String(row.lineNo);
+    case "date":
+      return row.date;
+    case "time":
+      return row.time;
+    case "level":
+      return row.level;
+    case "pid":
+      return row.pid;
+    case "tid":
+      return row.tid;
+    case "tag":
+      return row.tag;
+    case "message":
+      return row.message;
+  }
+}
+
+function formatRowForClipboard(row: Row, columns: ColumnState[]) {
+  return columns
+    .map((column) => cellTextForClipboard(column, row))
+    .filter((value): value is string => value != null && value.length > 0)
+    .join("  ");
+}
+
+function setsEqual(left: Set<number>, right: Set<number>) {
+  if (left.size !== right.size) return false;
+  for (const item of left) {
+    if (!right.has(item)) return false;
+  }
+  return true;
+}
+
+function selectionIntersectsElement(selection: Selection, element: Element) {
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    if (selection.getRangeAt(index).intersectsNode(element)) return true;
+  }
+  return false;
+}
+
 function highlightText(text: string, query: string, regex: boolean, caseSensitive: boolean): ReactNode {
   if (!query) return text;
   try {
@@ -185,6 +231,7 @@ export function LogTable() {
   const resizeRef = useRef<ResizeState | null>(null);
   const [, force] = useState(0);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const [copySelectedRows, setCopySelectedRows] = useState<Set<number>>(() => new Set());
   const rowHeight = appConfig.rowHeight;
   const defaultResultOrder =
     filter.levels === ALL_LEVELS &&
@@ -296,6 +343,46 @@ export function LogTable() {
     [applyColumnUpdate, persistConfig],
   );
 
+  const collectRowsFromSelection = useCallback(() => {
+    const root = parentRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.rangeCount === 0 || selection.isCollapsed) return [];
+
+    const touchesTable =
+      (selection.anchorNode && root.contains(selection.anchorNode)) ||
+      (selection.focusNode && root.contains(selection.focusNode));
+    if (!touchesTable) return [];
+
+    const rows: Array<{ index: number; row: Row }> = [];
+    root.querySelectorAll<HTMLElement>(".lf-table-row[data-result-index]").forEach((element) => {
+      if (!selectionIntersectsElement(selection, element)) return;
+      const index = Number(element.dataset.resultIndex);
+      if (!Number.isFinite(index)) return;
+      const row = cache.current.get(index);
+      if (row) rows.push({ index, row });
+    });
+    return rows;
+  }, []);
+
+  const refreshCopySelection = useCallback(() => {
+    const indices = collectRowsFromSelection().map((item) => item.index);
+    const next = new Set(indices);
+    setCopySelectedRows((current) => (setsEqual(current, next) ? current : next));
+  }, [collectRowsFromSelection]);
+
+  const handleTableCopy = useCallback(
+    (event: ReactClipboardEvent<HTMLDivElement>) => {
+      const rows = collectRowsFromSelection();
+      if (rows.length === 0) return;
+      event.preventDefault();
+      event.clipboardData.setData(
+        "text/plain",
+        rows.map(({ row }) => formatRowForClipboard(row, visibleColumns)).join("\n"),
+      );
+    },
+    [collectRowsFromSelection, visibleColumns],
+  );
+
   const handleTableWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     const element = event.currentTarget;
     const deltaY = event.deltaY;
@@ -331,6 +418,11 @@ export function LogTable() {
     inflight.current.clear();
     force((x) => x + 1);
   }, [filterResultRevision]);
+
+  useEffect(() => {
+    document.addEventListener("selectionchange", refreshCopySelection);
+    return () => document.removeEventListener("selectionchange", refreshCopySelection);
+  }, [refreshCopySelection]);
 
   const rv = useVirtualizer({
     count: total,
@@ -452,7 +544,12 @@ export function LogTable() {
           </div>
         )}
       </div>
-      <div ref={parentRef} className="lf-table-scroll" onWheelCapture={handleTableWheel}>
+      <div
+        ref={parentRef}
+        className="lf-table-scroll"
+        onCopy={handleTableCopy}
+        onWheelCapture={handleTableWheel}
+      >
         {total === 0 ? (
           <div className="lf-empty-state">{emptyText}</div>
         ) : (
@@ -466,8 +563,10 @@ export function LogTable() {
               return (
                 <div
                   className="lf-table-row"
+                  data-copy-selected={copySelectedRows.has(vi.index) || undefined}
                   data-level={row?.level || ""}
                   data-marked={row?.marked || undefined}
+                  data-result-index={vi.index}
                   data-selected={selected || undefined}
                   key={vi.key}
                   onClick={() => {

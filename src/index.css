@@ -173,6 +173,8 @@
   --lf-row-marked: #dbeafe;
   --lf-row-marked-border: #2563eb;
   --lf-row-marked-icon: #1d4ed8;
+  --lf-row-copy-selected: #cfe3ff;
+  --lf-row-copy-selected-border: #3b82f6;
   --lf-chip-v: #f1f2f4;
   --lf-chip-d: #e7f0fe;
   --lf-chip-i: #e6f6ed;
@@ -213,6 +215,8 @@
   --lf-row-marked: rgba(91, 157, 255, 0.2);
   --lf-row-marked-border: #8ebaff;
   --lf-row-marked-icon: #b7d3ff;
+  --lf-row-copy-selected: rgba(91, 157, 255, 0.28);
+  --lf-row-copy-selected-border: #8ebaff;
   --lf-chip-v: #252b33;
   --lf-chip-d: rgba(91, 157, 255, 0.17);
   --lf-chip-i: rgba(84, 213, 133, 0.14);
@@ -1056,12 +1060,22 @@
   background: var(--lf-row-marked);
 }
 
+.lf-table-row[data-copy-selected="true"] {
+  border-left-color: var(--lf-row-copy-selected-border);
+  background: var(--lf-row-copy-selected);
+}
+
 .lf-table-row > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 6px;
+}
+
+.lf-table-row[data-copy-selected="true"] ::selection {
+  color: inherit;
+  background: transparent;
 }
 
 .lf-bookmark-cell {
