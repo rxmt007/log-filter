@@ -99,6 +99,25 @@ fn parse_buffers(buffers: &[String]) -> Result<Vec<logcore::adb::LogcatBuffer>, 
         .collect()
 }
 
+fn parse_logcat_request_buffers(
+    config: &logcore::config::AppConfig,
+    request: &StartLogcatRequest,
+) -> Result<Vec<logcore::adb::LogcatBuffer>, String> {
+    if let Some(command) = request
+        .command
+        .as_deref()
+        .filter(|command| !command.trim().is_empty())
+    {
+        let spec = logcore::adb::LogcatSpec::parse(command)?;
+        return Ok(vec![spec.buffer]);
+    }
+    if !request.buffers.is_empty() {
+        return parse_buffers(&request.buffers);
+    }
+    let spec = logcore::adb::LogcatSpec::parse(&config.current_command)?;
+    Ok(vec![spec.buffer])
+}
+
 fn stream_session_path(config: &logcore::config::AppConfig) -> Result<PathBuf, String> {
     let base_dir = config
         .storage_dir
@@ -417,7 +436,7 @@ pub fn start_logcat(
     stop_stream_task(state.inner(), false, true);
     let config = load_app_config()?;
     let adb_path = resolve_adb_from_config(&config)?;
-    let buffers = parse_buffers(&request.buffers)?;
+    let buffers = parse_logcat_request_buffers(&config, &request)?;
     let session_path = stream_session_path(&config)?;
     File::create(&session_path).map_err(|err| err.to_string())?;
     let session =

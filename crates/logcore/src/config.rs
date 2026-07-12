@@ -1,3 +1,4 @@
+use crate::adb::{normalize_command_presets, LogcatBuffer, LogcatSpec, DEFAULT_LOGCAT_COMMANDS};
 use crate::encoding::TextEncoding;
 use crate::filter::FilterSpec;
 use serde::{Deserialize, Serialize};
@@ -173,6 +174,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub command_buffers: Vec<String>,
     #[serde(default)]
+    pub current_command: String,
+    #[serde(default)]
+    pub command_presets: Vec<String>,
+    #[serde(default)]
     pub window: WindowConfig,
 }
 
@@ -189,6 +194,11 @@ impl Default for AppConfig {
             recent_files: Vec::new(),
             last_filter: FilterSpec::default(),
             command_buffers: vec!["main".to_string()],
+            current_command: default_current_command(),
+            command_presets: DEFAULT_LOGCAT_COMMANDS
+                .iter()
+                .map(|command| command.to_string())
+                .collect(),
             window: WindowConfig::default(),
         }
     }
@@ -206,22 +216,51 @@ impl AppConfig {
         if self.last_filter.highlights.is_empty() {
             self.last_filter.highlights = FilterSpec::default().highlights;
         }
-        if self.command_buffers.is_empty() {
-            self.command_buffers = vec!["main".to_string()];
-        }
-        self.command_buffers.retain(|buffer| {
-            matches!(
-                buffer.as_str(),
-                "main" | "system" | "radio" | "events" | "crash"
-            )
-        });
-        if self.command_buffers.is_empty() {
-            self.command_buffers = vec!["main".to_string()];
-        }
+        let legacy_buffers = normalized_command_buffers(&self.command_buffers);
+        let default_command = default_current_command();
+        let selected_spec = LogcatSpec::parse(&self.current_command)
+            .ok()
+            .filter(|_| self.current_command != default_command || legacy_buffers.is_empty())
+            .or_else(|| {
+                legacy_buffers
+                    .first()
+                    .copied()
+                    .map(|buffer| LogcatSpec { buffer })
+            })
+            .unwrap_or(LogcatSpec {
+                buffer: LogcatBuffer::Main,
+            });
+        self.current_command = selected_spec.normalized();
+        self.command_buffers = vec![selected_spec.buffer.as_arg().to_string()];
+        let mut presets = self.command_presets;
+        presets.push(self.current_command.clone());
+        presets.extend(
+            legacy_buffers
+                .into_iter()
+                .map(|buffer| LogcatSpec { buffer }.normalized()),
+        );
+        self.command_presets = normalize_command_presets(presets);
         self.window.width = self.window.width.clamp(960, 3840);
         self.window.height = self.window.height.clamp(560, 2160);
         self
     }
+}
+
+pub fn default_current_command() -> String {
+    DEFAULT_LOGCAT_COMMANDS[0].to_string()
+}
+
+fn normalized_command_buffers(buffers: &[String]) -> Vec<LogcatBuffer> {
+    let mut out = Vec::new();
+    for buffer in buffers {
+        let Ok(buffer) = LogcatBuffer::try_from(buffer.as_str()) else {
+            continue;
+        };
+        if !out.contains(&buffer) {
+            out.push(buffer);
+        }
+    }
+    out
 }
 
 fn normalize_recent_files(files: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -315,6 +354,10 @@ mod tests {
         assert_eq!(config.adb_path, None);
         assert_eq!(config.storage_dir, None);
         assert_eq!(config.command_buffers, vec!["main"]);
+        assert_eq!(config.current_command, "logcat -v threadtime -b main");
+        assert!(config
+            .command_presets
+            .contains(&"logcat -v threadtime -b main".to_string()));
         assert_eq!(config.window, WindowConfig::default());
     }
 
@@ -528,11 +571,14 @@ visible = false
             recent_files: Vec::new(),
             last_filter: FilterSpec::default(),
             command_buffers: vec!["main".to_string()],
+            current_command: "logcat -v threadtime -b main".to_string(),
+            command_presets: vec!["logcat -v threadtime -b main".to_string()],
             window: WindowConfig::default(),
         };
 
+        let expected = config.clone().normalized();
         save_config(&path, &config).unwrap();
-        assert_eq!(load_config(&path).unwrap(), config);
+        assert_eq!(load_config(&path).unwrap(), expected);
     }
 
     #[test]

@@ -27,6 +27,7 @@ export function Minimap() {
   const rowHeight = useSession((s) => s.appConfig.rowHeight);
   const viewportResultIndex = useSession((s) => s.viewportResultIndex);
   const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
+  const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const [data, setData] = useState<MinimapData>({ bookmarks: [], errors: [] });
   const [dragging, setDragging] = useState(false);
   const [trackHeight, setTrackHeight] = useState(0);
@@ -46,11 +47,12 @@ export function Minimap() {
         const next = pendingIndexRef.current;
         pendingIndexRef.current = null;
         if (next != null) {
+          pauseTailFollowing("minimap");
           navigateToResultIndex(next, { align: "start", reason: "minimap" });
         }
       });
     },
-    [navigateToResultIndex],
+    [navigateToResultIndex, pauseTailFollowing],
   );
 
   const updateFromPointer = useCallback(

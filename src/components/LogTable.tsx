@@ -140,6 +140,7 @@ function renderCell(
 export function LogTable() {
   const status = useSession((s) => s.status);
   const total = useSession((s) => s.status.filteredLines);
+  const sourceMode = useSession((s) => s.sourceMode);
   const filter = useSession((s) => s.filter);
   const sessionId = useSession((s) => s.sessionId);
   const filterResultRevision = useSession((s) => s.filterResultRevision);
@@ -151,10 +152,13 @@ export function LogTable() {
   const scrollRequest = useSession((s) => s.scrollRequest);
   const selectRow = useSession((s) => s.selectRow);
   const setViewportResultIndex = useSession((s) => s.setViewportResultIndex);
-  const setTailFollowing = useSession((s) => s.setTailFollowing);
+  const setTailFollowingFromViewport = useSession((s) => s.setTailFollowingFromViewport);
+  const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
+  const programmaticScrollRef = useRef(false);
+  const programmaticScrollTimerRef = useRef<number | null>(null);
   const cache = useRef<Map<number, Row>>(new Map());
   const filledEpoch = useRef<Map<number, FilledBlock>>(new Map());
   const inflight = useRef<Set<number>>(new Set());
@@ -185,6 +189,34 @@ export function LogTable() {
   useEffect(() => {
     appConfigRef.current = appConfig;
   }, [appConfig]);
+
+  useEffect(
+    () => () => {
+      if (programmaticScrollTimerRef.current != null) {
+        window.clearTimeout(programmaticScrollTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const markProgrammaticScroll = useCallback(() => {
+    programmaticScrollRef.current = true;
+    if (programmaticScrollTimerRef.current != null) {
+      window.clearTimeout(programmaticScrollTimerRef.current);
+    }
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      programmaticScrollTimerRef.current = null;
+    }, 160);
+  }, []);
+
+  const syncTailFollowingFromScroll = useCallback(() => {
+    const element = parentRef.current;
+    if (!element) return;
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const isAtBottom = maxScrollTop <= 1 || element.scrollTop >= maxScrollTop - 2;
+    setTailFollowingFromViewport(isAtBottom, programmaticScrollRef.current ? "program" : "user");
+  }, [setTailFollowingFromViewport]);
 
   const applyColumnUpdate = useCallback(
     (updater: (columns: ColumnState[]) => ColumnState[]) => {
@@ -402,30 +434,23 @@ export function LogTable() {
 
   useEffect(() => {
     if (!currentSearchLine || !defaultResultOrder) return;
+    markProgrammaticScroll();
     rv.scrollToIndex(Math.max(0, currentSearchLine - 1), { align: "center" });
-  }, [currentSearchLine, defaultResultOrder, rv]);
+  }, [currentSearchLine, defaultResultOrder, markProgrammaticScroll, rv]);
 
   useEffect(() => {
     if (!scrollRequest || !total) return;
+    markProgrammaticScroll();
     rv.scrollToIndex(Math.max(0, scrollRequest.index), { align: scrollRequest.align });
-  }, [rv, scrollRequest, total]);
+  }, [markProgrammaticScroll, rv, scrollRequest, total]);
 
   const items = rv.getVirtualItems();
   const firstVisibleIndex = items[0]?.index ?? null;
-  const lastVisibleIndex = items[items.length - 1]?.index ?? null;
 
   useEffect(() => {
     if (firstVisibleIndex == null) return;
     setViewportResultIndex(firstVisibleIndex);
   }, [firstVisibleIndex, setViewportResultIndex]);
-
-  useEffect(() => {
-    if (lastVisibleIndex == null || total === 0) {
-      setTailFollowing(true);
-      return;
-    }
-    setTailFollowing(lastVisibleIndex >= total - 2);
-  }, [lastVisibleIndex, setTailFollowing, total]);
 
   const ensureBlock = useCallback(async (block: number, totalNow: number) => {
     const want = Math.min(WINDOW, totalNow - block);
@@ -458,7 +483,7 @@ export function LogTable() {
   }, [filterResultRevision, items, ensureBlock, total]);
 
   const emptyText = useMemo(() => {
-    if (!status.totalBytes) return "打开或拖入 logcat 文件后开始浏览";
+    if (!status.totalBytes) return "从设备抓取或打开 logcat 文件后开始浏览";
     return "当前结果没有命中行";
   }, [status.totalBytes]);
 
@@ -488,9 +513,10 @@ export function LogTable() {
           : { start: index, end: index };
       setSelectionRange((current) => (selectionRangeEqual(current, range) ? current : range));
       setBookmarkMenu({ x: event.clientX, y: event.clientY, range });
+      pauseTailFollowing("row");
       selectRow(row.lineNo, index);
     },
-    [selectRow, selectionRange],
+    [pauseTailFollowing, selectRow, selectionRange],
   );
 
   const applyBookmarkRange = useCallback(
@@ -563,6 +589,7 @@ export function LogTable() {
         ref={parentRef}
         className="lf-table-scroll"
         onCopy={handleTableCopy}
+        onScroll={syncTailFollowingFromScroll}
         onWheelCapture={handleTableWheel}
       >
         {total === 0 ? (
@@ -571,22 +598,26 @@ export function LogTable() {
               <Columns3 />
             </div>
             <div className="lf-empty-title">
-              {status.totalBytes ? "当前结果没有命中行" : "打开 logcat 日志文件"}
+              {status.totalBytes
+                ? "当前结果没有命中行"
+                : sourceMode === "adb"
+                  ? "开始抓取 logcat"
+                  : "打开 logcat 日志文件"}
             </div>
             <div className="lf-empty-copy">{emptyText}</div>
             {!status.totalBytes && (
               <div className="lf-empty-actions">
                 <button
                   type="button"
-                  onClick={() => window.dispatchEvent(new Event("lf:open-file"))}
+                  onClick={() => window.dispatchEvent(new Event("lf:start-capture"))}
                 >
-                  打开文件
+                  从设备抓取
                 </button>
                 <button
                   type="button"
-                  onClick={() => window.dispatchEvent(new Event("lf:focus-device"))}
+                  onClick={() => window.dispatchEvent(new Event("lf:open-file"))}
                 >
-                  从设备抓取
+                  打开文件
                 </button>
               </div>
             )}
@@ -616,6 +647,7 @@ export function LogTable() {
                   key={vi.key}
                   onClick={() => {
                     if (!row) return;
+                    pauseTailFollowing("row");
                     selectRow(row.lineNo, vi.index);
                   }}
                   onDoubleClick={() => row && toggleRowBookmark(row)}

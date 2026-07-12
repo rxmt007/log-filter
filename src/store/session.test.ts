@@ -70,4 +70,28 @@ describe("session store", () => {
       selectedDeviceSerial: "usb",
     });
   });
+
+  it("pauses and restores tail following through explicit actions", () => {
+    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    useSession.getState().pauseTailFollowing("row");
+    expect(useSession.getState().tailFollowing).toBe(false);
+
+    useSession.getState().setTailFollowingFromViewport(false, "program");
+    expect(useSession.getState().tailFollowing).toBe(false);
+
+    useSession.getState().setTailFollowingFromViewport(true, "user");
+    expect(useSession.getState().tailFollowing).toBe(true);
+  });
+
+  it("initializes adb sessions with tail following enabled and file sessions disabled", () => {
+    useSession.getState().beginSession(status, "/tmp/logcat.log", "adb");
+    expect(useSession.getState().tailFollowing).toBe(true);
+
+    useSession.getState().beginSession(status, "/tmp/file.log", "file");
+    expect(useSession.getState().tailFollowing).toBe(false);
+  });
+
+  it("defaults to adb mode before any file is opened", () => {
+    expect(useSession.getInitialState().sourceMode).toBe("adb");
+  });
 });

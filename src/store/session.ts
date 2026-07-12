@@ -50,6 +50,10 @@ interface SessionState {
   setLogcatBuffers: (buffers: LogcatBuffer[]) => void;
   setStreamControl: (control: StreamControl) => void;
   setTailFollowing: (tailFollowing: boolean) => void;
+  setTailFollowingFromViewport: (isAtBottom: boolean, source: "user" | "program") => void;
+  pauseTailFollowing: (
+    reason: "row" | "search" | "bookmark" | "minimap" | "jump" | "scroll",
+  ) => void;
   setAppConfig: (config: AppConfig) => void;
   setTheme: (theme: ThemeMode) => void;
   setFilteredLines: (count: number) => void;
@@ -140,6 +144,14 @@ export const DEFAULT_CONFIG: AppConfig = {
   recentFiles: [],
   lastFilter: DEFAULT_FILTER,
   commandBuffers: ["main"],
+  currentCommand: "logcat -v threadtime -b main",
+  commandPresets: [
+    "logcat -v threadtime -b main",
+    "logcat -v threadtime -b system",
+    "logcat -v threadtime -b radio",
+    "logcat -v threadtime -b events",
+    "logcat -v threadtime -b crash",
+  ],
   window: {
     width: 1180,
     height: 720,
@@ -151,7 +163,7 @@ export const useSession = create<SessionState>()((set) => ({
   status: EMPTY,
   sessionId: 0,
   sourcePath: null,
-  sourceMode: "file",
+  sourceMode: "adb",
   devices: [],
   selectedDeviceSerial: null,
   logcatBuffers: ["main"],
@@ -184,7 +196,7 @@ export const useSession = create<SessionState>()((set) => ({
       sourceMode: sourceMode ?? s.sourceMode,
       streamRunning: sourceMode === "file" ? false : s.streamRunning,
       streamPaused: sourceMode === "file" ? false : s.streamPaused,
-      tailFollowing: true,
+      tailFollowing: sourceMode === "adb",
       view: "all",
       searchCount: 0,
       currentSearchLine: null,
@@ -218,6 +230,9 @@ export const useSession = create<SessionState>()((set) => ({
       sourceMode: "adb",
     }),
   setTailFollowing: (tailFollowing) => set({ tailFollowing }),
+  setTailFollowingFromViewport: (isAtBottom, source) =>
+    set((s) => (source === "user" && s.sourceMode === "adb" ? { tailFollowing: isAtBottom } : {})),
+  pauseTailFollowing: () => set((s) => (s.sourceMode === "adb" ? { tailFollowing: false } : {})),
   setAppConfig: (appConfig) => set({ appConfig, theme: appConfig.theme }),
   setTheme: (theme) =>
     set((s) => ({

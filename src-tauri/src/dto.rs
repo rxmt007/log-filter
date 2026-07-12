@@ -64,6 +64,8 @@ pub struct DeviceListDto {
 #[serde(rename_all = "camelCase")]
 pub struct StartLogcatRequest {
     pub device_serial: Option<String>,
+    pub command: Option<String>,
+    #[serde(default)]
     pub buffers: Vec<String>,
 }
 
@@ -408,6 +410,10 @@ pub struct AppConfigDto {
     pub last_filter: Option<FilterSpecDto>,
     #[serde(default)]
     pub command_buffers: Vec<String>,
+    #[serde(default)]
+    pub current_command: String,
+    #[serde(default)]
+    pub command_presets: Vec<String>,
     #[serde(default = "default_window_config")]
     pub window: WindowConfigDto,
     pub config_path: String,
@@ -441,6 +447,8 @@ impl AppConfigDto {
                 .collect(),
             last_filter: Some(config.last_filter.into()),
             command_buffers: config.command_buffers,
+            current_command: config.current_command,
+            command_presets: config.command_presets,
             window: config.window.into(),
             config_path: config_path.to_string_lossy().to_string(),
         }
@@ -478,6 +486,8 @@ impl TryFrom<AppConfigDto> for logcore::config::AppConfig {
                 .collect(),
             last_filter: value.last_filter.map(Into::into).unwrap_or_default(),
             command_buffers: value.command_buffers,
+            current_command: value.current_command,
+            command_presets: value.command_presets,
             window: value.window.into(),
         }
         .normalized())
@@ -573,6 +583,11 @@ mod tests {
             recent_files: Vec::new(),
             last_filter: None,
             command_buffers: vec!["kernel".to_string(), "events".to_string()],
+            current_command: String::new(),
+            command_presets: vec![
+                "logcat -v threadtime -b radio".to_string(),
+                "logcat -v time".to_string(),
+            ],
             window: WindowConfigDto {
                 width: 1,
                 height: 9999,
@@ -588,6 +603,10 @@ mod tests {
         assert_eq!(converted.font_size, 20);
         assert_eq!(converted.row_height, 16);
         assert_eq!(converted.command_buffers, vec!["events"]);
+        assert_eq!(converted.current_command, "logcat -v threadtime -b events");
+        assert!(converted
+            .command_presets
+            .contains(&"logcat -v threadtime -b radio".to_string()));
         assert_eq!(converted.window.width, 960);
         assert_eq!(converted.window.height, 2160);
 
@@ -596,5 +615,23 @@ mod tests {
             ..AppConfigDto::from_config(logcore::config::AppConfig::default(), PathBuf::new())
         };
         assert!(logcore::config::AppConfig::try_from(bad).is_err());
+    }
+
+    #[test]
+    fn app_config_dto_round_trips_command_presets() {
+        let config = logcore::config::AppConfig {
+            current_command: "logcat -v threadtime -b radio".to_string(),
+            command_presets: vec!["logcat -v threadtime -b radio".to_string()],
+            ..Default::default()
+        }
+        .normalized();
+        let dto = AppConfigDto::from_config(config.clone(), PathBuf::new());
+        assert_eq!(dto.current_command, "logcat -v threadtime -b radio");
+        assert!(dto
+            .command_presets
+            .contains(&"logcat -v threadtime -b radio".to_string()));
+
+        let converted = logcore::config::AppConfig::try_from(dto).unwrap();
+        assert_eq!(converted.current_command, config.current_command);
     }
 }

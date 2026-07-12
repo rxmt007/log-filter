@@ -160,7 +160,7 @@
   --lf-accent: #3b82f6;
   --lf-accent-strong: #2563eb;
   --lf-accent-soft: #eaf1fe;
-  --lf-hover: #ecedef;
+  --lf-hover: #e2e7ef;
   --lf-lv-v: #9aa1ac;
   --lf-lv-d: #2563eb;
   --lf-lv-i: #15a34a;
@@ -425,6 +425,128 @@
   background: var(--lf-hover);
 }
 
+.lf-dropdown {
+  position: relative;
+  min-width: 0;
+}
+
+.lf-dropdown > button {
+  font: inherit;
+}
+
+.lf-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 80;
+  min-width: 220px;
+  max-width: min(720px, calc(100vw - 28px));
+  max-height: 320px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--lf-border-strong);
+  border-radius: 8px;
+  background: var(--lf-bg);
+  box-shadow: 0 16px 36px rgb(15 23 42 / 18%);
+}
+
+.lf-dropdown-label {
+  padding: 6px 8px 4px;
+  color: var(--lf-text-faint);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.lf-dropdown-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.lf-dropdown-item {
+  min-width: 0;
+  min-height: 28px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lf-text);
+  padding: 0 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lf-dropdown-item:hover,
+.lf-dropdown-item[data-checked="true"] {
+  background: var(--lf-hover);
+}
+
+.lf-dropdown-item:disabled {
+  color: var(--lf-text-faint);
+  cursor: default;
+  opacity: 0.7;
+}
+
+.lf-dropdown-check {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--lf-accent-strong);
+}
+
+.lf-dropdown-check svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lf-dropdown-leading {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.lf-dropdown-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lf-dropdown-shortcut {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--lf-text-faint);
+  font-family: var(--lf-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lf-dropdown-delete {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--lf-text-faint);
+  cursor: pointer;
+}
+
+.lf-dropdown-delete:hover {
+  background: var(--lf-chip-e);
+  color: var(--lf-lv-e);
+}
+
+.lf-dropdown-empty {
+  padding: 10px 12px;
+  color: var(--lf-text-faint);
+  font-size: 12px;
+}
+
 .lf-select-button svg {
   width: 13px;
   height: 13px;
@@ -473,8 +595,132 @@
   flex: none;
 }
 
+.lf-device-dot:not([data-online="true"]) {
+  background: #c7cbd1;
+}
+
 .lf-command {
   flex: 8 1 0;
+}
+
+.lf-top-dropdown > button {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--lf-border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lf-text);
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.lf-top-dropdown {
+  position: relative;
+}
+
+.lf-top-dropdown > button:hover,
+.lf-top-dropdown > button[aria-expanded="true"] {
+  background: var(--lf-hover);
+}
+
+.lf-top-dropdown > button:disabled {
+  color: var(--lf-text-faint);
+  cursor: default;
+}
+
+.lf-top-dropdown > button > span:not(.lf-device-dot) {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lf-top-dropdown > button svg,
+.lf-command-preset > button svg,
+.lf-toolbar-menu > button svg,
+.lf-color-dropdown > button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.lf-top-dropdown .lf-dropdown-menu {
+  min-width: 330px;
+}
+
+.lf-command-combobox {
+  height: 32px;
+  min-width: 260px;
+  flex: 8 1 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--lf-border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lf-text);
+  padding: 0 6px 0 12px;
+}
+
+.lf-command-combobox:focus-within {
+  border-color: var(--lf-accent);
+  box-shadow: 0 0 0 2px var(--lf-accent-soft);
+}
+
+.lf-command-combobox[data-invalid="true"] {
+  border-color: var(--lf-lv-e);
+}
+
+.lf-command-combobox > span {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lf-command-combobox input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--lf-text-dim);
+  font-family: var(--lf-mono);
+  font-size: 11px;
+}
+
+.lf-command-preset {
+  position: relative;
+  flex: none;
+}
+
+.lf-command-preset > button {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--lf-text-dim);
+  cursor: pointer;
+}
+
+.lf-command-preset > button:hover,
+.lf-command-preset > button[aria-expanded="true"] {
+  background: var(--lf-hover);
+  color: var(--lf-text);
+}
+
+.lf-command-preset .lf-dropdown-menu {
+  right: 0;
+  left: auto;
+  min-width: 390px;
 }
 
 .lf-command select {
@@ -502,6 +748,39 @@
 .lf-run-button {
   background: var(--lf-accent);
   color: #fff;
+}
+
+.lf-toolbar-menu {
+  position: relative;
+}
+
+.lf-toolbar-menu > button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lf-text);
+  cursor: pointer;
+}
+
+.lf-toolbar-menu > button:hover,
+.lf-toolbar-menu > button[aria-expanded="true"] {
+  background: var(--lf-hover);
+}
+
+.lf-toolbar-menu .lf-dropdown-menu {
+  min-width: 260px;
+}
+
+.lf-recent-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lf-separator,
@@ -892,13 +1171,59 @@
   width: 48px;
 }
 
-.lf-color-select {
-  width: 72px;
+.lf-color-dropdown {
+  position: relative;
+  flex: none;
+}
+
+.lf-color-dropdown > button {
+  height: 22px;
+  min-width: 86px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   border: 0;
-  outline: 0;
+  border-radius: 4px;
   background: transparent;
   color: var(--lf-text-dim);
+  padding: 0 4px 0 7px;
   font-size: 11px;
+  cursor: pointer;
+}
+
+.lf-color-dropdown > button:hover,
+.lf-color-dropdown > button[aria-expanded="true"] {
+  background: var(--lf-hover);
+  color: var(--lf-text);
+}
+
+.lf-color-dropdown .lf-dropdown-menu {
+  min-width: 132px;
+}
+
+.lf-color-swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--lf-border-strong);
+  border-radius: 3px;
+  flex: none;
+}
+
+.lf-color-swatch[data-color="yellow"] {
+  background: var(--lf-keyword-yellow-bg);
+}
+
+.lf-color-swatch[data-color="green"] {
+  background: var(--lf-keyword-green-bg);
+}
+
+.lf-color-swatch[data-color="blue"] {
+  background: var(--lf-keyword-blue-bg);
+}
+
+.lf-color-swatch[data-color="purple"] {
+  background: var(--lf-keyword-purple-bg);
 }
 
 .lf-highlight-color {
@@ -1251,6 +1576,51 @@
   color: var(--lf-text-dim);
 }
 
+.lf-select-field {
+  position: relative;
+  width: 100%;
+}
+
+.lf-select-field > button {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--lf-border);
+  border-radius: 6px;
+  background: var(--lf-bg);
+  color: var(--lf-text);
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.lf-select-field > button:hover,
+.lf-select-field > button[aria-expanded="true"] {
+  border-color: var(--lf-border-strong);
+  background: var(--lf-hover);
+}
+
+.lf-select-field > button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lf-select-field > button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.lf-select-field .lf-dropdown-menu {
+  width: 100%;
+  min-width: 100%;
+}
+
 .lf-path-row {
   display: flex;
   align-items: center;
@@ -1543,17 +1913,21 @@
   color: var(--lf-accent-strong);
 }
 
-.lf-status-device {
+.lf-status-source {
+  max-width: min(56vw, 620px);
   display: flex;
   align-items: center;
   gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.lf-status-device i {
+.lf-status-source i {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--lf-lv-i);
+  flex: none;
 }
 
 .lf-status-muted i {

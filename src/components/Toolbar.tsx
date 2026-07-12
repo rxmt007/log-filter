@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Bookmark,
@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ColorSelect, DropdownMenu, type DropdownGroup } from "@/components/ui/dropdown";
 import { ExportDialog, SettingsDialog, SplitDialog } from "@/components/ToolDialogs";
 import {
   clearLogcat,
@@ -32,8 +33,13 @@ import {
   stopLogcat,
 } from "@/lib/ipc";
 import { fileNameFromPath, rememberRecentFile } from "@/lib/recent";
+import {
+  DEFAULT_LOGCAT_COMMANDS,
+  normalizeCommandPresets,
+  parseLogcatCommand,
+} from "@/lib/logcatCommand";
 import { ALL_LEVELS, LEVEL_BITS, useSession } from "@/store/session";
-import type { FilterSpec, LogcatBuffer, SourceMode, ThemeMode } from "@/types";
+import type { FilterSpec, ThemeMode } from "@/types";
 
 const LEVELS = [
   ["V", LEVEL_BITS.V],
@@ -67,14 +73,6 @@ const FILTER_FIELDS: Array<{
   { key: "wordExclude", label: "内容屏蔽", badge: "-", placeholder: "heartbeat" },
 ];
 
-const LOGCAT_BUFFERS: Array<{ value: LogcatBuffer; label: string }> = [
-  { value: "main", label: "main" },
-  { value: "system", label: "system" },
-  { value: "radio", label: "radio" },
-  { value: "events", label: "events" },
-  { value: "crash", label: "crash" },
-];
-
 const HIGHLIGHT_COLORS = ["yellow", "green", "blue", "purple"] as const;
 
 export function Toolbar() {
@@ -85,12 +83,10 @@ export function Toolbar() {
   const beginSession = useSession((s) => s.beginSession);
   const status = useSession((s) => s.status);
   const sourceMode = useSession((s) => s.sourceMode);
-  const setSourceMode = useSession((s) => s.setSourceMode);
   const devices = useSession((s) => s.devices);
   const setDevices = useSession((s) => s.setDevices);
   const selectedDeviceSerial = useSession((s) => s.selectedDeviceSerial);
   const setSelectedDeviceSerial = useSession((s) => s.setSelectedDeviceSerial);
-  const logcatBuffers = useSession((s) => s.logcatBuffers);
   const setLogcatBuffers = useSession((s) => s.setLogcatBuffers);
   const streamRunning = useSession((s) => s.streamRunning);
   const streamPaused = useSession((s) => s.streamPaused);
@@ -111,6 +107,59 @@ export function Toolbar() {
   const setSearchResult = useSession((s) => s.setSearchResult);
   const setCurrentSearchLine = useSession((s) => s.setCurrentSearchLine);
   const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
+  const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
+  const [commandDraft, setCommandDraft] = useState(
+    appConfig.currentCommand || DEFAULT_LOGCAT_COMMANDS[0],
+  );
+  const [commandError, setCommandError] = useState("");
+
+  const commandPresets = useMemo(
+    () => normalizeCommandPresets(appConfig.commandPresets ?? []),
+    [appConfig.commandPresets],
+  );
+  const selectedDevice = devices.find((device) => device.serial === selectedDeviceSerial);
+  const selectedDeviceLabel = selectedDevice
+    ? `${selectedDevice.model ?? selectedDevice.serial} · ${selectedDevice.state}`
+    : devices.length
+      ? "选择设备"
+      : "无在线设备";
+  const deviceGroups: Array<DropdownGroup<string>> = useMemo(
+    () => [
+      {
+        items: devices.map((device) => ({
+          value: device.serial,
+          label: `${device.model ?? device.serial} · ${device.state}`,
+          checked: device.serial === selectedDeviceSerial,
+          disabled: !device.online,
+          leading: <span className="lf-device-dot" data-online={device.online || undefined} />,
+          shortcut: device.serial,
+        })),
+      },
+    ],
+    [devices, selectedDeviceSerial],
+  );
+  const commandGroups: Array<DropdownGroup<string>> = useMemo(() => {
+    const parsedDraft = parseLogcatCommand(commandDraft);
+    const selectedCommand = parsedDraft.ok ? parsedDraft.normalized : commandDraft;
+    return [
+      {
+        label: "预设命令",
+        items: commandPresets.map((command) => {
+          const parsed = parseLogcatCommand(command);
+          const normalized = parsed.ok ? parsed.normalized : command;
+          return {
+            value: command,
+            label: command,
+            checked: normalized === selectedCommand,
+          };
+        }),
+      },
+    ];
+  }, [commandDraft, commandPresets]);
+
+  useEffect(() => {
+    setCommandDraft(appConfig.currentCommand || DEFAULT_LOGCAT_COMMANDS[0]);
+  }, [appConfig.currentCommand]);
 
   const rememberFile = useCallback(
     async (path: string) => {
@@ -151,49 +200,77 @@ export function Toolbar() {
   }, [setDevices]);
 
   useEffect(() => {
-    if (sourceMode !== "adb") return;
     void refreshDevices();
     const timer = window.setInterval(() => {
       void refreshDevices();
     }, 4000);
     return () => window.clearInterval(timer);
-  }, [refreshDevices, sourceMode]);
+  }, [refreshDevices]);
 
-  const onSourceChange = (next: string) => {
-    if (next.startsWith("recent:")) {
-      void openPath(next.slice("recent:".length)).catch((err) => {
-        console.error("open recent file failed", err);
-      });
-      return;
+  const persistCommand = useCallback(
+    async (command: string, presets = appConfig.commandPresets) => {
+      const parsed = parseLogcatCommand(command);
+      if (!parsed.ok) {
+        setCommandError(parsed.error);
+        return null;
+      }
+      const commandPresets = normalizeCommandPresets([...presets, parsed.normalized]);
+      const nextConfig = {
+        ...appConfig,
+        commandBuffers: [parsed.buffer],
+        currentCommand: parsed.normalized,
+        commandPresets,
+      };
+      const saved = await saveAppConfig(nextConfig);
+      setCommandDraft(parsed.normalized);
+      setLogcatBuffers([parsed.buffer]);
+      setAppConfig(saved);
+      setCommandError("");
+      return saved;
+    },
+    [appConfig, setAppConfig, setLogcatBuffers],
+  );
+
+  const commitCommandDraft = useCallback(async () => {
+    const command = commandDraft.trim();
+    if (!command) {
+      setCommandError("命令不能为空");
+      return null;
     }
-    const source = next as SourceMode;
-    setSourceMode(source);
-    if (source === "adb") void refreshDevices();
-  };
+    return persistCommand(command);
+  }, [commandDraft, persistCommand]);
 
-  const runCapture = async () => {
-    setSourceMode("adb");
+  const runCapture = useCallback(async () => {
     try {
       if (streamPaused) {
         const control = await resumeLogcat();
         setStreamControl(control);
         return;
       }
+      const parsed = parseLogcatCommand(commandDraft);
+      if (!parsed.ok) {
+        setCommandError(parsed.error);
+        return;
+      }
       const control = await startLogcat({
         deviceSerial: selectedDeviceSerial,
-        buffers: logcatBuffers,
+        command: parsed.normalized,
+        buffers: [parsed.buffer],
       });
       setStreamControl(control);
       beginSession(control.status, control.sessionPath, "adb");
-      const saved = await saveAppConfig({
-        ...appConfig,
-        commandBuffers: logcatBuffers,
-      });
-      setAppConfig(saved);
+      await persistCommand(parsed.normalized);
     } catch (err) {
       console.error("start/resume logcat failed", err);
     }
-  };
+  }, [
+    beginSession,
+    commandDraft,
+    persistCommand,
+    selectedDeviceSerial,
+    setStreamControl,
+    streamPaused,
+  ]);
 
   const pauseCapture = async () => {
     try {
@@ -257,11 +334,12 @@ export function Toolbar() {
   const jumpSearch = useCallback(
     async (direction: "next" | "previous") => {
       if (!searchCount) return;
+      pauseTailFollowing("search");
       const from = currentSearchLine ?? 0;
       const line = await searchNext(from, direction);
       setCurrentSearchLine(line);
     },
-    [currentSearchLine, searchCount, setCurrentSearchLine],
+    [currentSearchLine, pauseTailFollowing, searchCount, setCurrentSearchLine],
   );
 
   const jumpToLine = useCallback(async () => {
@@ -269,15 +347,17 @@ export function Toolbar() {
     if (!Number.isFinite(lineNo) || lineNo < 1) return;
     const target = await lineToResultIndex(lineNo);
     if (!target) return;
+    pauseTailFollowing("jump");
     navigateToResultIndex(target.resultIndex, {
       lineNo: target.lineNo,
       align: "center",
       reason: "jump",
     });
-  }, [jumpLine, navigateToResultIndex]);
+  }, [jumpLine, navigateToResultIndex, pauseTailFollowing]);
 
   useEffect(() => {
     const openListener = () => void onOpen();
+    const startCapture = () => void runCapture();
     const focusSearch = () => {
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
@@ -287,101 +367,80 @@ export function Toolbar() {
       jumpInputRef.current?.select();
     };
     const focusDevice = () => {
-      setSourceMode("adb");
       void refreshDevices();
     };
     window.addEventListener("lf:open-file", openListener);
+    window.addEventListener("lf:start-capture", startCapture);
     window.addEventListener("lf:focus-search", focusSearch);
     window.addEventListener("lf:focus-jump", focusJump);
     window.addEventListener("lf:focus-device", focusDevice);
     return () => {
       window.removeEventListener("lf:open-file", openListener);
+      window.removeEventListener("lf:start-capture", startCapture);
       window.removeEventListener("lf:focus-search", focusSearch);
       window.removeEventListener("lf:focus-jump", focusJump);
       window.removeEventListener("lf:focus-device", focusDevice);
     };
-  }, [onOpen, refreshDevices, setSourceMode]);
+  }, [onOpen, refreshDevices, runCapture]);
 
   const countLabel = search.query ? `${currentSearchLine ?? "-"} / ${searchCount}` : "0 / 0";
-  const selectedBuffer = logcatBuffers[0] ?? "main";
 
   return (
     <>
       <div className="lf-toolbar">
         <div className="lf-toolbar-row lf-toolbar-row-top">
-          <label
-            aria-label="Source"
-            className="lf-select-button lf-select-control"
-            data-tooltip="Source file"
-            data-tooltip-placement="bottom"
-          >
-            <FolderOpen />
-            <select value={sourceMode} onChange={(event) => onSourceChange(event.target.value)}>
-              <option value="file">来源: 文件</option>
-              <option value="adb">来源: ADB</option>
-              {appConfig.recentFiles.length > 0 && (
-                <optgroup label="最近文件">
-                  {appConfig.recentFiles.map((path) => (
-                    <option key={path} value={`recent:${path}`}>
-                      {fileNameFromPath(path)}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <ChevronDown />
-          </label>
-          <label
-            aria-label="Current device"
-            className="lf-select-button lf-select-control lf-device"
-            data-tooltip="Current source"
-            data-tooltip-placement="bottom"
-          >
-            <span className="lf-device-dot" />
-            <select
-              value={selectedDeviceSerial ?? ""}
-              disabled={sourceMode !== "adb"}
-              onChange={(event) => setSelectedDeviceSerial(event.target.value || null)}
-            >
-              {sourceMode !== "adb" ? (
-                <option value="">本地日志文件</option>
-              ) : devices.length ? (
-                devices.map((device) => (
-                  <option disabled={!device.online} key={device.serial} value={device.serial}>
-                    {device.model ?? device.serial} · {device.state}
-                  </option>
-                ))
-              ) : (
-                <option value="">无在线设备</option>
-              )}
-            </select>
-            <ChevronDown />
-          </label>
-          <label
-            aria-label="Logcat command"
-            className="lf-select-button lf-select-control lf-command"
-            data-tooltip="Logcat command"
-            data-tooltip-placement="bottom"
+          <DropdownMenu
+            className="lf-top-dropdown lf-device"
+            disabled={devices.length === 0}
+            emptyText="无在线设备"
+            groups={deviceGroups}
+            menuLabel="当前设备"
+            onSelect={(value) => setSelectedDeviceSerial(value)}
+            trigger={() => (
+              <>
+                <span className="lf-device-dot" data-online={selectedDevice?.online || undefined} />
+                <span>{selectedDeviceLabel}</span>
+                <ChevronDown />
+              </>
+            )}
+          />
+          <div
+            className="lf-command-combobox"
+            data-invalid={commandError ? true : undefined}
+            title={commandError || commandDraft}
           >
             <span>命令</span>
-            <select
-              value={selectedBuffer}
+            <input
+              aria-label="Logcat command"
+              value={commandDraft}
+              onBlur={() => void commitCommandDraft()}
               onChange={(event) => {
-                const buffers = [event.target.value as LogcatBuffer];
-                setLogcatBuffers(buffers);
-                void saveAppConfig({ ...appConfig, commandBuffers: buffers })
-                  .then(setAppConfig)
-                  .catch((err) => console.error("save command buffers failed", err));
+                setCommandDraft(event.target.value);
+                setCommandError("");
               }}
-            >
-              {LOGCAT_BUFFERS.map((buffer) => (
-                <option key={buffer.value} value={buffer.value}>
-                  logcat -v threadtime -b {buffer.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown />
-          </label>
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void commitCommandDraft();
+                }
+                if (event.key === "Escape") {
+                  setCommandDraft(appConfig.currentCommand || DEFAULT_LOGCAT_COMMANDS[0]);
+                  setCommandError("");
+                }
+              }}
+            />
+            <DropdownMenu
+              className="lf-command-preset"
+              groups={commandGroups}
+              menuLabel="命令预设"
+              onSelect={(value) => {
+                setCommandDraft(value);
+                setCommandError("");
+                void persistCommand(value);
+              }}
+              trigger={() => <ChevronDown />}
+            />
+          </div>
         </div>
 
         <div className="lf-toolbar-row lf-toolbar-row-actions">
@@ -389,7 +448,7 @@ export function Toolbar() {
             aria-label={streamPaused ? "Resume" : "Start"}
             className="lf-run-button"
             data-tooltip={streamPaused ? "Resume" : "Start"}
-            disabled={streamRunning}
+            disabled={streamRunning && !streamPaused}
             size="icon-sm"
             onClick={runCapture}
           >
@@ -398,7 +457,7 @@ export function Toolbar() {
           <Button
             aria-label="Pause"
             data-tooltip="Pause"
-            disabled={!streamRunning}
+            disabled={!streamRunning || streamPaused}
             size="icon-sm"
             variant="ghost"
             onClick={pauseCapture}
@@ -428,15 +487,41 @@ export function Toolbar() {
             <Trash2 />
           </Button>
           <span className="lf-separator" />
-          <Button
-            aria-label="Open file"
-            data-tooltip="Open file"
-            size="icon-sm"
-            variant="ghost"
-            onClick={onOpen}
-          >
-            <FolderOpen />
-          </Button>
+          <DropdownMenu
+            className="lf-toolbar-menu"
+            groups={[
+              {
+                items: [{ value: "open", label: "打开文件..." }],
+              },
+              ...(appConfig.recentFiles.length
+                ? [
+                    {
+                      label: "最近文件",
+                      items: appConfig.recentFiles.map((path) => ({
+                        value: `recent:${path}`,
+                        label: (
+                          <span className="lf-recent-file" title={path}>
+                            {fileNameFromPath(path)}
+                          </span>
+                        ),
+                        shortcut: path.replace(/^\/(?:Users|home)\/[^/]+/, "~"),
+                      })),
+                    },
+                  ]
+                : []),
+            ]}
+            menuLabel="打开文件"
+            onSelect={(value) => {
+              if (value === "open") {
+                void onOpen();
+                return;
+              }
+              if (value.startsWith("recent:")) {
+                void openPath(value.slice("recent:".length));
+              }
+            }}
+            trigger={() => <FolderOpen />}
+          />
           <Button
             aria-label="Export"
             data-tooltip="Export"
@@ -522,7 +607,10 @@ export function Toolbar() {
             <input
               ref={searchInputRef}
               value={search.query}
-              onChange={(e) => setSearch({ query: e.target.value })}
+              onChange={(e) => {
+                pauseTailFollowing("search");
+                setSearch({ query: e.target.value });
+              }}
               placeholder="查找日志…"
             />
             <span className="lf-search-count">{countLabel}</span>
@@ -532,7 +620,10 @@ export function Toolbar() {
               data-active={search.caseSensitive}
               data-tooltip="Case sensitive"
               type="button"
-              onClick={() => setSearch({ caseSensitive: !search.caseSensitive })}
+              onClick={() => {
+                pauseTailFollowing("search");
+                setSearch({ caseSensitive: !search.caseSensitive });
+              }}
             >
               Aa
             </button>
@@ -542,7 +633,10 @@ export function Toolbar() {
               data-active={search.regex}
               data-tooltip="Regex search"
               type="button"
-              onClick={() => setSearch({ regex: !search.regex })}
+              onClick={() => {
+                pauseTailFollowing("search");
+                setSearch({ regex: !search.regex });
+              }}
             >
               .*
             </button>
@@ -684,17 +778,11 @@ export function Toolbar() {
                 >
                   Aa
                 </button>
-                <select
-                  className="lf-color-select"
+                <ColorSelect
                   value={rule.color}
-                  onChange={(event) => setHighlightRule(index, { color: event.target.value })}
-                >
-                  {HIGHLIGHT_COLORS.map((color) => (
-                    <option key={color} value={color}>
-                      {color}
-                    </option>
-                  ))}
-                </select>
+                  options={HIGHLIGHT_COLORS.map((color) => ({ value: color, label: color }))}
+                  onChange={(color) => setHighlightRule(index, { color })}
+                />
                 <span className="lf-highlight-color" data-color={rule.color} />
               </label>
             ))}

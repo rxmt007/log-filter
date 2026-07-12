@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { Toolbar } from "@/components/Toolbar";
 import { StatusBar } from "@/components/StatusBar";
@@ -11,16 +11,13 @@ import {
   onIndexProgress,
   onSearchProgress,
   onStreamAppend,
-  openFile,
   saveAppConfig,
   setFilter as setFilterCommand,
 } from "@/lib/ipc";
-import { rememberRecentFile } from "@/lib/recent";
 import { useSession } from "@/store/session";
 
 export default function App() {
   const [configReady, setConfigReady] = useState(false);
-  const beginSession = useSession((s) => s.beginSession);
   const setStatus = useSession((s) => s.setStatus);
   const filter = useSession((s) => s.filter);
   const setFilterState = useSession((s) => s.setFilter);
@@ -33,6 +30,7 @@ export default function App() {
   const selectedLine = useSession((s) => s.selectedLine);
   const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
   const tailFollowing = useSession((s) => s.tailFollowing);
+  const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setLogcatBuffers = useSession((s) => s.setLogcatBuffers);
@@ -58,20 +56,6 @@ export default function App() {
         setConfigReady(true);
       });
   }, [setAppConfig, setFilterState, setLogcatBuffers]);
-
-  const openPath = useCallback(
-    async (path: string) => {
-      const st = await openFile(path);
-      beginSession(st, path, "file");
-      const nextConfig = {
-        ...appConfigRef.current,
-        recentFiles: rememberRecentFile(appConfigRef.current.recentFiles, path),
-      };
-      const saved = await saveAppConfig(nextConfig);
-      setAppConfig(saved);
-    },
-    [beginSession, setAppConfig],
-  );
 
   useEffect(() => {
     const un = onIndexProgress(setStatus);
@@ -107,7 +91,7 @@ export default function App() {
       const state = useSession.getState();
       if (append.status.generation < state.status.generation) return;
       setStatus(append.status);
-      if (state.tailFollowing && append.status.filteredLines > 0) {
+      if (state.sourceMode === "adb" && state.tailFollowing && append.status.filteredLines > 0) {
         navigateToResultIndex(append.status.filteredLines - 1, {
           align: "end",
           reason: "minimap",
@@ -159,23 +143,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onDrop = (event: DragEvent) => {
-      event.preventDefault();
-      const file = event.dataTransfer?.files.item(0) as (File & { path?: string }) | null;
-      if (file?.path) {
-        void openPath(file.path).catch((err) => console.error("drop open failed", err));
-      }
-    };
-    const onDragOver = (event: DragEvent) => event.preventDefault();
-    window.addEventListener("dragover", onDragOver);
-    window.addEventListener("drop", onDrop);
-    return () => {
-      window.removeEventListener("dragover", onDragOver);
-      window.removeEventListener("drop", onDrop);
-    };
-  }, [openPath]);
-
-  useEffect(() => {
     const onResize = () => {
       if (!configReady) return;
       const nextConfig = {
@@ -204,6 +171,7 @@ export default function App() {
       const direction = event.key === "F2" ? "previous" : "next";
       nextBookmark(selectedLine ?? 1, direction).then((target) => {
         if (target) {
+          pauseTailFollowing("bookmark");
           navigateToResultIndex(target.resultIndex, {
             lineNo: target.lineNo,
             align: "center",
@@ -214,7 +182,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateToResultIndex, selectedLine]);
+  }, [navigateToResultIndex, pauseTailFollowing, selectedLine]);
 
   const appStyle = {
     "--lf-font-size": `${appConfig.fontSize}px`,

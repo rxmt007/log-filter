@@ -38,6 +38,7 @@ export type LogcatBuffer = "main" | "system" | "radio" | "events" | "crash";
 
 export interface StartLogcatRequest {
   deviceSerial?: string | null;
+  command?: string | null;
   buffers: LogcatBuffer[];
 }
 
@@ -149,6 +150,8 @@ export interface AppConfig {
   recentFiles: string[];
   lastFilter: FilterSpec | null;
   commandBuffers: LogcatBuffer[];
+  currentCommand: string;
+  commandPresets: string[];
   window: {
     width: number;
     height: number;

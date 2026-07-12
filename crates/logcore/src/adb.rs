@@ -28,6 +28,14 @@ pub enum LogcatBuffer {
     Crash,
 }
 
+pub const DEFAULT_LOGCAT_COMMANDS: [&str; 5] = [
+    "logcat -v threadtime -b main",
+    "logcat -v threadtime -b system",
+    "logcat -v threadtime -b radio",
+    "logcat -v threadtime -b events",
+    "logcat -v threadtime -b crash",
+];
+
 impl LogcatBuffer {
     pub fn as_arg(self) -> &'static str {
         match self {
@@ -53,6 +61,86 @@ impl TryFrom<&str> for LogcatBuffer {
             other => Err(format!("unsupported logcat buffer: {other}")),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogcatSpec {
+    pub buffer: LogcatBuffer,
+}
+
+impl LogcatSpec {
+    pub fn parse(input: &str) -> Result<Self, String> {
+        if input.contains('|')
+            || input.contains('&')
+            || input.contains(';')
+            || input.contains('>')
+            || input.contains('<')
+        {
+            return Err("compound shell commands are not supported".to_string());
+        }
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        if tokens.is_empty() || tokens[0] != "logcat" {
+            return Err("command must start with logcat".to_string());
+        }
+
+        let mut buffer = LogcatBuffer::Main;
+        let mut saw_threadtime = false;
+        let mut saw_buffer = false;
+        let mut index = 1;
+        while index < tokens.len() {
+            match tokens[index] {
+                "-v" => {
+                    let value = tokens
+                        .get(index + 1)
+                        .ok_or_else(|| "-v requires a value".to_string())?;
+                    if *value != "threadtime" {
+                        return Err("only -v threadtime is supported".to_string());
+                    }
+                    saw_threadtime = true;
+                    index += 2;
+                }
+                "-b" => {
+                    if saw_buffer {
+                        return Err("only one -b buffer is supported".to_string());
+                    }
+                    let value = tokens
+                        .get(index + 1)
+                        .ok_or_else(|| "-b requires a buffer".to_string())?;
+                    buffer = LogcatBuffer::try_from(*value)?;
+                    saw_buffer = true;
+                    index += 2;
+                }
+                other => return Err(format!("unsupported logcat argument: {other}")),
+            }
+        }
+        if !saw_threadtime {
+            return Err("only -v threadtime is supported".to_string());
+        }
+        Ok(Self { buffer })
+    }
+
+    pub fn normalized(&self) -> String {
+        format!("logcat -v threadtime -b {}", self.buffer.as_arg())
+    }
+}
+
+pub fn normalize_command_presets(presets: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = DEFAULT_LOGCAT_COMMANDS
+        .iter()
+        .map(|command| command.to_string())
+        .collect();
+    for preset in presets {
+        if out.len() >= DEFAULT_LOGCAT_COMMANDS.len() + 20 {
+            break;
+        }
+        if let Ok(command) = LogcatSpec::parse(&preset) {
+            let normalized = command.normalized();
+            if !out.contains(&normalized) {
+                out.push(normalized);
+            }
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -301,6 +389,51 @@ emulator-5554 unauthorized
                 "system"
             ]
         );
+    }
+
+    #[test]
+    fn parses_supported_threadtime_logcat_specs() {
+        let spec = LogcatSpec::parse("logcat -v threadtime -b radio").unwrap();
+        assert_eq!(spec.buffer, LogcatBuffer::Radio);
+        assert_eq!(spec.normalized(), "logcat -v threadtime -b radio");
+
+        let default_buffer = LogcatSpec::parse("logcat -v threadtime").unwrap();
+        assert_eq!(default_buffer.buffer, LogcatBuffer::Main);
+        assert_eq!(default_buffer.normalized(), "logcat -v threadtime -b main");
+    }
+
+    #[test]
+    fn rejects_unsupported_or_shell_like_logcat_specs() {
+        for input in [
+            "logcat -v time",
+            "logcat -v threadtime -b kernel",
+            "adb logcat -v threadtime",
+            "logcat -v threadtime && rm -rf /",
+            "logcat -v threadtime | grep foo",
+            "shell logcat -v threadtime",
+        ] {
+            assert!(LogcatSpec::parse(input).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn normalizes_command_presets_with_defaults_and_limit() {
+        let custom = vec![
+            "logcat -v threadtime -b radio".to_string(),
+            "logcat -v threadtime -b radio".to_string(),
+            "logcat -v threadtime -b kernel".to_string(),
+        ];
+        let presets = normalize_command_presets(custom);
+        assert!(presets.contains(&"logcat -v threadtime -b main".to_string()));
+        assert!(presets.contains(&"logcat -v threadtime -b radio".to_string()));
+        assert_eq!(
+            presets
+                .iter()
+                .filter(|item| item.as_str() == "logcat -v threadtime -b radio")
+                .count(),
+            1
+        );
+        assert!(presets.len() <= 25);
     }
 
     #[test]

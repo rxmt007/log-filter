@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/dropdown";
 import { exportLogs, saveAppConfig, splitLogFile } from "@/lib/ipc";
 import { useSession } from "@/store/session";
 import type { AppConfig, RowsView } from "@/types";
@@ -101,16 +102,15 @@ export function ExportDialog({ onClose }: DialogProps) {
         </div>
 
         {mode === "view" ? (
-          <label className="lf-form-field">
-            <span>导出内容</span>
-            <select value={exportView} onChange={(e) => setExportView(e.target.value as RowsView)}>
-              {(Object.keys(VIEW_LABELS) as RowsView[]).map((key) => (
-                <option key={key} value={key}>
-                  {VIEW_LABELS[key]}
-                </option>
-              ))}
-            </select>
-          </label>
+          <SelectField
+            label="导出内容"
+            value={exportView}
+            options={(Object.keys(VIEW_LABELS) as RowsView[]).map((key) => ({
+              value: key,
+              label: VIEW_LABELS[key],
+            }))}
+            onChange={setExportView}
+          />
         ) : (
           <div className="lf-form-grid-two">
             <label className="lf-form-field">
@@ -220,13 +220,15 @@ export function SplitDialog({ onClose }: DialogProps) {
           </div>
         </label>
         <div className="lf-form-grid-two">
-          <label className="lf-form-field">
-            <span>方式</span>
-            <select value={mode} onChange={(e) => setMode(e.target.value as "lines" | "bytes")}>
-              <option value="lines">按行数</option>
-              <option value="bytes">按字节</option>
-            </select>
-          </label>
+          <SelectField
+            label="方式"
+            value={mode}
+            options={[
+              { value: "lines", label: "按行数" },
+              { value: "bytes", label: "按字节" },
+            ]}
+            onChange={setMode}
+          />
           <label className="lf-form-field">
             <span>{mode === "lines" ? "每份行数" : "每份字节"}</span>
             <input
@@ -313,13 +315,15 @@ export function SettingsDialog({ onClose }: DialogProps) {
           <span>配置文件</span>
           <input readOnly value={configName} />
         </label>
-        <label className="lf-form-field">
-          <span>编码</span>
-          <select value={draft.encoding} onChange={(e) => patch({ encoding: e.target.value })}>
-            <option value="UTF-8">UTF-8</option>
-            <option value="Local">本地</option>
-          </select>
-        </label>
+        <SelectField
+          label="编码"
+          value={draft.encoding}
+          options={[
+            { value: "UTF-8", label: "UTF-8" },
+            { value: "Local", label: "本地" },
+          ]}
+          onChange={(encoding) => patch({ encoding })}
+        />
         <label className="lf-form-field">
           <span>存储位置</span>
           <div className="lf-path-row">
