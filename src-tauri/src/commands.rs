@@ -287,24 +287,15 @@ fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
                             break;
                         }
                         let total_lines = session.total_lines();
-                        let filter_done =
+                        let _filtered_count =
                             append_filter_for_range(session, previous_total, total_lines);
                         let search_progress =
                             append_search_for_range(session, previous_total, total_lines);
                         let status = status_from(session, session_generation);
-                        (status, filter_done, search_progress)
+                        (status, search_progress)
                     };
 
-                    let (status, filter_done, search_progress) = update;
-                    if let Some(filtered_lines) = filter_done {
-                        let _ = app.emit(
-                            "filter:done",
-                            FilterDoneDto {
-                                filtered_lines,
-                                generation: session_generation,
-                            },
-                        );
-                    }
+                    let (status, search_progress) = update;
                     if let Some(summary) = search_progress {
                         let _ = app.emit(
                             "search:progress",

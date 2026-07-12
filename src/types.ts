@@ -109,7 +109,7 @@ export interface SearchProgress {
 export interface ScrollRequest {
   index: number;
   align: "auto" | "center" | "start" | "end";
-  reason: "minimap" | "bookmark" | "search" | "jump";
+  reason: "tail" | "minimap" | "bookmark" | "search" | "jump";
   nonce: number;
 }
 

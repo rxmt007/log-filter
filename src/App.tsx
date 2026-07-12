@@ -14,6 +14,7 @@ import {
   saveAppConfig,
   setFilter as setFilterCommand,
 } from "@/lib/ipc";
+import { createStreamAppendBatcher } from "@/lib/streamAppend";
 import { useSession } from "@/store/session";
 
 export default function App() {
@@ -29,7 +30,7 @@ export default function App() {
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const selectedLine = useSession((s) => s.selectedLine);
   const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
-  const tailFollowing = useSession((s) => s.tailFollowing);
+  const requestTailFollow = useSession((s) => s.requestTailFollow);
   const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
@@ -37,6 +38,8 @@ export default function App() {
   const theme = useSession((s) => s.theme);
   const bookmarkSensitiveRevision = filter.markedOnly ? bookmarkRevision : 0;
   const appConfigRef = useRef(appConfig);
+  const dispatchedFilterRequestRef = useRef(0);
+  const appliedFilterRequestRef = useRef(0);
 
   useEffect(() => {
     appConfigRef.current = appConfig;
@@ -68,7 +71,10 @@ export default function App() {
     const un = onFilterDone((done) => {
       const state = useSession.getState();
       if (done.generation !== state.status.generation) return;
-      setFilteredLines(done.filteredLines);
+      const dispatchedRequest = dispatchedFilterRequestRef.current;
+      const invalidateRows = dispatchedRequest !== appliedFilterRequestRef.current;
+      setFilteredLines(done.filteredLines, { invalidateRows });
+      appliedFilterRequestRef.current = dispatchedRequest;
     });
     return () => {
       un.then((f) => f());
@@ -87,25 +93,29 @@ export default function App() {
   }, [setSearchResult]);
 
   useEffect(() => {
+    const appendBatcher = createStreamAppendBatcher({
+      onFlush: (append) => {
+        const state = useSession.getState();
+        if (append.status.generation < state.status.generation) return;
+        setStatus(append.status);
+        if (state.sourceMode === "adb" && state.tailFollowing && append.status.filteredLines > 0) {
+          requestTailFollow(append.status.filteredLines - 1);
+        }
+      },
+    });
     const un = onStreamAppend((append) => {
-      const state = useSession.getState();
-      if (append.status.generation < state.status.generation) return;
-      setStatus(append.status);
-      if (state.sourceMode === "adb" && state.tailFollowing && append.status.filteredLines > 0) {
-        navigateToResultIndex(append.status.filteredLines - 1, {
-          align: "end",
-          reason: "minimap",
-        });
-      }
+      appendBatcher.push(append);
     });
     return () => {
+      appendBatcher.dispose();
       un.then((f) => f());
     };
-  }, [navigateToResultIndex, setStatus, tailFollowing]);
+  }, [requestTailFollow, setStatus]);
 
   useEffect(() => {
     if (!hasFile) return;
     const timer = window.setTimeout(() => {
+      dispatchedFilterRequestRef.current += 1;
       void setFilterCommand(filter).catch((err) => {
         console.error("set_filter failed", err);
       });

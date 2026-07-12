@@ -161,7 +161,7 @@ export function LogTable() {
   const programmaticScrollTimerRef = useRef<number | null>(null);
   const cache = useRef<Map<number, Row>>(new Map());
   const filledEpoch = useRef<Map<number, FilledBlock>>(new Map());
-  const inflight = useRef<Set<number>>(new Set());
+  const inflight = useRef<Map<number, Promise<void>>>(new Map());
   const cacheEpoch = useRef(0);
   const appConfigRef = useRef(appConfig);
   const resizeRef = useRef<ResizeState | null>(null);
@@ -208,6 +208,14 @@ export function LogTable() {
       programmaticScrollRef.current = false;
       programmaticScrollTimerRef.current = null;
     }, 160);
+  }, []);
+
+  const clearProgrammaticScroll = useCallback(() => {
+    programmaticScrollRef.current = false;
+    if (programmaticScrollTimerRef.current != null) {
+      window.clearTimeout(programmaticScrollTimerRef.current);
+      programmaticScrollTimerRef.current = null;
+    }
   }, []);
 
   const syncTailFollowingFromScroll = useCallback(() => {
@@ -366,25 +374,33 @@ export function LogTable() {
     [collectRowsInRange, visibleColumns],
   );
 
-  const handleTableWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    const element = event.currentTarget;
-    const deltaY = event.deltaY;
-    if (deltaY === 0) return;
+  const handleTableWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      const element = event.currentTarget;
+      const deltaY = event.deltaY;
+      if (deltaY === 0) return;
 
-    const maxScrollTop = element.scrollHeight - element.clientHeight;
-    if (maxScrollTop <= 0) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
+      clearProgrammaticScroll();
+      if (deltaY < 0) {
+        pauseTailFollowing("scroll");
+      }
 
-    const atTop = element.scrollTop <= 0;
-    const atBottom = element.scrollTop >= maxScrollTop - 1;
-    if ((atTop && deltaY < 0) || (atBottom && deltaY > 0)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, []);
+      const maxScrollTop = element.scrollHeight - element.clientHeight;
+      if (maxScrollTop <= 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const atTop = element.scrollTop <= 0;
+      const atBottom = element.scrollTop >= maxScrollTop - 1;
+      if ((atTop && deltaY < 0) || (atBottom && deltaY > 0)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    [clearProgrammaticScroll, pauseTailFollowing],
+  );
 
   useEffect(() => {
     cacheEpoch.current += 1;
@@ -425,6 +441,32 @@ export function LogTable() {
     };
   }, [bookmarkMenu]);
 
+  const ensureBlock = useCallback(async (block: number, totalNow: number) => {
+    const want = Math.min(WINDOW, totalNow - block);
+    if (want <= 0) return;
+    const filled = filledEpoch.current.get(block);
+    if (filled?.epoch === cacheEpoch.current && filled.count >= want) return;
+    const existing = inflight.current.get(block);
+    if (existing) return existing;
+    const epoch = cacheEpoch.current;
+    const load = (async () => {
+      try {
+        const rows = await getRows("filtered", block, WINDOW);
+        if (cacheEpoch.current !== epoch) return;
+        rows.forEach((r, i) => cache.current.set(block + i, r));
+        for (let i = rows.length; i < want; i += 1) {
+          cache.current.delete(block + i);
+        }
+        filledEpoch.current.set(block, { count: rows.length, epoch });
+        force((x) => x + 1);
+      } finally {
+        inflight.current.delete(block);
+      }
+    })();
+    inflight.current.set(block, load);
+    return load;
+  }, []);
+
   const rv = useVirtualizer({
     count: total,
     getScrollElement: () => parentRef.current,
@@ -440,9 +482,24 @@ export function LogTable() {
 
   useEffect(() => {
     if (!scrollRequest || !total) return;
-    markProgrammaticScroll();
-    rv.scrollToIndex(Math.max(0, scrollRequest.index), { align: scrollRequest.align });
-  }, [markProgrammaticScroll, rv, scrollRequest, total]);
+    let canceled = false;
+    const scroll = () => {
+      if (canceled) return;
+      const current = useSession.getState().scrollRequest;
+      if (current?.nonce !== scrollRequest.nonce) return;
+      markProgrammaticScroll();
+      rv.scrollToIndex(Math.max(0, scrollRequest.index), { align: scrollRequest.align });
+    };
+    if (scrollRequest.reason === "tail") {
+      const block = Math.floor(scrollRequest.index / WINDOW) * WINDOW;
+      void ensureBlock(block, total).finally(scroll);
+    } else {
+      scroll();
+    }
+    return () => {
+      canceled = true;
+    };
+  }, [ensureBlock, markProgrammaticScroll, rv, scrollRequest, total]);
 
   const items = rv.getVirtualItems();
   const firstVisibleIndex = items[0]?.index ?? null;
@@ -451,28 +508,6 @@ export function LogTable() {
     if (firstVisibleIndex == null) return;
     setViewportResultIndex(firstVisibleIndex);
   }, [firstVisibleIndex, setViewportResultIndex]);
-
-  const ensureBlock = useCallback(async (block: number, totalNow: number) => {
-    const want = Math.min(WINDOW, totalNow - block);
-    if (want <= 0) return;
-    const filled = filledEpoch.current.get(block);
-    if (filled?.epoch === cacheEpoch.current && filled.count >= want) return;
-    if (inflight.current.has(block)) return;
-    const epoch = cacheEpoch.current;
-    inflight.current.add(block);
-    try {
-      const rows = await getRows("filtered", block, WINDOW);
-      if (cacheEpoch.current !== epoch) return;
-      rows.forEach((r, i) => cache.current.set(block + i, r));
-      for (let i = rows.length; i < want; i += 1) {
-        cache.current.delete(block + i);
-      }
-      filledEpoch.current.set(block, { count: rows.length, epoch });
-      force((x) => x + 1);
-    } finally {
-      inflight.current.delete(block);
-    }
-  }, []);
 
   useEffect(() => {
     if (items.length === 0) return;
@@ -589,6 +624,7 @@ export function LogTable() {
         ref={parentRef}
         className="lf-table-scroll"
         onCopy={handleTableCopy}
+        onPointerDownCapture={clearProgrammaticScroll}
         onScroll={syncTailFollowingFromScroll}
         onWheelCapture={handleTableWheel}
       >

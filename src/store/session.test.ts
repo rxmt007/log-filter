@@ -46,6 +46,15 @@ describe("session store", () => {
     expect(useSession.getState().filterResultRevision).toBe(1);
   });
 
+  it("updates appended filter counts without invalidating loaded row windows", () => {
+    useSession.getState().setFilteredLines(120, { invalidateRows: false });
+
+    expect(useSession.getState().selectedResultIndex).toBe(50);
+    expect(useSession.getState().viewportResultIndex).toBe(75);
+    expect(useSession.getState().status.filteredLines).toBe(120);
+    expect(useSession.getState().filterResultRevision).toBe(0);
+  });
+
   it("selects the first online adb device and applies stream control state", () => {
     useSession.getState().setDevices([
       { serial: "offline", state: "offline", model: null, product: null, online: false },
@@ -81,6 +90,42 @@ describe("session store", () => {
 
     useSession.getState().setTailFollowingFromViewport(true, "user");
     expect(useSession.getState().tailFollowing).toBe(true);
+  });
+
+  it("requests tail viewport scrolling without changing the selected row", () => {
+    useSession.setState({
+      sourceMode: "adb",
+      tailFollowing: true,
+      selectedLine: 42,
+      selectedResultIndex: 41,
+      viewportResultIndex: 41,
+      scrollRequest: null,
+    });
+
+    useSession.getState().requestTailFollow(99);
+
+    expect(useSession.getState().selectedLine).toBe(42);
+    expect(useSession.getState().selectedResultIndex).toBe(41);
+    expect(useSession.getState().viewportResultIndex).toBe(99);
+    expect(useSession.getState().scrollRequest).toMatchObject({
+      index: 99,
+      align: "end",
+      reason: "tail",
+    });
+  });
+
+  it("pauses tail following when filter conditions change", () => {
+    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    useSession.getState().setFilter({ markedOnly: true });
+    expect(useSession.getState().tailFollowing).toBe(false);
+
+    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    useSession.getState().setFilterField("tagInclude", { pattern: "ActivityManager" });
+    expect(useSession.getState().tailFollowing).toBe(false);
+
+    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    useSession.getState().toggleLevel(LEVEL_BITS.E);
+    expect(useSession.getState().tailFollowing).toBe(false);
   });
 
   it("initializes adb sessions with tail following enabled and file sessions disabled", () => {

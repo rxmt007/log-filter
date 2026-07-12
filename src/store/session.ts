@@ -56,7 +56,7 @@ interface SessionState {
   ) => void;
   setAppConfig: (config: AppConfig) => void;
   setTheme: (theme: ThemeMode) => void;
-  setFilteredLines: (count: number) => void;
+  setFilteredLines: (count: number, options?: { invalidateRows?: boolean }) => void;
   setBookmarks: (bookmarks: number[]) => void;
   setView: (view: RowsView) => void;
   setFilter: (patch: Partial<FilterSpec>) => void;
@@ -78,6 +78,7 @@ interface SessionState {
       reason?: ScrollRequest["reason"];
     },
   ) => void;
+  requestTailFollow: (index: number) => void;
 }
 
 export const LEVEL_BITS = {
@@ -239,7 +240,7 @@ export const useSession = create<SessionState>()((set) => ({
       theme,
       appConfig: { ...s.appConfig, theme },
     })),
-  setFilteredLines: (count) =>
+  setFilteredLines: (count, options) =>
     set((s) => ({
       selectedResultIndex:
         s.selectedResultIndex != null && s.selectedResultIndex < count
@@ -247,7 +248,8 @@ export const useSession = create<SessionState>()((set) => ({
           : null,
       viewportResultIndex: count > 0 ? Math.min(s.viewportResultIndex, count - 1) : 0,
       status: { ...s.status, filteredLines: count },
-      filterResultRevision: s.filterResultRevision + 1,
+      filterResultRevision:
+        options?.invalidateRows === false ? s.filterResultRevision : s.filterResultRevision + 1,
     })),
   setBookmarks: (bookmarks) =>
     set((s) => ({
@@ -260,6 +262,7 @@ export const useSession = create<SessionState>()((set) => ({
     set((s) => ({
       filter: { ...s.filter, ...patch },
       filterRevision: s.filterRevision + 1,
+      tailFollowing: s.sourceMode === "adb" ? false : s.tailFollowing,
     })),
   setFilterField: (key, patch) =>
     set((s) => ({
@@ -268,6 +271,7 @@ export const useSession = create<SessionState>()((set) => ({
         [key]: { ...s.filter[key], ...patch },
       },
       filterRevision: s.filterRevision + 1,
+      tailFollowing: s.sourceMode === "adb" ? false : s.tailFollowing,
     })),
   setHighlightRule: (index, patch) =>
     set((s) => ({
@@ -283,6 +287,7 @@ export const useSession = create<SessionState>()((set) => ({
     set((s) => ({
       filter: { ...s.filter, levels: s.filter.levels ^ bit },
       filterRevision: s.filterRevision + 1,
+      tailFollowing: s.sourceMode === "adb" ? false : s.tailFollowing,
     })),
   setSearch: (patch) => set((s) => ({ search: { ...s.search, ...patch } })),
   setSearchResult: (count, firstLine) =>
@@ -318,6 +323,23 @@ export const useSession = create<SessionState>()((set) => ({
           index: safeIndex,
           align: options?.align ?? "center",
           reason: options?.reason ?? "bookmark",
+          nonce,
+        },
+      };
+    }),
+  requestTailFollow: (index) =>
+    set((s) => {
+      const safeIndex =
+        s.status.filteredLines > 0
+          ? Math.min(Math.max(0, index), s.status.filteredLines - 1)
+          : Math.max(0, index);
+      const nonce = (s.scrollRequest?.nonce ?? 0) + 1;
+      return {
+        viewportResultIndex: safeIndex,
+        scrollRequest: {
+          index: safeIndex,
+          align: "end",
+          reason: "tail",
           nonce,
         },
       };
