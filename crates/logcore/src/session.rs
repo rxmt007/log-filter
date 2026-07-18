@@ -39,13 +39,13 @@ pub struct Session {
     source_path: PathBuf,
     source: MmapSource,
     indexer: Indexer,
-    filtered: Vec<u64>,
+    filtered: Vec<u32>,
     filter_active: bool,
     filter_spec: FilterSpec,
-    search_matches: Vec<u64>,
+    search_matches: Vec<u32>,
     search_spec: Option<SearchSpec>,
     bookmarks: BookmarkStore,
-    error_lines: Vec<u64>,
+    error_lines: Vec<u32>,
     error_scan_lines: usize,
     encoding: ResolvedTextEncoding,
 }
@@ -94,10 +94,31 @@ impl Session {
         self.indexer.is_done(self.source.len())
     }
 
-    /// 重新映射源文件。用于 adb/logcat 等会增长的会话文件。
+    /// 重新映射源文件。文件未增长时跳过(流式 reader 每个读块都会调用,mmap/munmap 不便宜);
+    /// 检测到收缩(外部截断/轮转)时旧索引全部失效,重建派生状态,避免越界访问乃至 SIGBUS。
     pub fn remap_source(&mut self) -> io::Result<()> {
-        self.source = MmapSource::open(&self.source_path)?;
+        let disk_len = fs::metadata(&self.source_path)?.len() as usize;
+        if disk_len < self.source.len() {
+            self.source = MmapSource::open(&self.source_path)?;
+            self.reset_derived_state();
+            return Ok(());
+        }
+        if disk_len > self.source.len() {
+            self.source = MmapSource::open(&self.source_path)?;
+        }
         Ok(())
+    }
+
+    /// 收缩后清空派生状态:新建 Indexer、清 filtered/search/errors、错误扫描游标归零。
+    /// `filter_active` 置 false,但 pending 的 `filter_spec` 保留,索引完成后
+    /// `rerun_scans_after_index_done` 会按其重算——与 `open_file` 后的行为一致。
+    fn reset_derived_state(&mut self) {
+        self.indexer = Indexer::new();
+        self.filtered.clear();
+        self.filter_active = false;
+        self.search_matches.clear();
+        self.error_lines.clear();
+        self.error_scan_lines = 0;
     }
 
     pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<bool> {
@@ -204,7 +225,9 @@ impl Session {
         let bookmarks = self
             .bookmark_source_lines()
             .into_iter()
-            .filter_map(|line_no| self.filtered.binary_search(&(line_no - 1)).ok())
+            // 超过 u32 的书签行不可能在命中数组内(命中数组元素都 ≤ u32::MAX)。
+            .filter_map(|line_no| u32::try_from(line_no - 1).ok())
+            .filter_map(|needle| self.filtered.binary_search(&needle).ok())
             .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, buckets))
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -226,7 +249,9 @@ impl Session {
 
     fn current_result_index_for_source_idx(&self, source_idx: u64) -> Option<usize> {
         if self.filter_active {
-            self.filtered.binary_search(&source_idx).ok()
+            // 超过 u32 的 source_idx 不可能在命中数组内(命中数组元素都 ≤ u32::MAX)。
+            let needle = u32::try_from(source_idx).ok()?;
+            self.filtered.binary_search(&needle).ok()
         } else if (source_idx as usize) < self.indexer.total_lines() {
             Some(source_idx as usize)
         } else {
@@ -378,7 +403,7 @@ impl Session {
         matcher: &FilterMatcher,
         start: usize,
         end: usize,
-    ) -> Vec<u64> {
+    ) -> Vec<u32> {
         let frontier = self.indexed_frontier();
         let end = end.min(self.total_lines());
         let mut matches = Vec::new();
@@ -392,13 +417,13 @@ impl Session {
             let entry = parse_line_ref(&text);
             let marked = matcher.requires_mark() && self.is_bookmarked(idx as u64 + 1);
             if matcher.is_match_with_mark(&entry, marked) {
-                matches.push(idx as u64);
+                push_hit(&mut matches, idx);
             }
         }
         matches
     }
 
-    pub fn apply_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u64>) -> usize {
+    pub fn apply_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u32>) -> usize {
         self.filter_spec = spec.clone();
         if !spec.is_active() {
             self.filtered.clear();
@@ -411,7 +436,7 @@ impl Session {
         count
     }
 
-    pub fn append_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u64>) -> usize {
+    pub fn append_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u32>) -> usize {
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
@@ -464,7 +489,7 @@ impl Session {
         matcher: &SearchMatcher,
         start: usize,
         end: usize,
-    ) -> Vec<u64> {
+    ) -> Vec<u32> {
         let frontier = self.indexed_frontier();
         let end = end.min(self.total_lines());
         let mut matches = Vec::new();
@@ -477,35 +502,37 @@ impl Session {
             let text = self.encoding.decode(&self.source.bytes()[span_start..span_end]);
             let entry = parse_line_ref(&text);
             if matcher.is_entry_match(&entry) {
-                matches.push(idx as u64);
+                push_hit(&mut matches, idx);
             }
         }
         matches
     }
 
-    pub fn apply_search_results(&mut self, spec: &SearchSpec, matches: Vec<u64>) -> SearchSummary {
+    pub fn apply_search_results(&mut self, spec: &SearchSpec, matches: Vec<u32>) -> SearchSummary {
         self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
         self.search_matches = matches;
         SearchSummary {
             count: self.search_matches.len(),
-            first: self.search_matches.first().map(|idx| idx + 1),
+            first: self.search_matches.first().map(|idx| u64::from(*idx) + 1),
         }
     }
 
-    pub fn append_search_results(&mut self, spec: &SearchSpec, matches: Vec<u64>) -> SearchSummary {
+    pub fn append_search_results(&mut self, spec: &SearchSpec, matches: Vec<u32>) -> SearchSummary {
         self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
         self.search_matches.extend(matches);
         self.search_matches.sort_unstable();
         self.search_matches.dedup();
         SearchSummary {
             count: self.search_matches.len(),
-            first: self.search_matches.first().map(|idx| idx + 1),
+            first: self.search_matches.first().map(|idx| u64::from(*idx) + 1),
         }
     }
 
     pub fn search_next(&self, from_line_no: u64, direction: SearchDirection) -> Option<u64> {
         let zero_based = from_line_no.saturating_sub(1);
-        next_match(&self.search_matches, zero_based, direction).map(|idx| idx + 1)
+        // from 超过 u32::MAX 时饱和到 u32::MAX(排在所有命中之后),环绕导航语义正确。
+        let from = u32::try_from(zero_based).unwrap_or(u32::MAX);
+        next_match(&self.search_matches, from, direction).map(|idx| u64::from(idx) + 1)
     }
 
     /// 取 [start, start+count) 行(按已建索引裁剪),返回 (行号1-indexed, 解析结果)。
@@ -649,7 +676,7 @@ impl Session {
                 crate::parser::level_byte_of_line(&bytes[span_start..span_end]),
                 Some(b'E') | Some(b'F')
             ) {
-                self.error_lines.push(idx as u64);
+                push_hit(&mut self.error_lines, idx);
             }
         }
         self.error_scan_lines = total;
@@ -662,6 +689,16 @@ impl Session {
             .into_iter()
             .filter(|line| *line > 0 && *line <= max)
             .collect()
+    }
+}
+
+/// 把 0-based 行号推入命中数组。行号超过 `u32::MAX` 时跳过并在 debug 下断言:
+/// 10GB logcat 实际行数 ~3 亿,距 u32 上限尚有一个数量级,只需注释兜底即可。
+fn push_hit(matches: &mut Vec<u32>, idx: usize) {
+    if let Ok(idx32) = u32::try_from(idx) {
+        matches.push(idx32);
+    } else {
+        debug_assert!(false, "line index exceeds u32 range");
     }
 }
 
@@ -1075,6 +1112,30 @@ mod tests {
         let rows = s.get_rows(1, 1);
         assert_eq!(rows[0].0, 2);
         assert_eq!(rows[0].1.tag, "Two");
+    }
+
+    #[test]
+    fn remap_after_truncation_rebuilds_index_without_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shrink.log");
+        std::fs::write(
+            &path,
+            "04-20 12:06:02.125   146   179 D T: one\n04-20 12:06:02.225   146   179 E T: two\n",
+        )
+        .unwrap();
+        let mut s = Session::open(&path).unwrap();
+        s.index_all();
+        assert_eq!(s.total_lines(), 2);
+        assert_eq!(s.error_count(), 1);
+
+        std::fs::write(&path, "04-20 12:06:03.000   146   179 D T: fresh\n").unwrap();
+        s.remap_and_index_step(usize::MAX).unwrap();
+
+        assert_eq!(s.total_lines(), 1);
+        assert_eq!(s.error_count(), 0);
+        let rows = s.get_rows(0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.message, "fresh");
     }
 
     #[test]

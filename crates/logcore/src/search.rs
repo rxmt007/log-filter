@@ -40,10 +40,10 @@ pub struct SearchSummary {
 }
 
 impl SearchSummary {
-    pub fn from_matches(matches: &[u64]) -> Self {
+    pub fn from_matches(matches: &[u32]) -> Self {
         Self {
             count: matches.len(),
-            first: matches.first().copied(),
+            first: matches.first().map(|idx| u64::from(*idx)),
         }
     }
 }
@@ -143,7 +143,7 @@ where
         .collect())
 }
 
-pub fn next_match(matches: &[u64], from: u64, direction: SearchDirection) -> Option<u64> {
+pub fn next_match(matches: &[u32], from: u32, direction: SearchDirection) -> Option<u32> {
     if matches.is_empty() {
         return None;
     }
@@ -210,7 +210,8 @@ mod tests {
     fn substring_search_counts_and_returns_first() {
         let spec = SearchSpec::plain("Network");
         let matches = search_entries(&sample(), &spec).expect("search should compile");
-        let summary = SearchSummary::from_matches(&matches);
+        let matches32: Vec<u32> = matches.iter().map(|&idx| idx as u32).collect();
+        let summary = SearchSummary::from_matches(&matches32);
         assert_eq!(summary.count, 2);
         assert_eq!(summary.first, Some(1));
         assert_eq!(matches, vec![1, 2]);

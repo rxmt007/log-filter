@@ -875,7 +875,7 @@ fn spawn_search_task(
                 }
             };
             if first_line.is_none() {
-                first_line = chunk.first().map(|idx| idx + 1);
+                first_line = chunk.first().map(|idx| u64::from(*idx) + 1);
             }
             matches.extend(chunk);
             let _ = app.emit(
