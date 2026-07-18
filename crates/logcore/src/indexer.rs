@@ -73,6 +73,7 @@ impl Indexer {
         self.checkpoints.len()
     }
 
+    /// 第 i 行的字节区间 [start, end)(end 含末尾换行,取文本时再裁剪)。
     pub fn line_span(&self, bytes: &[u8], i: usize, frontier: usize) -> Option<(usize, usize)> {
         self.line_spans(bytes, i, i.saturating_add(1), frontier)
             .into_iter()
@@ -154,16 +155,6 @@ impl Default for Indexer {
     }
 }
 
-/// 第 i 行的字节区间 [start, end)(end 含末尾换行,取文本时再裁剪)。
-pub fn line_span(
-    indexer: &Indexer,
-    bytes: &[u8],
-    i: usize,
-    frontier: usize,
-) -> Option<(usize, usize)> {
-    indexer.line_span(bytes, i, frontier)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,9 +166,9 @@ mod tests {
         ix.step(bytes, bytes.len());
         assert!(ix.is_done(bytes.len()));
         assert_eq!(ix.total_lines(), 3);
-        assert_eq!(line_span(&ix, bytes, 0, bytes.len()), Some((0, 2)));
-        assert_eq!(line_span(&ix, bytes, 1, bytes.len()), Some((2, 5)));
-        assert_eq!(line_span(&ix, bytes, 2, bytes.len()), Some((5, 8)));
+        assert_eq!(ix.line_span(bytes, 0, bytes.len()), Some((0, 2)));
+        assert_eq!(ix.line_span(bytes, 1, bytes.len()), Some((2, 5)));
+        assert_eq!(ix.line_span(bytes, 2, bytes.len()), Some((5, 8)));
     }
 
     #[test]

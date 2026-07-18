@@ -2,7 +2,7 @@ use crate::bookmarks::{BookmarkDirection, BookmarkStore};
 use crate::encoding::{ResolvedTextEncoding, TextEncoding};
 use crate::export::{write_raw_line, ExportSummary};
 use crate::filter::{FilterError, FilterMatcher, FilterSpec};
-use crate::indexer::{line_span, Indexer};
+use crate::indexer::Indexer;
 use crate::mmap_source::MmapSource;
 use crate::model::LogEntry;
 use crate::parser::parse_line_ref;
@@ -596,7 +596,7 @@ impl Session {
     }
 
     fn parse_source_row(&self, source_idx: usize, frontier: usize) -> Option<(u64, LogEntry)> {
-        let (start, end) = line_span(&self.indexer, self.source.bytes(), source_idx, frontier)?;
+        let (start, end) = self.indexer.line_span(self.source.bytes(), source_idx, frontier)?;
         Some((source_idx as u64 + 1, self.parse_source_span(start, end)))
     }
 
@@ -606,7 +606,7 @@ impl Session {
     }
 
     fn source_line_bytes(&self, source_idx: usize, frontier: usize) -> Option<&[u8]> {
-        let (start, end) = line_span(&self.indexer, self.source.bytes(), source_idx, frontier)?;
+        let (start, end) = self.indexer.line_span(self.source.bytes(), source_idx, frontier)?;
         Some(&self.source.bytes()[start..end])
     }
 
