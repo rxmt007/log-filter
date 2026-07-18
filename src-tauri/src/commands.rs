@@ -21,6 +21,7 @@ use tauri::{AppHandle, Emitter, State};
 
 const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
 const SCAN_CHUNK_LINES: usize = 4096;
+const SEARCH_PROGRESS_STRIDE: usize = 65_536; // 搜索进度事件节流阈值(约 16 个扫描块)
 const STREAM_READ_BUF: usize = 64 * 1024;
 const MAX_ROWS: usize = 512;
 const STREAM_SESSION_KEEP: usize = 10; // 流式会话文件最多保留的份数
@@ -786,6 +787,39 @@ pub fn search(
     })
 }
 
+/// 分块扫描 [0, 快照总行数);每块持锁校验会话代号与 `is_current_task`,任一失效即放弃(返回 None)。
+/// `scan` 在持锁状态下执行(返回本块命中的行号);`on_chunk(scanned, matches_len)` 在锁外执行,
+/// 供进度事件使用。收尾 apply 段由各调用方在本函数返回后自行完成(仍需重新持锁校验)。
+fn run_chunked_scan(
+    app_state: &AppState,
+    session_generation: u64,
+    is_current_task: impl Fn() -> bool,
+    scan: impl Fn(&logcore::session::Session, usize, usize) -> Vec<u32>,
+    mut on_chunk: impl FnMut(usize, usize),
+) -> Option<Vec<u32>> {
+    let total_lines = {
+        let guard = app_state.lock_session_if_current(session_generation)?;
+        guard.as_ref().map(|session| session.total_lines())?
+    };
+    let mut matches = Vec::new();
+    let mut start = 0;
+    while start < total_lines {
+        let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
+        let chunk = {
+            let guard = app_state.lock_session_if_current(session_generation)?;
+            if !is_current_task() {
+                return None;
+            }
+            scan(guard.as_ref()?, start, end)
+        };
+        matches.extend(chunk);
+        on_chunk(end, matches.len());
+        start = end;
+        std::thread::yield_now();
+    }
+    Some(matches)
+}
+
 fn spawn_filter_task(
     app_state: AppState,
     app: AppHandle,
@@ -797,33 +831,16 @@ fn spawn_filter_task(
         return;
     };
     std::thread::spawn(move || {
-        let total_lines = {
-            let guard = app_state.lock_session();
-            match guard.as_ref() {
-                Some(session) => session.total_lines(),
-                None => return,
-            }
+        let mut total_lines = 0;
+        let Some(matches) = run_chunked_scan(
+            &app_state,
+            session_generation,
+            || app_state.is_current_filter_task(task_generation),
+            |session, start, end| session.filter_indexed_range(&matcher, start, end),
+            |scanned, _matches_len| total_lines = scanned,
+        ) else {
+            return;
         };
-        let mut matches = Vec::new();
-        let mut start = 0;
-        while start < total_lines {
-            let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
-            let chunk = {
-                let Some(guard) = app_state.lock_session_if_current(session_generation) else {
-                    return;
-                };
-                if !app_state.is_current_filter_task(task_generation) {
-                    return;
-                }
-                match guard.as_ref() {
-                    Some(session) => session.filter_indexed_range(&matcher, start, end),
-                    None => return,
-                }
-            };
-            matches.extend(chunk);
-            start = end;
-            std::thread::yield_now();
-        }
 
         let filtered_lines = {
             let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
@@ -867,47 +884,45 @@ fn spawn_search_task(
         return;
     };
     std::thread::spawn(move || {
-        let total_lines = {
-            let guard = app_state.lock_session();
-            match guard.as_ref() {
-                Some(session) => session.total_lines(),
-                None => return,
-            }
+        // matches 随 chunk 前向扫描升序累积,故一旦非空,`matches.first()` 即最终首命中,可提前上报。
+        let first_line = std::cell::Cell::new(None);
+        // 节流 search:progress(done=false):约每 16 块(65_536 行)或首命中出现时才发一次,
+        // 避免 1 亿行日志产生数万个 IPC 事件;最终 done=true 事件不受影响。
+        let mut last_emitted = 0_usize;
+        let mut surfaced_first_match = false;
+        let mut total_lines = 0;
+        let Some(matches) = run_chunked_scan(
+            &app_state,
+            session_generation,
+            || app_state.is_current_search_task(task_generation),
+            |session, start, end| {
+                let chunk = session.search_indexed_range(&matcher, start, end);
+                if first_line.get().is_none() {
+                    first_line.set(chunk.first().map(|idx| u64::from(*idx) + 1));
+                }
+                chunk
+            },
+            |scanned, matches_len| {
+                total_lines = scanned;
+                let first_match_now = matches_len > 0 && !surfaced_first_match;
+                if scanned - last_emitted >= SEARCH_PROGRESS_STRIDE || first_match_now {
+                    surfaced_first_match |= matches_len > 0;
+                    last_emitted = scanned;
+                    let _ = app.emit(
+                        "search:progress",
+                        SearchProgressDto {
+                            scanned,
+                            matches: matches_len,
+                            first_line: first_line.get(),
+                            done: false,
+                            generation: session_generation,
+                        },
+                    );
+                }
+            },
+        ) else {
+            return;
         };
-        let mut matches = Vec::new();
-        let mut first_line = None;
-        let mut start = 0;
-        while start < total_lines {
-            let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
-            let chunk = {
-                let Some(guard) = app_state.lock_session_if_current(session_generation) else {
-                    return;
-                };
-                if !app_state.is_current_search_task(task_generation) {
-                    return;
-                }
-                match guard.as_ref() {
-                    Some(session) => session.search_indexed_range(&matcher, start, end),
-                    None => return,
-                }
-            };
-            if first_line.is_none() {
-                first_line = chunk.first().map(|idx| u64::from(*idx) + 1);
-            }
-            matches.extend(chunk);
-            let _ = app.emit(
-                "search:progress",
-                SearchProgressDto {
-                    scanned: end,
-                    matches: matches.len(),
-                    first_line,
-                    done: false,
-                    generation: session_generation,
-                },
-            );
-            start = end;
-            std::thread::yield_now();
-        }
 
         let summary = {
             let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
