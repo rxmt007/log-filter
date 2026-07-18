@@ -1,8 +1,10 @@
 use std::env;
 use std::ffi::OsString;
 use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdbDevice {
@@ -206,6 +208,7 @@ pub fn build_logcat_command(
     adb_path: PathBuf,
     serial: &str,
     buffers: &[LogcatBuffer],
+    since: Option<&str>,
 ) -> LogcatCommand {
     let mut args = vec![
         "-s".to_string(),
@@ -218,17 +221,91 @@ pub fn build_logcat_command(
         args.push("-b".to_string());
         args.push(buffer.as_arg().to_string());
     }
+    if let Some(since) = since {
+        args.push("-T".to_string());
+        args.push(since.to_string());
+    }
     LogcatCommand { adb_path, args }
 }
 
+/// 所有 adb 子进程必须经此创建:Windows 下抑制控制台窗口闪烁。
+pub fn adb_command(path: &Path) -> Command {
+    let command = Command::new(path);
+    #[cfg(windows)]
+    let command = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = command;
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    };
+    command
+}
+
 pub fn list_devices(adb_path: &Path) -> io::Result<Vec<AdbDevice>> {
-    let output = Command::new(adb_path).arg("devices").arg("-l").output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+    list_devices_with_timeout(adb_path, Duration::from_secs(5))
+}
+
+/// adb server 冷启动或 USB 抖动时 `adb devices` 可能长时间挂起;超时后杀掉子进程返回错误,
+/// 避免上层轮询堆积。
+pub fn list_devices_with_timeout(
+    adb_path: &Path,
+    timeout: Duration,
+) -> io::Result<Vec<AdbDevice>> {
+    let mut child = adb_command(adb_path)
+        .arg("devices")
+        .arg("-l")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait()? {
+            Some(status) => {
+                let mut stdout = String::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    let _ = pipe.read_to_string(&mut stdout);
+                }
+                if !status.success() {
+                    let mut stderr = String::new();
+                    if let Some(mut pipe) = child.stderr.take() {
+                        let _ = pipe.read_to_string(&mut stderr);
+                    }
+                    return Err(io::Error::other(stderr));
+                }
+                return Ok(parse_adb_devices(&stdout));
+            }
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "adb devices timed out"));
+            }
+            None => std::thread::sleep(Duration::from_millis(50)),
+        }
     }
-    Ok(parse_adb_devices(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// 从会话文件尾部文本提取最后一条可解析日志的时间戳,供 resume 时 `logcat -T` 续抓去重。
+/// 注意:`-T <time>` 的设备兼容性尚未在真机全面验证;不支持的旧设备上 logcat 会立即退出,
+/// 表现为流自动停止,用户可重新 Start 全量抓取。
+pub fn last_log_timestamp(tail_text: &str) -> Option<String> {
+    tail_text.lines().rev().find_map(|line| {
+        let parsed = crate::parser::parse_line_ref(line);
+        let date = parsed.date;
+        let time = parsed.time;
+        let date_ok = date.len() == 5
+            && date.as_bytes()[2] == b'-'
+            && date.bytes().enumerate().all(|(i, b)| i == 2 || b.is_ascii_digit());
+        let time_ok = time.len() == 12
+            && time.as_bytes()[2] == b':'
+            && time.as_bytes()[5] == b':'
+            && time.as_bytes()[8] == b'.'
+            && time
+                .bytes()
+                .enumerate()
+                .all(|(i, b)| matches!(i, 2 | 5 | 8) || b.is_ascii_digit());
+        (date_ok && time_ok).then(|| format!("{date} {time}"))
+    })
 }
 
 pub fn resolve_adb_path(configured: Option<&Path>) -> Option<PathBuf> {
@@ -373,6 +450,7 @@ emulator-5554 unauthorized
             PathBuf::from("adb"),
             "usb",
             &[LogcatBuffer::Main, LogcatBuffer::System, LogcatBuffer::Main],
+            None,
         );
 
         assert_eq!(
@@ -388,6 +466,31 @@ emulator-5554 unauthorized
                 "-b",
                 "system"
             ]
+        );
+    }
+
+    #[test]
+    fn extracts_last_parseable_timestamp_from_tail() {
+        let tail = "garbage line\n04-20 12:06:02.125   146   179 D T: one\n04-20 12:06:03.900   146   179 I T: two\ntrailing junk";
+        assert_eq!(
+            last_log_timestamp(tail).as_deref(),
+            Some("04-20 12:06:03.900")
+        );
+        assert_eq!(last_log_timestamp("no logs here\n"), None);
+        assert_eq!(last_log_timestamp(""), None);
+    }
+
+    #[test]
+    fn logcat_command_appends_since_timestamp() {
+        let command = build_logcat_command(
+            PathBuf::from("adb"),
+            "usb",
+            &[LogcatBuffer::Main],
+            Some("04-20 12:06:03.900"),
+        );
+        assert_eq!(
+            command.args,
+            vec!["-s", "usb", "logcat", "-v", "threadtime", "-b", "main", "-T", "04-20 12:06:03.900"]
         );
     }
 
