@@ -424,13 +424,11 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
 
     // 后台索引:小预算步进,步间释放锁,保证浏览不被阻塞。
     let app_state = state.inner().clone();
-    let gen_arc = state.generation.clone();
     std::thread::spawn(move || loop {
-        if gen_arc.load(Ordering::SeqCst) != my_gen {
-            break; // 已被更晚的 open 取代
-        }
         let snapshot = {
-            let mut guard = app_state.lock_session();
+            let Some(mut guard) = app_state.lock_session_if_current(my_gen) else {
+                break; // 已被更晚的 open 取代
+            };
             match guard.as_mut() {
                 Some(s) => {
                     let done = s.index_step(INDEX_BUDGET);
