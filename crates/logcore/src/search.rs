@@ -55,10 +55,7 @@ pub struct SearchError {
 
 enum CompiledSearch {
     Empty,
-    Plain {
-        needle: String,
-        case_sensitive: bool,
-    },
+    Plain(String),
     Regex(Regex),
 }
 
@@ -76,32 +73,24 @@ impl CompiledSearch {
                     message: err.to_string(),
                 });
         }
-        let needle = if spec.case_sensitive {
-            spec.query.clone()
-        } else {
-            spec.query.to_lowercase()
-        };
-        Ok(Self::Plain {
-            needle,
-            case_sensitive: spec.case_sensitive,
-        })
+        if !spec.case_sensitive {
+            // 大小写不敏感明文:交给 regex 引擎(转义字面量 + case_insensitive),
+            // 兼顾 ASCII 与 Unicode 折叠,避免朴素 O(n·m) 扫描与 lowercase 拷贝。
+            return RegexBuilder::new(&regex::escape(&spec.query))
+                .case_insensitive(true)
+                .build()
+                .map(Self::Regex)
+                .map_err(|err| SearchError {
+                    message: err.to_string(),
+                });
+        }
+        Ok(Self::Plain(spec.query.clone()))
     }
 
     pub fn is_match(&self, text: &str) -> bool {
         match self {
             Self::Empty => false,
-            Self::Plain {
-                needle,
-                case_sensitive,
-            } => {
-                if *case_sensitive {
-                    text.contains(needle)
-                } else if needle.is_ascii() {
-                    contains_case_insensitive_ascii(text, needle)
-                } else {
-                    text.to_lowercase().contains(needle)
-                }
-            }
+            Self::Plain(needle) => text.contains(needle),
             Self::Regex(re) => re.is_match(text),
         }
     }
@@ -175,16 +164,6 @@ fn entry_matches(entry: &ParsedLine<'_>, compiled: &CompiledSearch) -> bool {
         || compiled.is_match(entry.message)
 }
 
-fn contains_case_insensitive_ascii(text: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    let needle = needle.as_bytes();
-    text.as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,16 +232,36 @@ mod tests {
     }
 
     #[test]
-    fn ascii_case_insensitive_plain_search_matches_without_lowercase_copy() {
-        assert!(contains_case_insensitive_ascii(
-            "SocketTimeoutException",
-            "sockettimeout"
-        ));
-        assert!(contains_case_insensitive_ascii(
-            "abc NETWORK xyz",
-            "network"
-        ));
-        assert!(!contains_case_insensitive_ascii("Payment", "network"));
+    fn ascii_case_insensitive_plain_search_ignores_case() {
+        let spec = SearchSpec {
+            query: "network".to_string(),
+            regex: false,
+            case_sensitive: false,
+        };
+        let matcher = SearchMatcher::new(&spec).expect("search should compile");
+        assert!(matcher.is_match("abc NETWORK xyz"));
+        assert!(!matcher.is_match("Payment"));
+
+        let spec = SearchSpec {
+            query: "sockettimeout".to_string(),
+            regex: false,
+            case_sensitive: false,
+        };
+        let matcher = SearchMatcher::new(&spec).expect("search should compile");
+        assert!(matcher.is_match("SocketTimeoutException"));
+    }
+
+    #[test]
+    fn case_insensitive_plain_search_treats_metacharacters_literally() {
+        // 明文查询即便走 regex 引擎也必须整体转义,`.` 不能当通配符。
+        let spec = SearchSpec {
+            query: "a.c".to_string(),
+            regex: false,
+            case_sensitive: false,
+        };
+        let matcher = SearchMatcher::new(&spec).expect("search should compile");
+        assert!(matcher.is_match("xxA.Cxx"));
+        assert!(!matcher.is_match("abc"));
     }
 
     #[test]
