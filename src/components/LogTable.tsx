@@ -9,6 +9,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Bookmark, Columns3 } from "lucide-react";
 import { splitHighlightTokens } from "@/lib/highlight";
 import { getRows, listBookmarks, saveAppConfig, toggleBookmark } from "@/lib/ipc";
+import { RowBlockCache } from "@/lib/rowCache";
 import {
   clamp,
   formatRowForClipboard,
@@ -39,11 +40,6 @@ interface BookmarkMenuState {
   x: number;
   y: number;
   range: SelectionRange;
-}
-
-interface FilledBlock {
-  count: number;
-  epoch: number;
 }
 
 function normalizeSelectionRange(start: number, end: number): SelectionRange {
@@ -159,8 +155,7 @@ export function LogTable() {
   const parentRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimerRef = useRef<number | null>(null);
-  const cache = useRef<Map<number, Row>>(new Map());
-  const filledEpoch = useRef<Map<number, FilledBlock>>(new Map());
+  const cache = useRef(new RowBlockCache(64));
   const inflight = useRef<Map<number, Promise<void>>>(new Map());
   const cacheEpoch = useRef(0);
   const appConfigRef = useRef(appConfig);
@@ -332,7 +327,7 @@ export function LogTable() {
       if (!selectionIntersectsElement(selection, element)) return;
       const index = Number(element.dataset.resultIndex);
       if (!Number.isFinite(index)) return;
-      const row = cache.current.get(index);
+      const row = cache.current.get(index, WINDOW);
       if (row) rows.push({ index, row });
     });
     return rows;
@@ -343,7 +338,7 @@ export function LogTable() {
       if (!range) return [];
       const rows: Array<{ index: number; row: Row }> = [];
       for (let index = range.start; index <= range.end; index += 1) {
-        const row = cache.current.get(index);
+        const row = cache.current.get(index, WINDOW);
         if (row) rows.push({ index, row });
       }
       return rows;
@@ -405,7 +400,6 @@ export function LogTable() {
   useEffect(() => {
     cacheEpoch.current += 1;
     cache.current.clear();
-    filledEpoch.current.clear();
     inflight.current.clear();
     parentRef.current?.scrollTo({ top: 0 });
     setBookmarkMenu(null);
@@ -444,8 +438,7 @@ export function LogTable() {
   const ensureBlock = useCallback(async (block: number, totalNow: number) => {
     const want = Math.min(WINDOW, totalNow - block);
     if (want <= 0) return;
-    const filled = filledEpoch.current.get(block);
-    if (filled?.epoch === cacheEpoch.current && filled.count >= want) return;
+    if (cache.current.isFresh(block, want, cacheEpoch.current)) return;
     const existing = inflight.current.get(block);
     if (existing) return existing;
     const epoch = cacheEpoch.current;
@@ -453,11 +446,7 @@ export function LogTable() {
       try {
         const rows = await getRows("filtered", block, WINDOW);
         if (cacheEpoch.current !== epoch) return;
-        rows.forEach((r, i) => cache.current.set(block + i, r));
-        for (let i = rows.length; i < want; i += 1) {
-          cache.current.delete(block + i);
-        }
-        filledEpoch.current.set(block, { count: rows.length, epoch });
+        cache.current.fill(block, rows, epoch);
         force((x) => x + 1);
       } finally {
         inflight.current.delete(block);
@@ -525,11 +514,9 @@ export function LogTable() {
   const toggleRowBookmark = useCallback(
     async (row: Row) => {
       const marked = await toggleBookmark(row.lineNo);
-      cache.current.forEach((cached, index) => {
-        if (cached.lineNo === row.lineNo) {
-          cache.current.set(index, { ...cached, marked });
-        }
-      });
+      cache.current.updateRows((cached) =>
+        cached.lineNo === row.lineNo ? { ...cached, marked } : cached,
+      );
       const bookmarks = await listBookmarks();
       setBookmarks(bookmarks);
       force((x) => x + 1);
@@ -539,7 +526,7 @@ export function LogTable() {
 
   const openBookmarkMenu = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>, index: number) => {
-      const row = cache.current.get(index);
+      const row = cache.current.get(index, WINDOW);
       if (!row) return;
       event.preventDefault();
       const range =
@@ -563,11 +550,9 @@ export function LogTable() {
         if (touchedLines.has(row.lineNo) || row.marked === targetMarked) continue;
         touchedLines.add(row.lineNo);
         const marked = await toggleBookmark(row.lineNo);
-        cache.current.forEach((cached, index) => {
-          if (cached.lineNo === row.lineNo) {
-            cache.current.set(index, { ...cached, marked });
-          }
-        });
+        cache.current.updateRows((cached) =>
+          cached.lineNo === row.lineNo ? { ...cached, marked } : cached,
+        );
       }
       const bookmarks = await listBookmarks();
       setBookmarks(bookmarks);
@@ -661,7 +646,7 @@ export function LogTable() {
         ) : (
           <div style={{ height: rv.getTotalSize(), position: "relative" }}>
             {items.map((vi) => {
-              const row = cache.current.get(vi.index);
+              const row = cache.current.get(vi.index, WINDOW);
               const selected =
                 vi.index === selectedResultIndex ||
                 row?.lineNo === selectedLine ||

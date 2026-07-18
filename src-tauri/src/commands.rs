@@ -1,7 +1,8 @@
 use crate::dto::{
     AppConfigDto, DeviceListDto, ExportRequest, ExportSummaryDto, FilterDoneDto, FilterSpecDto,
     MinimapDto, NavigationTargetDto, Row, SearchProgressDto, SearchResult, SearchSpecDto,
-    SplitRequest, SplitSummaryDto, StartLogcatRequest, Status, StreamAppendDto, StreamControlDto,
+    SplitProgressDto, SplitRequest, SplitSummaryDto, StartLogcatRequest, Status, StreamAppendDto,
+    StreamControlDto,
 };
 use crate::state::AppState;
 use crate::state::{StreamRequestState, StreamTask};
@@ -10,7 +11,7 @@ use logcore::search::{SearchMatcher, SearchSpec};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -20,8 +21,10 @@ use tauri::{AppHandle, Emitter, State};
 
 const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
 const SCAN_CHUNK_LINES: usize = 4096;
+const SEARCH_PROGRESS_STRIDE: usize = 65_536; // 搜索进度事件节流阈值(约 16 个扫描块)
 const STREAM_READ_BUF: usize = 64 * 1024;
 const MAX_ROWS: usize = 512;
+const STREAM_SESSION_KEEP: usize = 10; // 流式会话文件最多保留的份数
 
 struct StreamReaderArgs {
     app_state: AppState,
@@ -131,6 +134,30 @@ fn stream_session_path(config: &logcore::config::AppConfig) -> Result<PathBuf, S
     Ok(base_dir.join(format!("logcat-{millis}.log")))
 }
 
+/// 只识别本应用生成的 `logcat-<millis>.log`,按文件名倒序保留最新 keep 个,
+/// 其余连同书签 sidecar 一起删除;所有 IO 失败静默忽略(清理是尽力而为)。
+fn prune_stream_sessions(dir: &std::path::Path, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut sessions: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("logcat-"))
+                .and_then(|rest| rest.strip_suffix(".log"))
+                .is_some_and(|millis| !millis.is_empty() && millis.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect();
+    sessions.sort();
+    for stale in sessions.iter().rev().skip(keep) {
+        let _ = fs::remove_file(stale);
+        let _ = fs::remove_file(logcore::bookmarks::sidecar_path_for(stale));
+    }
+}
+
 fn stream_status(state: &AppState) -> StreamControlDto {
     let status = {
         let generation = state.generation.load(Ordering::SeqCst);
@@ -169,22 +196,39 @@ fn lock_child(child: &Arc<Mutex<std::process::Child>>) -> MutexGuard<'_, std::pr
     }
 }
 
-fn take_stream_task(
-    state: &AppState,
-    paused: bool,
-    clear_last_request: bool,
-) -> Option<StreamTask> {
+/// 停止当前流式任务的语义模式,决定 `paused` 标记与 `last_request` 的去留。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamStop {
+    /// 挂起:保留 last_request,标记 paused,可 resume。
+    Pause,
+    /// 停止:保留 last_request(供 clear 复用路径),不标记 paused。
+    Stop,
+    /// 遗弃:丢弃 last_request(切换到新会话前)。
+    Forget,
+}
+
+impl StreamStop {
+    fn paused(self) -> bool {
+        matches!(self, Self::Pause)
+    }
+
+    fn clears_last_request(self) -> bool {
+        matches!(self, Self::Forget)
+    }
+}
+
+fn take_stream_task(state: &AppState, mode: StreamStop) -> Option<StreamTask> {
     state.next_stream_generation();
     let mut runtime = state.lock_stream();
-    runtime.paused = paused;
-    if clear_last_request {
+    runtime.paused = mode.paused();
+    if mode.clears_last_request() {
         runtime.last_request = None;
     }
     runtime.task.take()
 }
 
-fn stop_stream_task(state: &AppState, paused: bool, clear_last_request: bool) {
-    let Some(task) = take_stream_task(state, paused, clear_last_request) else {
+fn stop_stream_task(state: &AppState, mode: StreamStop) {
+    let Some(task) = take_stream_task(state, mode) else {
         return;
     };
     {
@@ -202,9 +246,13 @@ fn spawn_logcat_stream(
     let devices = logcore::adb::list_devices(&request.adb_path).map_err(|err| err.to_string())?;
     let device = logcore::adb::select_online_device(&devices, request.requested_serial.as_deref())?;
     let buffers = parse_buffers(&request.buffers)?;
-    let command =
-        logcore::adb::build_logcat_command(request.adb_path.clone(), &device.serial, &buffers);
-    let mut child = Command::new(&command.adb_path)
+    let command = logcore::adb::build_logcat_command(
+        request.adb_path.clone(),
+        &device.serial,
+        &buffers,
+        request.since_timestamp.as_deref(),
+    );
+    let mut child = logcore::adb::adb_command(&command.adb_path)
         .args(&command.args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -262,12 +310,6 @@ fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
                 let mut buf = vec![0_u8; STREAM_READ_BUF];
 
                 loop {
-                    if app_state.generation.load(Ordering::SeqCst) != session_generation
-                        || !app_state.is_current_stream_task(stream_generation)
-                    {
-                        break;
-                    }
-
                     let read = match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(read) => read,
@@ -278,19 +320,28 @@ fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
                     }
 
                     let update = {
-                        let mut guard = app_state.lock_session();
+                        let Some(mut guard) = app_state.lock_session_if_current(session_generation)
+                        else {
+                            break;
+                        };
+                        if !app_state.is_current_stream_task(stream_generation) {
+                            break;
+                        }
                         let Some(session) = guard.as_mut() else {
                             break;
                         };
                         let previous_total = session.total_lines();
-                        if session.remap_and_index_step(INDEX_BUDGET).is_err() {
+                        let Ok(outcome) = session.remap_and_index_step(INDEX_BUDGET) else {
                             break;
-                        }
+                        };
                         let total_lines = session.total_lines();
+                        // 外部截断触发重建后,派生命中数组已清空,须从 0 起做一次完整重扫;
+                        // 否则沿用增量的 previous_total(截断后它反而大于新总行数,会漏扫)。
+                        let scan_start = if outcome.reset { 0 } else { previous_total };
                         let _filtered_count =
-                            append_filter_for_range(session, previous_total, total_lines);
+                            append_filter_for_range(session, scan_start, total_lines);
                         let search_progress =
-                            append_search_for_range(session, previous_total, total_lines);
+                            append_search_for_range(session, scan_start, total_lines);
                         let status = status_from(session, session_generation);
                         (status, search_progress)
                     };
@@ -360,7 +411,7 @@ fn append_search_for_range(
 
 #[tauri::command]
 pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result<Status, String> {
-    stop_stream_task(state.inner(), false, true);
+    stop_stream_task(state.inner(), StreamStop::Forget);
     let config = load_app_config()?;
     let session = logcore::session::Session::open_with_encoding(
         &PathBuf::from(&path),
@@ -376,13 +427,11 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
 
     // 后台索引:小预算步进,步间释放锁,保证浏览不被阻塞。
     let app_state = state.inner().clone();
-    let gen_arc = state.generation.clone();
     std::thread::spawn(move || loop {
-        if gen_arc.load(Ordering::SeqCst) != my_gen {
-            break; // 已被更晚的 open 取代
-        }
         let snapshot = {
-            let mut guard = app_state.lock_session();
+            let Some(mut guard) = app_state.lock_session_if_current(my_gen) else {
+                break; // 已被更晚的 open 取代
+            };
             match guard.as_mut() {
                 Some(s) => {
                     let done = s.index_step(INDEX_BUDGET);
@@ -407,8 +456,15 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
     Ok(status)
 }
 
+// adb 挂起时 `list_devices` 可能阻塞数秒(引擎侧 5s 超时),放到阻塞线程池避免冻结命令窗口。
 #[tauri::command]
-pub fn list_devices() -> Result<DeviceListDto, String> {
+pub async fn list_devices() -> Result<DeviceListDto, String> {
+    tauri::async_runtime::spawn_blocking(list_devices_blocking)
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn list_devices_blocking() -> Result<DeviceListDto, String> {
     let config = load_app_config()?;
     let adb_path = resolve_adb_from_config(&config)?;
     let devices = logcore::adb::list_devices(&adb_path).map_err(|err| err.to_string())?;
@@ -418,18 +474,34 @@ pub fn list_devices() -> Result<DeviceListDto, String> {
     })
 }
 
+// 启动流会 join 上一个 reader 线程(stop_stream_task)且要拉起 adb 子进程,放到阻塞线程池。
 #[tauri::command]
-pub fn start_logcat(
+pub async fn start_logcat(
     request: StartLogcatRequest,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<StreamControlDto, String> {
-    stop_stream_task(state.inner(), false, true);
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || start_logcat_blocking(request, &app_state, app))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn start_logcat_blocking(
+    request: StartLogcatRequest,
+    state: &AppState,
+    app: AppHandle,
+) -> Result<StreamControlDto, String> {
+    stop_stream_task(state, StreamStop::Forget);
     let config = load_app_config()?;
     let adb_path = resolve_adb_from_config(&config)?;
     let buffers = parse_logcat_request_buffers(&config, &request)?;
     let session_path = stream_session_path(&config)?;
     File::create(&session_path).map_err(|err| err.to_string())?;
+    prune_stream_sessions(
+        session_path.parent().unwrap_or(&session_path),
+        STREAM_SESSION_KEEP,
+    );
     let session =
         logcore::session::Session::open_with_encoding(&session_path, config_encoding(&config))
             .map_err(|err| err.to_string())?;
@@ -449,19 +521,31 @@ pub fn start_logcat(
             .collect(),
         session_path,
         session_generation,
+        since_timestamp: None,
     };
-    spawn_logcat_stream(state.inner().clone(), app, request_state)?;
-    Ok(stream_status(state.inner()))
+    spawn_logcat_stream(state.clone(), app, request_state)?;
+    Ok(stream_status(state))
 }
 
 #[tauri::command]
 pub fn pause_logcat(state: State<AppState>) -> StreamControlDto {
-    stop_stream_task(state.inner(), true, false);
+    stop_stream_task(state.inner(), StreamStop::Pause);
     stream_status(state.inner())
 }
 
+// 恢复流会 join 上一个 reader 线程并重新拉起 adb,放到阻塞线程池。
 #[tauri::command]
-pub fn resume_logcat(state: State<AppState>, app: AppHandle) -> Result<StreamControlDto, String> {
+pub async fn resume_logcat(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<StreamControlDto, String> {
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || resume_logcat_blocking(&app_state, app))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn resume_logcat_blocking(state: &AppState, app: AppHandle) -> Result<StreamControlDto, String> {
     let request = {
         let runtime = state.lock_stream();
         runtime
@@ -469,15 +553,51 @@ pub fn resume_logcat(state: State<AppState>, app: AppHandle) -> Result<StreamCon
             .clone()
             .ok_or_else(|| "no paused logcat session to resume".to_string())?
     };
-    stop_stream_task(state.inner(), true, false);
-    spawn_logcat_stream(state.inner().clone(), app, request)?;
-    Ok(stream_status(state.inner()))
+    stop_stream_task(state, StreamStop::Pause);
+    // 续抓时用最后一条日志时间戳做 `logcat -T`,避免 ring buffer 重放造成重复;
+    // 尾部无可解析时间戳时 since_timestamp 保持 None,退化为全量重放。
+    let mut request = request;
+    request.since_timestamp = read_session_tail(&request.session_path, 64 * 1024)
+        .as_deref()
+        .and_then(logcore::adb::last_log_timestamp);
+    spawn_logcat_stream(state.clone(), app, request)?;
+    Ok(stream_status(state))
+}
+
+/// 读会话文件末尾至多 max_bytes 的内容(lossy 解码),供 resume 提取最后时间戳。
+fn read_session_tail(path: &std::path::Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(max_bytes))).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 #[tauri::command]
 pub fn stop_logcat(state: State<AppState>) -> StreamControlDto {
-    stop_stream_task(state.inner(), false, false);
+    stop_stream_task(state.inner(), StreamStop::Stop);
     stream_status(state.inner())
+}
+
+/// 重建流式会话文件。顺序不可变:必须先 drop 旧 Session(释放 mmap),再截断文件——
+/// Windows 上截断带活动映射的文件报 ERROR_USER_MAPPED_FILE;Unix 上并发读旧 mmap 会 SIGBUS。
+fn reset_stream_session_file(
+    state: &AppState,
+    path: &std::path::Path,
+    encoding: logcore::encoding::TextEncoding,
+) -> Result<u64, String> {
+    *state.lock_session() = None;
+    File::create(path).map_err(|err| err.to_string())?;
+    let _ = fs::remove_file(logcore::bookmarks::sidecar_path_for(path));
+    let session = logcore::session::Session::open_with_encoding(path, encoding)
+        .map_err(|err| err.to_string())?;
+    let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.next_filter_task_generation();
+    state.next_search_task_generation();
+    *state.lock_session() = Some(session);
+    Ok(session_generation)
 }
 
 #[tauri::command]
@@ -489,17 +609,11 @@ pub fn clear_logcat(state: State<AppState>) -> Result<StreamControlDto, String> 
             .as_ref()
             .map(|request| request.session_path.clone())
     };
-    stop_stream_task(state.inner(), false, false);
+    stop_stream_task(state.inner(), StreamStop::Stop);
     if let Some(path) = session_path {
         let config = load_app_config()?;
-        File::create(&path).map_err(|err| err.to_string())?;
-        let session =
-            logcore::session::Session::open_with_encoding(&path, config_encoding(&config))
-                .map_err(|err| err.to_string())?;
-        let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        state.next_filter_task_generation();
-        state.next_search_task_generation();
-        *state.lock_session() = Some(session);
+        let session_generation =
+            reset_stream_session_file(state.inner(), &path, config_encoding(&config))?;
         let mut runtime = state.lock_stream();
         if let Some(request) = runtime.last_request.as_mut() {
             request.session_generation = session_generation;
@@ -674,6 +788,39 @@ pub fn search(
     })
 }
 
+/// 分块扫描 [0, 快照总行数);每块持锁校验会话代号与 `is_current_task`,任一失效即放弃(返回 None)。
+/// `scan` 在持锁状态下执行(返回本块命中的行号);`on_chunk(scanned, matches_len)` 在锁外执行,
+/// 供进度事件使用。收尾 apply 段由各调用方在本函数返回后自行完成(仍需重新持锁校验)。
+fn run_chunked_scan(
+    app_state: &AppState,
+    session_generation: u64,
+    is_current_task: impl Fn() -> bool,
+    scan: impl Fn(&logcore::session::Session, usize, usize) -> Vec<u32>,
+    mut on_chunk: impl FnMut(usize, usize),
+) -> Option<Vec<u32>> {
+    let total_lines = {
+        let guard = app_state.lock_session_if_current(session_generation)?;
+        guard.as_ref().map(|session| session.total_lines())?
+    };
+    let mut matches = Vec::new();
+    let mut start = 0;
+    while start < total_lines {
+        let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
+        let chunk = {
+            let guard = app_state.lock_session_if_current(session_generation)?;
+            if !is_current_task() {
+                return None;
+            }
+            scan(guard.as_ref()?, start, end)
+        };
+        matches.extend(chunk);
+        on_chunk(end, matches.len());
+        start = end;
+        std::thread::yield_now();
+    }
+    Some(matches)
+}
+
 fn spawn_filter_task(
     app_state: AppState,
     app: AppHandle,
@@ -685,41 +832,24 @@ fn spawn_filter_task(
         return;
     };
     std::thread::spawn(move || {
-        let total_lines = {
-            let guard = app_state.lock_session();
-            match guard.as_ref() {
-                Some(session) => session.total_lines(),
-                None => return,
-            }
+        let mut total_lines = 0;
+        let Some(matches) = run_chunked_scan(
+            &app_state,
+            session_generation,
+            || app_state.is_current_filter_task(task_generation),
+            |session, start, end| session.filter_indexed_range(&matcher, start, end),
+            |scanned, _matches_len| total_lines = scanned,
+        ) else {
+            return;
         };
-        let mut matches = Vec::new();
-        let mut start = 0;
-        while start < total_lines {
-            if app_state.generation.load(Ordering::SeqCst) != session_generation
-                || !app_state.is_current_filter_task(task_generation)
-            {
+
+        let filtered_lines = {
+            let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
+                return;
+            };
+            if !app_state.is_current_filter_task(task_generation) {
                 return;
             }
-            let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
-            let chunk = {
-                let guard = app_state.lock_session();
-                match guard.as_ref() {
-                    Some(session) => session.filter_indexed_range(&matcher, start, end),
-                    None => return,
-                }
-            };
-            matches.extend(chunk);
-            start = end;
-            std::thread::yield_now();
-        }
-
-        if app_state.generation.load(Ordering::SeqCst) != session_generation
-            || !app_state.is_current_filter_task(task_generation)
-        {
-            return;
-        }
-        let filtered_lines = {
-            let mut guard = app_state.lock_session();
             match guard.as_mut() {
                 Some(session) => {
                     let mut count = session.apply_filter_results(&spec, matches);
@@ -755,55 +885,53 @@ fn spawn_search_task(
         return;
     };
     std::thread::spawn(move || {
-        let total_lines = {
-            let guard = app_state.lock_session();
-            match guard.as_ref() {
-                Some(session) => session.total_lines(),
-                None => return,
-            }
+        // matches 随 chunk 前向扫描升序累积,故一旦非空,`matches.first()` 即最终首命中,可提前上报。
+        let first_line = std::cell::Cell::new(None);
+        // 节流 search:progress(done=false):约每 16 块(65_536 行)或首命中出现时才发一次,
+        // 避免 1 亿行日志产生数万个 IPC 事件;最终 done=true 事件不受影响。
+        let mut last_emitted = 0_usize;
+        let mut surfaced_first_match = false;
+        let mut total_lines = 0;
+        let Some(matches) = run_chunked_scan(
+            &app_state,
+            session_generation,
+            || app_state.is_current_search_task(task_generation),
+            |session, start, end| {
+                let chunk = session.search_indexed_range(&matcher, start, end);
+                if first_line.get().is_none() {
+                    first_line.set(chunk.first().map(|idx| u64::from(*idx) + 1));
+                }
+                chunk
+            },
+            |scanned, matches_len| {
+                total_lines = scanned;
+                let first_match_now = matches_len > 0 && !surfaced_first_match;
+                if scanned - last_emitted >= SEARCH_PROGRESS_STRIDE || first_match_now {
+                    surfaced_first_match |= matches_len > 0;
+                    last_emitted = scanned;
+                    let _ = app.emit(
+                        "search:progress",
+                        SearchProgressDto {
+                            scanned,
+                            matches: matches_len,
+                            first_line: first_line.get(),
+                            done: false,
+                            generation: session_generation,
+                        },
+                    );
+                }
+            },
+        ) else {
+            return;
         };
-        let mut matches = Vec::new();
-        let mut first_line = None;
-        let mut start = 0;
-        while start < total_lines {
-            if app_state.generation.load(Ordering::SeqCst) != session_generation
-                || !app_state.is_current_search_task(task_generation)
-            {
+
+        let summary = {
+            let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
+                return;
+            };
+            if !app_state.is_current_search_task(task_generation) {
                 return;
             }
-            let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
-            let chunk = {
-                let guard = app_state.lock_session();
-                match guard.as_ref() {
-                    Some(session) => session.search_indexed_range(&matcher, start, end),
-                    None => return,
-                }
-            };
-            if first_line.is_none() {
-                first_line = chunk.first().map(|idx| idx + 1);
-            }
-            matches.extend(chunk);
-            let _ = app.emit(
-                "search:progress",
-                SearchProgressDto {
-                    scanned: end,
-                    matches: matches.len(),
-                    first_line,
-                    done: false,
-                    generation: session_generation,
-                },
-            );
-            start = end;
-            std::thread::yield_now();
-        }
-
-        if app_state.generation.load(Ordering::SeqCst) != session_generation
-            || !app_state.is_current_search_task(task_generation)
-        {
-            return;
-        }
-        let summary = {
-            let mut guard = app_state.lock_session();
             match guard.as_mut() {
                 Some(session) => {
                     let mut summary = session.apply_search_results(&spec, matches);
@@ -906,16 +1034,27 @@ pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
     }
 }
 
+// 导出可能处理 10GB+ 文件,必须放到阻塞线程池,避免冻结主线程(命令窗口)。
 #[tauri::command]
-pub fn export_logs(
+pub async fn export_logs(
     request: ExportRequest,
-    state: State<AppState>,
+    state: State<'_, AppState>,
+) -> Result<ExportSummaryDto, String> {
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || export_logs_blocking(&app_state, request))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn export_logs_blocking(
+    app_state: &AppState,
+    request: ExportRequest,
 ) -> Result<ExportSummaryDto, String> {
     if request.path.trim().is_empty() {
         return Err("export path is required".to_string());
     }
     let output = PathBuf::from(&request.path);
-    let mut guard = state.lock_session();
+    let mut guard = app_state.lock_session();
     let Some(session) = guard.as_mut() else {
         return Err("open a log file before exporting".to_string());
     };
@@ -939,8 +1078,21 @@ pub fn export_logs(
     Ok(summary.into())
 }
 
+// 切分同样可能处理超大文件,放到阻塞线程池;分片进度经 split:progress 事件回传。
 #[tauri::command]
-pub fn split_log_file(request: SplitRequest) -> Result<SplitSummaryDto, String> {
+pub async fn split_log_file(
+    request: SplitRequest,
+    app: AppHandle,
+) -> Result<SplitSummaryDto, String> {
+    tauri::async_runtime::spawn_blocking(move || split_log_file_blocking(request, &app))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn split_log_file_blocking(
+    request: SplitRequest,
+    app: &AppHandle,
+) -> Result<SplitSummaryDto, String> {
     if request.path.trim().is_empty() {
         return Err("source path is required".to_string());
     }
@@ -952,10 +1104,19 @@ pub fn split_log_file(request: SplitRequest) -> Result<SplitSummaryDto, String> 
         "lines" => logcore::split::SplitMode::Lines(request.value),
         other => return Err(format!("unknown split mode: {other}")),
     };
-    let summary = logcore::split::split_file(
+    let summary = logcore::split::split_file_with_progress(
         &PathBuf::from(request.path),
         &PathBuf::from(request.out_dir),
         mode,
+        &mut |parts, bytes_processed| {
+            let _ = app.emit(
+                "split:progress",
+                SplitProgressDto {
+                    parts,
+                    bytes_processed,
+                },
+            );
+        },
     )
     .map_err(|err| err.to_string())?;
     Ok(summary.into())
@@ -1034,5 +1195,45 @@ mod tests {
             vec![logcore::adb::LogcatBuffer::Main]
         );
         assert!(parse_buffers(&["kernel".to_string()]).is_err());
+    }
+
+    #[test]
+    fn prunes_old_stream_sessions_keeping_newest() {
+        let dir = tempfile::tempdir().unwrap();
+        for millis in [1, 2, 3, 4] {
+            std::fs::write(dir.path().join(format!("logcat-{millis}.log")), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("user-notes.log"), b"keep me").unwrap();
+
+        prune_stream_sessions(dir.path(), 2);
+
+        assert!(!dir.path().join("logcat-1.log").exists());
+        assert!(!dir.path().join("logcat-2.log").exists());
+        assert!(dir.path().join("logcat-3.log").exists());
+        assert!(dir.path().join("logcat-4.log").exists());
+        assert!(dir.path().join("user-notes.log").exists());
+    }
+
+    #[test]
+    fn reset_stream_session_file_drops_old_mmap_then_truncates() {
+        let state = AppState::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logcat-1.log");
+        std::fs::write(&path, "04-20 12:06:02.125   146   179 D T: one\n").unwrap();
+        let mut session = logcore::session::Session::open(&path).unwrap();
+        session.index_all();
+        session.toggle_bookmark(1).unwrap();
+        *state.lock_session() = Some(session);
+        let before = state.generation.load(Ordering::SeqCst);
+
+        let generation =
+            reset_stream_session_file(&state, &path, logcore::encoding::TextEncoding::Utf8)
+                .unwrap();
+
+        assert_eq!(generation, before + 1);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        assert!(!logcore::bookmarks::sidecar_path_for(&path).exists());
+        let guard = state.lock_session();
+        assert_eq!(guard.as_ref().unwrap().total_lines(), 0);
     }
 }

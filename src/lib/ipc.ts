@@ -14,6 +14,7 @@ import type {
   SearchProgress,
   SearchResult,
   SearchSpec,
+  SplitProgress,
   SplitRequest,
   SplitSummary,
   StartLogcatRequest,
@@ -84,3 +85,6 @@ export const onSearchProgress = (cb: (progress: SearchProgress) => void): Promis
 
 export const onStreamAppend = (cb: (append: StreamAppend) => void): Promise<UnlistenFn> =>
   listen<StreamAppend>("stream:append", (e) => cb(e.payload));
+
+export const onSplitProgress = (cb: (progress: SplitProgress) => void): Promise<UnlistenFn> =>
+  listen<SplitProgress>("split:progress", (e) => cb(e.payload));

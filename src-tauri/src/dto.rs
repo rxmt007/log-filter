@@ -298,6 +298,13 @@ pub struct SplitRequest {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct SplitProgressDto {
+    pub parts: usize,
+    pub bytes_processed: u64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SplitSummaryDto {
     pub parts: Vec<String>,
     pub total_bytes: u64,

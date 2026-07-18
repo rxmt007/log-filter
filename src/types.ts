@@ -183,3 +183,8 @@ export interface SplitSummary {
   parts: string[];
   totalBytes: number;
 }
+
+export interface SplitProgress {
+  parts: number;
+  bytesProcessed: number;
+}

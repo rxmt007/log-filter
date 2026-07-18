@@ -2,16 +2,16 @@ use crate::bookmarks::{BookmarkDirection, BookmarkStore};
 use crate::encoding::{ResolvedTextEncoding, TextEncoding};
 use crate::export::{write_raw_line, ExportSummary};
 use crate::filter::{FilterError, FilterMatcher, FilterSpec};
-use crate::indexer::{line_span, Indexer};
+use crate::indexer::Indexer;
 use crate::mmap_source::MmapSource;
 use crate::model::LogEntry;
-use crate::parser::parse_line;
+use crate::parser::parse_line_ref;
 use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -35,17 +35,25 @@ pub struct ResultTarget {
     pub result_index: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemapStep {
+    /// 源文件收缩(外部截断/轮转)导致派生状态被重建。
+    pub reset: bool,
+    /// 本步之后索引是否已追平文件末尾。
+    pub done: bool,
+}
+
 pub struct Session {
     source_path: PathBuf,
     source: MmapSource,
     indexer: Indexer,
-    filtered: Vec<u64>,
+    filtered: Vec<u32>,
     filter_active: bool,
     filter_spec: FilterSpec,
-    search_matches: Vec<u64>,
+    search_matches: Vec<u32>,
     search_spec: Option<SearchSpec>,
     bookmarks: BookmarkStore,
-    error_lines: Vec<u64>,
+    error_lines: Vec<u32>,
     error_scan_lines: usize,
     encoding: ResolvedTextEncoding,
 }
@@ -94,15 +102,39 @@ impl Session {
         self.indexer.is_done(self.source.len())
     }
 
-    /// 重新映射源文件。用于 adb/logcat 等会增长的会话文件。
-    pub fn remap_source(&mut self) -> io::Result<()> {
-        self.source = MmapSource::open(&self.source_path)?;
-        Ok(())
+    /// 重新映射源文件。文件未增长时跳过(流式 reader 每个读块都会调用,mmap/munmap 不便宜);
+    /// 检测到收缩(外部截断/轮转)时旧索引全部失效,重建派生状态,避免越界访问乃至 SIGBUS。
+    /// 返回 `true` 当且仅当发生了收缩重建(调用方据此从 0 起重扫过滤/查找)。
+    pub fn remap_source(&mut self) -> io::Result<bool> {
+        let disk_len = fs::metadata(&self.source_path)?.len() as usize;
+        if disk_len < self.source.len() {
+            self.source = MmapSource::open(&self.source_path)?;
+            self.reset_derived_state();
+            return Ok(true);
+        }
+        if disk_len > self.source.len() {
+            self.source = MmapSource::open(&self.source_path)?;
+        }
+        Ok(false)
     }
 
-    pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<bool> {
-        self.remap_source()?;
-        Ok(self.index_step(budget))
+    /// 收缩后清空派生状态:新建 Indexer、清 filtered/search/errors、错误扫描游标归零。
+    /// `filter_active` 置 false。**重扫由调用方负责**:流式 reader 在 `RemapStep::reset`
+    /// 为真时从 0 起重扫已索引区间(`filter_spec` 保留供其重建);`open_file` 路径则在索引
+    /// 完成后由 `rerun_scans_after_index_done` 重算。本函数自身不产出任何命中。
+    fn reset_derived_state(&mut self) {
+        self.indexer = Indexer::new();
+        self.filtered.clear();
+        self.filter_active = false;
+        self.search_matches.clear();
+        self.error_lines.clear();
+        self.error_scan_lines = 0;
+    }
+
+    pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<RemapStep> {
+        let reset = self.remap_source()?;
+        let done = self.index_step(budget);
+        Ok(RemapStep { reset, done })
     }
 
     /// 后台按预算步进索引;返回是否已完成。
@@ -199,46 +231,38 @@ impl Session {
         if !self.filter_active {
             return self.source_minimap(buckets);
         }
-
-        let mut bookmarks = BTreeSet::new();
-        let mut errors = BTreeSet::new();
-        for result_idx in 0..total {
-            let Some(source_idx) = self.current_result_source_idx(result_idx) else {
-                continue;
-            };
-            let Some(bucket) = bucket_for_zero_based(result_idx, total, buckets) else {
-                continue;
-            };
-            if self.is_bookmarked(source_idx as u64 + 1) {
-                bookmarks.insert(bucket);
-            }
-            if self.source_idx_is_error(source_idx as u64) {
-                errors.insert(bucket);
-            }
-        }
-        Minimap {
-            bookmarks: bookmarks.into_iter().collect(),
-            errors: errors.into_iter().collect(),
-        }
+        // 反向遍历:书签/错误行是小集合,逐个二分反查在过滤结果中的位置,
+        // 避免 O(过滤结果总数) 的全量扫描(minimap 会被状态事件高频触发)。
+        let bookmarks = self
+            .bookmark_source_lines()
+            .into_iter()
+            // 超过 u32 的书签行不可能在命中数组内(命中数组元素都 ≤ u32::MAX)。
+            .filter_map(|line_no| u32::try_from(line_no - 1).ok())
+            .filter_map(|needle| self.filtered.binary_search(&needle).ok())
+            .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, buckets))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let errors = self
+            .error_lines
+            .iter()
+            .filter_map(|idx| self.filtered.binary_search(idx).ok())
+            .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, buckets))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Minimap { bookmarks, errors }
     }
 
     fn current_result_len(&self) -> usize {
         self.filtered_count()
     }
 
-    fn current_result_source_idx(&self, result_idx: usize) -> Option<usize> {
-        if self.filter_active {
-            self.filtered.get(result_idx).map(|idx| *idx as usize)
-        } else if result_idx < self.indexer.total_lines() {
-            Some(result_idx)
-        } else {
-            None
-        }
-    }
-
     fn current_result_index_for_source_idx(&self, source_idx: u64) -> Option<usize> {
         if self.filter_active {
-            self.filtered.binary_search(&source_idx).ok()
+            // 超过 u32 的 source_idx 不可能在命中数组内(命中数组元素都 ≤ u32::MAX)。
+            let needle = u32::try_from(source_idx).ok()?;
+            self.filtered.binary_search(&needle).ok()
         } else if (source_idx as usize) < self.indexer.total_lines() {
             Some(source_idx as usize)
         } else {
@@ -251,10 +275,6 @@ impl Session {
             return None;
         }
         self.current_result_index_for_source_idx(line_no - 1)
-    }
-
-    fn source_idx_is_error(&self, source_idx: u64) -> bool {
-        self.error_lines.binary_search(&source_idx).is_ok()
     }
 
     fn source_minimap(&self, buckets: usize) -> Minimap {
@@ -328,6 +348,7 @@ impl Session {
             }
         }
 
+        writer.flush()?;
         Ok(summary)
     }
 
@@ -358,6 +379,7 @@ impl Session {
             self.write_source_line((line_no - 1) as usize, frontier, &mut writer, &mut summary)?;
         }
 
+        writer.flush()?;
         Ok(summary)
     }
 
@@ -392,7 +414,7 @@ impl Session {
         matcher: &FilterMatcher,
         start: usize,
         end: usize,
-    ) -> Vec<u64> {
+    ) -> Vec<u32> {
         let frontier = self.indexed_frontier();
         let end = end.min(self.total_lines());
         let mut matches = Vec::new();
@@ -402,16 +424,17 @@ impl Session {
             end,
             frontier,
         )) {
-            let entry = self.parse_source_span(span_start, span_end);
-            let marked = self.is_bookmarked(idx as u64 + 1);
+            let text = self.encoding.decode(&self.source.bytes()[span_start..span_end]);
+            let entry = parse_line_ref(&text);
+            let marked = matcher.requires_mark() && self.is_bookmarked(idx as u64 + 1);
             if matcher.is_match_with_mark(&entry, marked) {
-                matches.push(idx as u64);
+                push_hit(&mut matches, idx);
             }
         }
         matches
     }
 
-    pub fn apply_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u64>) -> usize {
+    pub fn apply_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u32>) -> usize {
         self.filter_spec = spec.clone();
         if !spec.is_active() {
             self.filtered.clear();
@@ -424,7 +447,7 @@ impl Session {
         count
     }
 
-    pub fn append_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u64>) -> usize {
+    pub fn append_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u32>) -> usize {
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
@@ -477,7 +500,7 @@ impl Session {
         matcher: &SearchMatcher,
         start: usize,
         end: usize,
-    ) -> Vec<u64> {
+    ) -> Vec<u32> {
         let frontier = self.indexed_frontier();
         let end = end.min(self.total_lines());
         let mut matches = Vec::new();
@@ -487,37 +510,40 @@ impl Session {
             end,
             frontier,
         )) {
-            let entry = self.parse_source_span(span_start, span_end);
+            let text = self.encoding.decode(&self.source.bytes()[span_start..span_end]);
+            let entry = parse_line_ref(&text);
             if matcher.is_entry_match(&entry) {
-                matches.push(idx as u64);
+                push_hit(&mut matches, idx);
             }
         }
         matches
     }
 
-    pub fn apply_search_results(&mut self, spec: &SearchSpec, matches: Vec<u64>) -> SearchSummary {
+    pub fn apply_search_results(&mut self, spec: &SearchSpec, matches: Vec<u32>) -> SearchSummary {
         self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
         self.search_matches = matches;
         SearchSummary {
             count: self.search_matches.len(),
-            first: self.search_matches.first().map(|idx| idx + 1),
+            first: self.search_matches.first().map(|idx| u64::from(*idx) + 1),
         }
     }
 
-    pub fn append_search_results(&mut self, spec: &SearchSpec, matches: Vec<u64>) -> SearchSummary {
+    pub fn append_search_results(&mut self, spec: &SearchSpec, matches: Vec<u32>) -> SearchSummary {
         self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
         self.search_matches.extend(matches);
         self.search_matches.sort_unstable();
         self.search_matches.dedup();
         SearchSummary {
             count: self.search_matches.len(),
-            first: self.search_matches.first().map(|idx| idx + 1),
+            first: self.search_matches.first().map(|idx| u64::from(*idx) + 1),
         }
     }
 
     pub fn search_next(&self, from_line_no: u64, direction: SearchDirection) -> Option<u64> {
         let zero_based = from_line_no.saturating_sub(1);
-        next_match(&self.search_matches, zero_based, direction).map(|idx| idx + 1)
+        // from 超过 u32::MAX 时饱和到 u32::MAX(排在所有命中之后),环绕导航语义正确。
+        let from = u32::try_from(zero_based).unwrap_or(u32::MAX);
+        next_match(&self.search_matches, from, direction).map(|idx| u64::from(idx) + 1)
     }
 
     /// 取 [start, start+count) 行(按已建索引裁剪),返回 (行号1-indexed, 解析结果)。
@@ -581,17 +607,17 @@ impl Session {
     }
 
     fn parse_source_row(&self, source_idx: usize, frontier: usize) -> Option<(u64, LogEntry)> {
-        let (start, end) = line_span(&self.indexer, self.source.bytes(), source_idx, frontier)?;
+        let (start, end) = self.indexer.line_span(self.source.bytes(), source_idx, frontier)?;
         Some((source_idx as u64 + 1, self.parse_source_span(start, end)))
     }
 
     fn parse_source_span(&self, start: usize, end: usize) -> LogEntry {
         let text = self.encoding.decode(&self.source.bytes()[start..end]);
-        parse_line(&text)
+        LogEntry::from(parse_line_ref(&text))
     }
 
     fn source_line_bytes(&self, source_idx: usize, frontier: usize) -> Option<&[u8]> {
-        let (start, end) = line_span(&self.indexer, self.source.bytes(), source_idx, frontier)?;
+        let (start, end) = self.indexer.line_span(self.source.bytes(), source_idx, frontier)?;
         Some(&self.source.bytes()[start..end])
     }
 
@@ -599,7 +625,7 @@ impl Session {
         &self,
         source_idx: usize,
         frontier: usize,
-        writer: &mut File,
+        writer: &mut impl Write,
         summary: &mut ExportSummary,
     ) -> io::Result<()> {
         if let Some(bytes) = self.source_line_bytes(source_idx, frontier) {
@@ -609,7 +635,7 @@ impl Session {
         Ok(())
     }
 
-    fn create_export_file(&self, output: &Path) -> io::Result<File> {
+    fn create_export_file(&self, output: &Path) -> io::Result<BufWriter<File>> {
         if self.is_source_path(output) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -619,7 +645,7 @@ impl Session {
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent)?;
         }
-        File::create(output)
+        Ok(BufWriter::new(File::create(output)?))
     }
 
     fn is_source_path(&self, output: &Path) -> bool {
@@ -652,13 +678,16 @@ impl Session {
     fn refresh_error_lines(&mut self) {
         let frontier = self.indexed_frontier();
         let total = self.indexer.total_lines();
+        let bytes = self.source.bytes();
         for (idx, (span_start, span_end)) in (self.error_scan_lines..total).zip(
             self.indexer
-                .line_spans(self.source.bytes(), self.error_scan_lines, total, frontier),
+                .line_spans(bytes, self.error_scan_lines, total, frontier),
         ) {
-            let entry = self.parse_source_span(span_start, span_end);
-            if matches!(entry.level.as_str(), "E" | "F") {
-                self.error_lines.push(idx as u64);
+            if matches!(
+                crate::parser::level_byte_of_line(&bytes[span_start..span_end]),
+                Some(b'E') | Some(b'F')
+            ) {
+                push_hit(&mut self.error_lines, idx);
             }
         }
         self.error_scan_lines = total;
@@ -671,6 +700,16 @@ impl Session {
             .into_iter()
             .filter(|line| *line > 0 && *line <= max)
             .collect()
+    }
+}
+
+/// 把 0-based 行号推入命中数组。行号超过 `u32::MAX` 时跳过并在 debug 下断言:
+/// 10GB logcat 实际行数 ~3 亿,距 u32 上限尚有一个数量级,只需注释兜底即可。
+fn push_hit(matches: &mut Vec<u32>, idx: usize) {
+    if let Ok(idx32) = u32::try_from(idx) {
+        matches.push(idx32);
+    } else {
+        debug_assert!(false, "line index exceeds u32 range");
     }
 }
 
@@ -951,6 +990,28 @@ mod tests {
     }
 
     #[test]
+    fn filtered_minimap_marks_only_buckets_containing_hits() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for i in 0..8 {
+            let level = if i == 6 { "E" } else { "I" };
+            writeln!(f, "04-20 12:06:02.{i:03}   300   330 {level} Payment: m{i}").unwrap();
+        }
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.toggle_bookmark(2).unwrap();
+        // 过滤后结果为行 2(书签, result 0)与行 7(错误, result 1)
+        s.set_filter(&FilterSpec {
+            word_include: FilterField::plain(true, "m1|m6"),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let map = s.minimap(4);
+        assert_eq!(map.bookmarks, vec![0]);
+        assert_eq!(map.errors, vec![2]);
+    }
+
+    #[test]
     fn export_range_writes_original_source_lines() {
         let f = temp_filter_log();
         let mut s = Session::open(f.path()).unwrap();
@@ -1065,6 +1126,64 @@ mod tests {
     }
 
     #[test]
+    fn remap_after_truncation_rebuilds_index_without_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shrink.log");
+        std::fs::write(
+            &path,
+            "04-20 12:06:02.125   146   179 D T: one\n04-20 12:06:02.225   146   179 E T: two\n",
+        )
+        .unwrap();
+        let mut s = Session::open(&path).unwrap();
+        s.index_all();
+        assert_eq!(s.total_lines(), 2);
+        assert_eq!(s.error_count(), 1);
+
+        std::fs::write(&path, "04-20 12:06:03.000   146   179 D T: fresh\n").unwrap();
+        let outcome = s.remap_and_index_step(usize::MAX).unwrap();
+        assert!(outcome.reset);
+
+        assert_eq!(s.total_lines(), 1);
+        assert_eq!(s.error_count(), 0);
+        let rows = s.get_rows(0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.message, "fresh");
+    }
+
+    #[test]
+    fn truncation_reset_rescans_filter_from_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stream.log");
+        std::fs::write(
+            &path,
+            "04-20 12:06:02.125   146   179 D One: first\n04-20 12:06:02.225   200   220 I Two: second\n",
+        )
+        .unwrap();
+        let mut s = Session::open(&path).unwrap();
+        s.index_all();
+        let spec = FilterSpec {
+            tag_include: FilterField::plain(true, "Two"),
+            ..Default::default()
+        };
+        assert_eq!(s.set_filter(&spec).unwrap(), 1);
+        let previous_total = s.total_lines();
+
+        // 外部截断 + 重写:新内容里 Two 出现在第 1 行
+        std::fs::write(&path, "04-20 12:06:03.000   200   220 I Two: reborn\n").unwrap();
+        let outcome = s.remap_and_index_step(usize::MAX).unwrap();
+        assert!(outcome.reset);
+
+        // 模拟 stream reader 的重扫决策:reset 后从 0 起扫
+        let scan_start = if outcome.reset { 0 } else { previous_total };
+        let matcher = FilterMatcher::new(&spec).unwrap();
+        let matches = s.filter_indexed_range(&matcher, scan_start, s.total_lines());
+        assert_eq!(s.append_filter_results(&spec, matches), 1);
+        let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.message, "reborn");
+    }
+
+    #[test]
     fn appends_filter_results_for_newly_indexed_range() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "04-20 12:06:02.125   146   179 D One: first").unwrap();
@@ -1080,7 +1199,8 @@ mod tests {
         writeln!(f, "04-20 12:06:02.225   200   220 I Two: second").unwrap();
         f.flush().unwrap();
         let previous_total = s.total_lines();
-        s.remap_and_index_step(usize::MAX).unwrap();
+        let outcome = s.remap_and_index_step(usize::MAX).unwrap();
+        assert!(!outcome.reset);
         let matcher = FilterMatcher::new(&spec).unwrap();
         let matches = s.filter_indexed_range(&matcher, previous_total, s.total_lines());
         assert_eq!(s.append_filter_results(&spec, matches), 1);

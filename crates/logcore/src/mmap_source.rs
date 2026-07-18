@@ -14,7 +14,8 @@ impl MmapSource {
         if len == 0 {
             return Ok(Self { mmap: None });
         }
-        // Safety: 文件在应用生命周期内不被外部截断;只读访问。
+        // Safety: 只读映射。外部截断由 `Session::remap_source`(重新 stat + 重映射 + 重建派生状态)侦测;
+        // 但两次 remap 之间发生的截断仍可能在访问已消失页时触发 SIGBUS——此为已知残留风险。
         let mmap = unsafe { Mmap::map(&file)? };
         Ok(Self { mmap: Some(mmap) })
     }

@@ -216,6 +216,11 @@ impl AppConfig {
         if self.last_filter.highlights.is_empty() {
             self.last_filter.highlights = FilterSpec::default().highlights;
         }
+        // current_command 选取规则(兼容早期仅有 command_buffers 的配置):
+        // 1) current_command 能解析且不是"默认值 + 存在 legacy buffers"的组合 → 用它;
+        //    (默认值 + legacy 并存,说明用户旧配置只设过 buffers,应尊重 buffers)
+        // 2) 否则取第一个 legacy buffer 组装命令;
+        // 3) 都没有 → 默认 main。
         let legacy_buffers = normalized_command_buffers(&self.command_buffers);
         let default_command = default_current_command();
         let selected_spec = LogcatSpec::parse(&self.current_command)
