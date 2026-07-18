@@ -18,44 +18,54 @@ fn is_all_ascii_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// `MM-DD HH:MM:SS.mmm  PID  TID L Tag: message`
-pub fn parse_threadtime(line: &str) -> Option<LogEntry> {
-    let toks: Vec<&str> = line.split_whitespace().collect();
-    if toks.len() < 6 {
-        return None;
-    }
-    let (date, time, pid, tid, level) = (toks[0], toks[1], toks[2], toks[3], toks[4]);
+/// 借用式解析结果:七个字段全为源文本切片,过滤/搜索热路径零堆分配。
+/// owned `LogEntry` 仅在 `get_rows` → IPC 边界处由 `From<ParsedLine>` 生成。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ParsedLine<'a> {
+    pub date: &'a str,
+    pub time: &'a str,
+    pub level: &'a str,
+    pub pid: &'a str,
+    pub tid: &'a str,
+    pub tag: &'a str,
+    pub message: &'a str,
+}
+
+/// `MM-DD HH:MM:SS.mmm  PID  TID L Tag: message`(借用式,禁止 collect)
+pub fn parse_threadtime_ref(line: &str) -> Option<ParsedLine<'_>> {
+    let mut tokens = line.split_whitespace();
+    let date = tokens.next()?;
+    let time = tokens.next()?;
+    let pid = tokens.next()?;
+    let tid = tokens.next()?;
+    let level = tokens.next()?;
     if !is_all_ascii_digits(pid) || !is_all_ascii_digits(tid) {
         return None;
     }
     if level.len() != 1 || !"VDIWEF".contains(level) {
         return None;
     }
-    // tag+message 部分,保留原始间隔:跳过前 5 个 token
     let tail = rest_after_tokens(line, 5)?;
     let (tag, message) = if let Some(colon) = tail.find(':') {
-        (
-            tail[..colon].to_string(),
-            tail[colon + 1..].trim_start().to_string(),
-        )
+        (&tail[..colon], tail[colon + 1..].trim_start())
     } else if let Some(ws) = tail.find(char::is_whitespace) {
-        (tail[..ws].to_string(), tail[ws..].trim_start().to_string())
+        (&tail[..ws], tail[ws..].trim_start())
     } else {
-        (tail.to_string(), String::new())
+        (tail, "")
     };
-    Some(LogEntry {
-        date: date.to_string(),
-        time: time.to_string(),
-        level: level.to_string(),
-        pid: pid.to_string(),
-        tid: tid.to_string(),
+    Some(ParsedLine {
+        date,
+        time,
+        level,
+        pid,
+        tid,
         tag,
         message,
     })
 }
 
-/// `MM-DD HH:MM:SS.mmm L/Tag(  pid): message`
-pub fn parse_time(line: &str) -> Option<LogEntry> {
+/// `MM-DD HH:MM:SS.mmm L/Tag(  pid): message`(借用式)
+pub fn parse_time_ref(line: &str) -> Option<ParsedLine<'_>> {
     let mut it = line.split_whitespace();
     let date = it.next()?;
     let time = it.next()?;
@@ -71,38 +81,52 @@ pub fn parse_time(line: &str) -> Option<LogEntry> {
     if slash_ch != '/' {
         return None;
     }
+    // 级别字符为 ASCII,slash_idx 即其后单字节切片终点。
+    let level = &rest[..slash_idx];
     let after = &rest[slash_idx + 1..]; // 斜杠为 ASCII,+1 是 char 边界
     let open = after.find('(')?;
     let close = after.find(')')?;
     if close < open {
         return None;
     }
-    let tag = after[..open].to_string();
-    let pid = after[open + 1..close].trim().to_string();
-    let message = after[close + 1..]
-        .trim_start_matches(':')
-        .trim_start()
-        .to_string();
-    Some(LogEntry {
-        date: date.to_string(),
-        time: time.to_string(),
-        level: level_ch.to_string(),
+    let tag = &after[..open];
+    let pid = after[open + 1..close].trim();
+    let message = after[close + 1..].trim_start_matches(':').trim_start();
+    Some(ParsedLine {
+        date,
+        time,
+        level,
         pid,
-        tid: String::new(),
+        tid: "",
         tag,
         message,
     })
 }
 
-/// 依次尝试 threadtime → time,失败则整行作为 message。
-pub fn parse_line(line: &str) -> LogEntry {
+/// 依次尝试 threadtime → time,失败则整行作为 message。(借用式)
+pub fn parse_line_ref(line: &str) -> ParsedLine<'_> {
     let line = line.trim_end_matches(['\r', '\n']);
-    parse_threadtime(line)
-        .or_else(|| parse_time(line))
-        .unwrap_or_else(|| LogEntry {
-            message: line.to_string(),
+    parse_threadtime_ref(line)
+        .or_else(|| parse_time_ref(line))
+        .unwrap_or(ParsedLine {
+            message: line,
             ..Default::default()
         })
+}
+
+/// `MM-DD HH:MM:SS.mmm  PID  TID L Tag: message`
+pub fn parse_threadtime(line: &str) -> Option<LogEntry> {
+    parse_threadtime_ref(line).map(Into::into)
+}
+
+/// `MM-DD HH:MM:SS.mmm L/Tag(  pid): message`
+pub fn parse_time(line: &str) -> Option<LogEntry> {
+    parse_time_ref(line).map(Into::into)
+}
+
+/// 依次尝试 threadtime → time,失败则整行作为 message。
+pub fn parse_line(line: &str) -> LogEntry {
+    LogEntry::from(parse_line_ref(line))
 }
 
 /// 零分配地判断一行的日志级别字节(b'V'..b'F'),语义与 parse_line(...).level 一致。
@@ -239,6 +263,30 @@ mod tests {
         assert_eq!(e.message, "01-01 00:00:00.000 中文消息 hello");
         // 级别位处即为多字节字符,也不能 panic。
         let _ = parse_line("01-01 00:00:00.000 中/x(1): y");
+    }
+
+    #[test]
+    fn parse_line_ref_matches_owned_parse_line() {
+        let corpus = [
+            "04-20 12:06:02.125   146   179 D BatteryService: update start",
+            "04-20 12:06:02.125   146   179 E NoColonTag message without delimiter",
+            "04-17 09:01:18.910 D/LightsService(  139): BKL : 106",
+            "--------- beginning of main",
+            "01-01 00:00:00.000 中文消息 hello",
+            "01-01 00:00:00.000 中/x(1): y",
+            "",
+        ];
+        for line in corpus {
+            let owned = parse_line(line);
+            let parsed = parse_line_ref(line);
+            assert_eq!(parsed.date, owned.date, "line: {line:?}");
+            assert_eq!(parsed.time, owned.time, "line: {line:?}");
+            assert_eq!(parsed.level, owned.level, "line: {line:?}");
+            assert_eq!(parsed.pid, owned.pid, "line: {line:?}");
+            assert_eq!(parsed.tid, owned.tid, "line: {line:?}");
+            assert_eq!(parsed.tag, owned.tag, "line: {line:?}");
+            assert_eq!(parsed.message, owned.message, "line: {line:?}");
+        }
     }
 
     #[test]

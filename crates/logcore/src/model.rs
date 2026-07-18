@@ -1,26 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogLevel {
-    Verbose,
-    Debug,
-    Info,
-    Warn,
-    Error,
-    Fatal,
-}
-
-impl LogLevel {
-    pub fn from_char(c: char) -> Option<LogLevel> {
-        match c {
-            'V' => Some(LogLevel::Verbose),
-            'D' => Some(LogLevel::Debug),
-            'I' => Some(LogLevel::Info),
-            'W' => Some(LogLevel::Warn),
-            'E' => Some(LogLevel::Error),
-            'F' => Some(LogLevel::Fatal),
-            _ => None,
-        }
-    }
-}
+use crate::parser::ParsedLine;
 
 /// 一条日志的解析结果。行号由 session 赋值,不在此结构里。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -34,16 +12,38 @@ pub struct LogEntry {
     pub message: String,
 }
 
+impl LogEntry {
+    /// 借用视图:零拷贝地把 owned 字段转成 `ParsedLine`,供匹配器统一走借用式路径。
+    pub fn as_parsed(&self) -> ParsedLine<'_> {
+        ParsedLine {
+            date: &self.date,
+            time: &self.time,
+            level: &self.level,
+            pid: &self.pid,
+            tid: &self.tid,
+            tag: &self.tag,
+            message: &self.message,
+        }
+    }
+}
+
+impl From<ParsedLine<'_>> for LogEntry {
+    fn from(parsed: ParsedLine<'_>) -> Self {
+        LogEntry {
+            date: parsed.date.to_string(),
+            time: parsed.time.to_string(),
+            level: parsed.level.to_string(),
+            pid: parsed.pid.to_string(),
+            tid: parsed.tid.to_string(),
+            tag: parsed.tag.to_string(),
+            message: parsed.message.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn log_level_from_char_maps_known() {
-        assert_eq!(LogLevel::from_char('E'), Some(LogLevel::Error));
-        assert_eq!(LogLevel::from_char('V'), Some(LogLevel::Verbose));
-        assert_eq!(LogLevel::from_char('X'), None);
-    }
 
     #[test]
     fn log_entry_default_is_empty() {
