@@ -262,12 +262,6 @@ fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
                 let mut buf = vec![0_u8; STREAM_READ_BUF];
 
                 loop {
-                    if app_state.generation.load(Ordering::SeqCst) != session_generation
-                        || !app_state.is_current_stream_task(stream_generation)
-                    {
-                        break;
-                    }
-
                     let read = match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(read) => read,
@@ -278,7 +272,13 @@ fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
                     }
 
                     let update = {
-                        let mut guard = app_state.lock_session();
+                        let Some(mut guard) = app_state.lock_session_if_current(session_generation)
+                        else {
+                            break;
+                        };
+                        if !app_state.is_current_stream_task(stream_generation) {
+                            break;
+                        }
                         let Some(session) = guard.as_mut() else {
                             break;
                         };
@@ -708,14 +708,14 @@ fn spawn_filter_task(
         let mut matches = Vec::new();
         let mut start = 0;
         while start < total_lines {
-            if app_state.generation.load(Ordering::SeqCst) != session_generation
-                || !app_state.is_current_filter_task(task_generation)
-            {
-                return;
-            }
             let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
             let chunk = {
-                let guard = app_state.lock_session();
+                let Some(guard) = app_state.lock_session_if_current(session_generation) else {
+                    return;
+                };
+                if !app_state.is_current_filter_task(task_generation) {
+                    return;
+                }
                 match guard.as_ref() {
                     Some(session) => session.filter_indexed_range(&matcher, start, end),
                     None => return,
@@ -726,13 +726,13 @@ fn spawn_filter_task(
             std::thread::yield_now();
         }
 
-        if app_state.generation.load(Ordering::SeqCst) != session_generation
-            || !app_state.is_current_filter_task(task_generation)
-        {
-            return;
-        }
         let filtered_lines = {
-            let mut guard = app_state.lock_session();
+            let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
+                return;
+            };
+            if !app_state.is_current_filter_task(task_generation) {
+                return;
+            }
             match guard.as_mut() {
                 Some(session) => {
                     let mut count = session.apply_filter_results(&spec, matches);
@@ -779,14 +779,14 @@ fn spawn_search_task(
         let mut first_line = None;
         let mut start = 0;
         while start < total_lines {
-            if app_state.generation.load(Ordering::SeqCst) != session_generation
-                || !app_state.is_current_search_task(task_generation)
-            {
-                return;
-            }
             let end = start.saturating_add(SCAN_CHUNK_LINES).min(total_lines);
             let chunk = {
-                let guard = app_state.lock_session();
+                let Some(guard) = app_state.lock_session_if_current(session_generation) else {
+                    return;
+                };
+                if !app_state.is_current_search_task(task_generation) {
+                    return;
+                }
                 match guard.as_ref() {
                     Some(session) => session.search_indexed_range(&matcher, start, end),
                     None => return,
@@ -810,13 +810,13 @@ fn spawn_search_task(
             std::thread::yield_now();
         }
 
-        if app_state.generation.load(Ordering::SeqCst) != session_generation
-            || !app_state.is_current_search_task(task_generation)
-        {
-            return;
-        }
         let summary = {
-            let mut guard = app_state.lock_session();
+            let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
+                return;
+            };
+            if !app_state.is_current_search_task(task_generation) {
+                return;
+            }
             match guard.as_mut() {
                 Some(session) => {
                     let mut summary = session.apply_search_results(&spec, matches);

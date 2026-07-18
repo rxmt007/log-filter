@@ -95,6 +95,21 @@ impl AppState {
     pub fn is_current_stream_task(&self, task_generation: u64) -> bool {
         self.stream_generation.load(Ordering::SeqCst) == task_generation
     }
+
+    /// 持锁校验会话代号。依赖写侧顺序"先递增 generation、后替换 session"
+    /// (open_file / start_logcat / reset_stream_session_file),
+    /// 因此持锁后代号仍匹配 ⇒ guard 里就是该代号对应的会话。
+    pub fn lock_session_if_current(
+        &self,
+        session_generation: u64,
+    ) -> Option<MutexGuard<'_, Option<Session>>> {
+        let guard = self.lock_session();
+        if self.generation.load(Ordering::SeqCst) == session_generation {
+            Some(guard)
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for AppState {
@@ -145,5 +160,16 @@ mod tests {
 
         assert!(!state.is_current_stream_task(first));
         assert!(state.is_current_stream_task(second));
+    }
+
+    #[test]
+    fn lock_session_if_current_rejects_stale_generation() {
+        let state = AppState::new();
+        let first = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        assert!(state.lock_session_if_current(first).is_some());
+
+        let second = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        assert!(state.lock_session_if_current(first).is_none());
+        assert!(state.lock_session_if_current(second).is_some());
     }
 }
