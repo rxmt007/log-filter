@@ -331,14 +331,17 @@ fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
                             break;
                         };
                         let previous_total = session.total_lines();
-                        if session.remap_and_index_step(INDEX_BUDGET).is_err() {
+                        let Ok(outcome) = session.remap_and_index_step(INDEX_BUDGET) else {
                             break;
-                        }
+                        };
                         let total_lines = session.total_lines();
+                        // 外部截断触发重建后,派生命中数组已清空,须从 0 起做一次完整重扫;
+                        // 否则沿用增量的 previous_total(截断后它反而大于新总行数,会漏扫)。
+                        let scan_start = if outcome.reset { 0 } else { previous_total };
                         let _filtered_count =
-                            append_filter_for_range(session, previous_total, total_lines);
+                            append_filter_for_range(session, scan_start, total_lines);
                         let search_progress =
-                            append_search_for_range(session, previous_total, total_lines);
+                            append_search_for_range(session, scan_start, total_lines);
                         let status = status_from(session, session_generation);
                         (status, search_progress)
                     };

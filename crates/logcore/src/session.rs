@@ -35,6 +35,14 @@ pub struct ResultTarget {
     pub result_index: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemapStep {
+    /// 源文件收缩(外部截断/轮转)导致派生状态被重建。
+    pub reset: bool,
+    /// 本步之后索引是否已追平文件末尾。
+    pub done: bool,
+}
+
 pub struct Session {
     source_path: PathBuf,
     source: MmapSource,
@@ -96,22 +104,24 @@ impl Session {
 
     /// 重新映射源文件。文件未增长时跳过(流式 reader 每个读块都会调用,mmap/munmap 不便宜);
     /// 检测到收缩(外部截断/轮转)时旧索引全部失效,重建派生状态,避免越界访问乃至 SIGBUS。
-    pub fn remap_source(&mut self) -> io::Result<()> {
+    /// 返回 `true` 当且仅当发生了收缩重建(调用方据此从 0 起重扫过滤/查找)。
+    pub fn remap_source(&mut self) -> io::Result<bool> {
         let disk_len = fs::metadata(&self.source_path)?.len() as usize;
         if disk_len < self.source.len() {
             self.source = MmapSource::open(&self.source_path)?;
             self.reset_derived_state();
-            return Ok(());
+            return Ok(true);
         }
         if disk_len > self.source.len() {
             self.source = MmapSource::open(&self.source_path)?;
         }
-        Ok(())
+        Ok(false)
     }
 
     /// 收缩后清空派生状态:新建 Indexer、清 filtered/search/errors、错误扫描游标归零。
-    /// `filter_active` 置 false,但 pending 的 `filter_spec` 保留,索引完成后
-    /// `rerun_scans_after_index_done` 会按其重算——与 `open_file` 后的行为一致。
+    /// `filter_active` 置 false。**重扫由调用方负责**:流式 reader 在 `RemapStep::reset`
+    /// 为真时从 0 起重扫已索引区间(`filter_spec` 保留供其重建);`open_file` 路径则在索引
+    /// 完成后由 `rerun_scans_after_index_done` 重算。本函数自身不产出任何命中。
     fn reset_derived_state(&mut self) {
         self.indexer = Indexer::new();
         self.filtered.clear();
@@ -121,9 +131,10 @@ impl Session {
         self.error_scan_lines = 0;
     }
 
-    pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<bool> {
-        self.remap_source()?;
-        Ok(self.index_step(budget))
+    pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<RemapStep> {
+        let reset = self.remap_source()?;
+        let done = self.index_step(budget);
+        Ok(RemapStep { reset, done })
     }
 
     /// 后台按预算步进索引;返回是否已完成。
@@ -1129,13 +1140,47 @@ mod tests {
         assert_eq!(s.error_count(), 1);
 
         std::fs::write(&path, "04-20 12:06:03.000   146   179 D T: fresh\n").unwrap();
-        s.remap_and_index_step(usize::MAX).unwrap();
+        let outcome = s.remap_and_index_step(usize::MAX).unwrap();
+        assert!(outcome.reset);
 
         assert_eq!(s.total_lines(), 1);
         assert_eq!(s.error_count(), 0);
         let rows = s.get_rows(0, 10);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.message, "fresh");
+    }
+
+    #[test]
+    fn truncation_reset_rescans_filter_from_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stream.log");
+        std::fs::write(
+            &path,
+            "04-20 12:06:02.125   146   179 D One: first\n04-20 12:06:02.225   200   220 I Two: second\n",
+        )
+        .unwrap();
+        let mut s = Session::open(&path).unwrap();
+        s.index_all();
+        let spec = FilterSpec {
+            tag_include: FilterField::plain(true, "Two"),
+            ..Default::default()
+        };
+        assert_eq!(s.set_filter(&spec).unwrap(), 1);
+        let previous_total = s.total_lines();
+
+        // 外部截断 + 重写:新内容里 Two 出现在第 1 行
+        std::fs::write(&path, "04-20 12:06:03.000   200   220 I Two: reborn\n").unwrap();
+        let outcome = s.remap_and_index_step(usize::MAX).unwrap();
+        assert!(outcome.reset);
+
+        // 模拟 stream reader 的重扫决策:reset 后从 0 起扫
+        let scan_start = if outcome.reset { 0 } else { previous_total };
+        let matcher = FilterMatcher::new(&spec).unwrap();
+        let matches = s.filter_indexed_range(&matcher, scan_start, s.total_lines());
+        assert_eq!(s.append_filter_results(&spec, matches), 1);
+        let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.message, "reborn");
     }
 
     #[test]
@@ -1154,7 +1199,8 @@ mod tests {
         writeln!(f, "04-20 12:06:02.225   200   220 I Two: second").unwrap();
         f.flush().unwrap();
         let previous_total = s.total_lines();
-        s.remap_and_index_step(usize::MAX).unwrap();
+        let outcome = s.remap_and_index_step(usize::MAX).unwrap();
+        assert!(!outcome.reset);
         let matcher = FilterMatcher::new(&spec).unwrap();
         let matches = s.filter_indexed_range(&matcher, previous_total, s.total_lines());
         assert_eq!(s.append_filter_results(&spec, matches), 1);
