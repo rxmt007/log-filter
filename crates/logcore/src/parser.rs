@@ -105,6 +105,73 @@ pub fn parse_line(line: &str) -> LogEntry {
         })
 }
 
+/// 零分配地判断一行的日志级别字节(b'V'..b'F'),语义与 parse_line(...).level 一致。
+/// 仅供索引期错误行扫描等热路径使用;以 ASCII 空白分词,对 ASCII 兼容编码有效。
+pub fn level_byte_of_line(line: &[u8]) -> Option<u8> {
+    threadtime_level_byte(line).or_else(|| time_level_byte(line))
+}
+
+fn ascii_tokens(line: &[u8]) -> impl Iterator<Item = &[u8]> {
+    line.split(|b| b.is_ascii_whitespace())
+        .filter(|token| !token.is_empty())
+}
+
+fn threadtime_level_byte(line: &[u8]) -> Option<u8> {
+    let mut tokens = ascii_tokens(line);
+    let _date = tokens.next()?;
+    let _time = tokens.next()?;
+    let pid = tokens.next()?;
+    let tid = tokens.next()?;
+    let level = tokens.next()?;
+    let _tail = tokens.next()?; // 与 parse_threadtime 一致:至少 6 个 token
+    if !pid.iter().all(u8::is_ascii_digit) || !tid.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    if level.len() != 1 || !b"VDIWEF".contains(&level[0]) {
+        return None;
+    }
+    Some(level[0])
+}
+
+fn time_level_byte(line: &[u8]) -> Option<u8> {
+    let rest = rest_after_ascii_tokens(line, 2)?;
+    let level = *rest.first()?;
+    if !b"VDIWEF".contains(&level) || rest.get(1) != Some(&b'/') {
+        return None;
+    }
+    let after = &rest[2..];
+    let open = after.iter().position(|b| *b == b'(')?;
+    let close = after.iter().position(|b| *b == b')')?;
+    if close < open {
+        return None;
+    }
+    Some(level)
+}
+
+fn rest_after_ascii_tokens(line: &[u8], n: usize) -> Option<&[u8]> {
+    let mut rest = trim_ascii_start(line);
+    for _ in 0..n {
+        let ws = rest.iter().position(|b| b.is_ascii_whitespace())?;
+        rest = trim_ascii_start(&rest[ws..]);
+    }
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest)
+    }
+}
+
+fn trim_ascii_start(mut bytes: &[u8]) -> &[u8] {
+    while let [first, rest @ ..] = bytes {
+        if first.is_ascii_whitespace() {
+            bytes = rest;
+        } else {
+            break;
+        }
+    }
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +239,35 @@ mod tests {
         assert_eq!(e.message, "01-01 00:00:00.000 中文消息 hello");
         // 级别位处即为多字节字符,也不能 panic。
         let _ = parse_line("01-01 00:00:00.000 中/x(1): y");
+    }
+
+    #[test]
+    fn level_byte_matches_parse_line_level_on_corpus() {
+        let corpus = [
+            "04-20 12:06:02.125   146   179 D BatteryService: update start",
+            "04-20 12:06:02.425   300   330 E Payment: SocketTimeoutException",
+            "04-20 12:06:02.425   300   330 F Zygote: fatal",
+            "04-20 12:06:02.125   146   179 E NoColonTag message without delimiter",
+            "04-17 09:01:18.910 D/LightsService(  139): BKL : 106",
+            "04-17 09:01:18.910 E/Crash(1): boom",
+            "04-17 09:01:18.910 E/NoParen: message",
+            "--------- beginning of main",
+            "04-20 12:06:02.125   abc   179 D T: bad pid",
+            "04-20 12:06:02.125   146   179 X T: bad level",
+            "04-20 12:06:02.125 146 179 E",
+            "01-01 00:00:00.000 中文消息 hello",
+            "01-01 00:00:00.000 中/x(1): y",
+            "",
+            "   ",
+            "04-20 12:06:02.425   300   330 E Payment: with newline\n",
+            "04-17 09:01:18.910 F/Crash(1): crlf\r\n",
+        ];
+        for line in corpus {
+            let expected = parse_line(line).level;
+            let got = level_byte_of_line(line.as_bytes())
+                .map(|b| (b as char).to_string())
+                .unwrap_or_default();
+            assert_eq!(got, expected, "line: {line:?}");
+        }
     }
 }

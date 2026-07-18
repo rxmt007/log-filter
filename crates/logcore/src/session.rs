@@ -652,12 +652,15 @@ impl Session {
     fn refresh_error_lines(&mut self) {
         let frontier = self.indexed_frontier();
         let total = self.indexer.total_lines();
+        let bytes = self.source.bytes();
         for (idx, (span_start, span_end)) in (self.error_scan_lines..total).zip(
             self.indexer
-                .line_spans(self.source.bytes(), self.error_scan_lines, total, frontier),
+                .line_spans(bytes, self.error_scan_lines, total, frontier),
         ) {
-            let entry = self.parse_source_span(span_start, span_end);
-            if matches!(entry.level.as_str(), "E" | "F") {
+            if matches!(
+                crate::parser::level_byte_of_line(&bytes[span_start..span_end]),
+                Some(b'E') | Some(b'F')
+            ) {
                 self.error_lines.push(idx as u64);
             }
         }
