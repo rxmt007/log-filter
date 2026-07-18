@@ -11,7 +11,7 @@ use crate::search::{
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -312,6 +312,7 @@ impl Session {
             }
         }
 
+        writer.flush()?;
         Ok(summary)
     }
 
@@ -342,6 +343,7 @@ impl Session {
             self.write_source_line((line_no - 1) as usize, frontier, &mut writer, &mut summary)?;
         }
 
+        writer.flush()?;
         Ok(summary)
     }
 
@@ -585,7 +587,7 @@ impl Session {
         &self,
         source_idx: usize,
         frontier: usize,
-        writer: &mut File,
+        writer: &mut impl Write,
         summary: &mut ExportSummary,
     ) -> io::Result<()> {
         if let Some(bytes) = self.source_line_bytes(source_idx, frontier) {
@@ -595,7 +597,7 @@ impl Session {
         Ok(())
     }
 
-    fn create_export_file(&self, output: &Path) -> io::Result<File> {
+    fn create_export_file(&self, output: &Path) -> io::Result<BufWriter<File>> {
         if self.is_source_path(output) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -605,7 +607,7 @@ impl Session {
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent)?;
         }
-        File::create(output)
+        Ok(BufWriter::new(File::create(output)?))
     }
 
     fn is_source_path(&self, output: &Path) -> bool {

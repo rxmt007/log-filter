@@ -1,12 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/ui/dropdown";
-import { exportLogs, saveAppConfig, splitLogFile } from "@/lib/ipc";
+import { exportLogs, onSplitProgress, saveAppConfig, splitLogFile } from "@/lib/ipc";
 import { useSession } from "@/store/session";
-import type { AppConfig, RowsView } from "@/types";
+import type { AppConfig, RowsView, SplitProgress } from "@/types";
 
 interface DialogProps {
   onClose: () => void;
@@ -169,7 +169,15 @@ export function SplitDialog({ onClose }: DialogProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [tone, setTone] = useState<"error" | "ok">("ok");
+  const [progress, setProgress] = useState<SplitProgress | null>(null);
   const disabled = busy || !path.trim() || !outDir.trim() || value <= 0;
+
+  useEffect(() => {
+    const un = onSplitProgress(setProgress);
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   const chooseSource = async () => {
     const picked = await open({ multiple: false, directory: false });
@@ -184,6 +192,7 @@ export function SplitDialog({ onClose }: DialogProps) {
   const runSplit = async () => {
     setBusy(true);
     setMessage("");
+    setProgress(null);
     try {
       const result = await splitLogFile({ path, outDir, mode, value });
       setTone("ok");
@@ -247,7 +256,7 @@ export function SplitDialog({ onClose }: DialogProps) {
         </Button>
         <Button className="lf-dialog-primary" disabled={disabled} onClick={runSplit}>
           <Save />
-          {busy ? "切分中" : "切分"}
+          {busy ? (progress ? `切分中 · 已生成 ${progress.parts} 份` : "切分中") : "切分"}
         </Button>
       </div>
     </DialogShell>

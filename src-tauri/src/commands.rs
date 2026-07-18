@@ -1,7 +1,8 @@
 use crate::dto::{
     AppConfigDto, DeviceListDto, ExportRequest, ExportSummaryDto, FilterDoneDto, FilterSpecDto,
     MinimapDto, NavigationTargetDto, Row, SearchProgressDto, SearchResult, SearchSpecDto,
-    SplitRequest, SplitSummaryDto, StartLogcatRequest, Status, StreamAppendDto, StreamControlDto,
+    SplitProgressDto, SplitRequest, SplitSummaryDto, StartLogcatRequest, Status, StreamAppendDto,
+    StreamControlDto,
 };
 use crate::state::AppState;
 use crate::state::{StreamRequestState, StreamTask};
@@ -22,6 +23,7 @@ const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
 const SCAN_CHUNK_LINES: usize = 4096;
 const STREAM_READ_BUF: usize = 64 * 1024;
 const MAX_ROWS: usize = 512;
+const STREAM_SESSION_KEEP: usize = 10; // 流式会话文件最多保留的份数
 
 struct StreamReaderArgs {
     app_state: AppState,
@@ -129,6 +131,30 @@ fn stream_session_path(config: &logcore::config::AppConfig) -> Result<PathBuf, S
         .map_err(|err| err.to_string())?
         .as_millis();
     Ok(base_dir.join(format!("logcat-{millis}.log")))
+}
+
+/// 只识别本应用生成的 `logcat-<millis>.log`,按文件名倒序保留最新 keep 个,
+/// 其余连同书签 sidecar 一起删除;所有 IO 失败静默忽略(清理是尽力而为)。
+fn prune_stream_sessions(dir: &std::path::Path, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut sessions: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("logcat-"))
+                .and_then(|rest| rest.strip_suffix(".log"))
+                .is_some_and(|millis| !millis.is_empty() && millis.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect();
+    sessions.sort();
+    for stale in sessions.iter().rev().skip(keep) {
+        let _ = fs::remove_file(stale);
+        let _ = fs::remove_file(logcore::bookmarks::sidecar_path_for(stale));
+    }
 }
 
 fn stream_status(state: &AppState) -> StreamControlDto {
@@ -430,6 +456,10 @@ pub fn start_logcat(
     let buffers = parse_logcat_request_buffers(&config, &request)?;
     let session_path = stream_session_path(&config)?;
     File::create(&session_path).map_err(|err| err.to_string())?;
+    prune_stream_sessions(
+        session_path.parent().unwrap_or(&session_path),
+        STREAM_SESSION_KEEP,
+    );
     let session =
         logcore::session::Session::open_with_encoding(&session_path, config_encoding(&config))
             .map_err(|err| err.to_string())?;
@@ -919,16 +949,27 @@ pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
     }
 }
 
+// 导出可能处理 10GB+ 文件,必须放到阻塞线程池,避免冻结主线程(命令窗口)。
 #[tauri::command]
-pub fn export_logs(
+pub async fn export_logs(
     request: ExportRequest,
-    state: State<AppState>,
+    state: State<'_, AppState>,
+) -> Result<ExportSummaryDto, String> {
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || export_logs_blocking(&app_state, request))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn export_logs_blocking(
+    app_state: &AppState,
+    request: ExportRequest,
 ) -> Result<ExportSummaryDto, String> {
     if request.path.trim().is_empty() {
         return Err("export path is required".to_string());
     }
     let output = PathBuf::from(&request.path);
-    let mut guard = state.lock_session();
+    let mut guard = app_state.lock_session();
     let Some(session) = guard.as_mut() else {
         return Err("open a log file before exporting".to_string());
     };
@@ -952,8 +993,21 @@ pub fn export_logs(
     Ok(summary.into())
 }
 
+// 切分同样可能处理超大文件,放到阻塞线程池;分片进度经 split:progress 事件回传。
 #[tauri::command]
-pub fn split_log_file(request: SplitRequest) -> Result<SplitSummaryDto, String> {
+pub async fn split_log_file(
+    request: SplitRequest,
+    app: AppHandle,
+) -> Result<SplitSummaryDto, String> {
+    tauri::async_runtime::spawn_blocking(move || split_log_file_blocking(request, &app))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn split_log_file_blocking(
+    request: SplitRequest,
+    app: &AppHandle,
+) -> Result<SplitSummaryDto, String> {
     if request.path.trim().is_empty() {
         return Err("source path is required".to_string());
     }
@@ -965,10 +1019,19 @@ pub fn split_log_file(request: SplitRequest) -> Result<SplitSummaryDto, String> 
         "lines" => logcore::split::SplitMode::Lines(request.value),
         other => return Err(format!("unknown split mode: {other}")),
     };
-    let summary = logcore::split::split_file(
+    let summary = logcore::split::split_file_with_progress(
         &PathBuf::from(request.path),
         &PathBuf::from(request.out_dir),
         mode,
+        &mut |parts, bytes_processed| {
+            let _ = app.emit(
+                "split:progress",
+                SplitProgressDto {
+                    parts,
+                    bytes_processed,
+                },
+            );
+        },
     )
     .map_err(|err| err.to_string())?;
     Ok(summary.into())
@@ -1047,6 +1110,23 @@ mod tests {
             vec![logcore::adb::LogcatBuffer::Main]
         );
         assert!(parse_buffers(&["kernel".to_string()]).is_err());
+    }
+
+    #[test]
+    fn prunes_old_stream_sessions_keeping_newest() {
+        let dir = tempfile::tempdir().unwrap();
+        for millis in [1, 2, 3, 4] {
+            std::fs::write(dir.path().join(format!("logcat-{millis}.log")), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("user-notes.log"), b"keep me").unwrap();
+
+        prune_stream_sessions(dir.path(), 2);
+
+        assert!(!dir.path().join("logcat-1.log").exists());
+        assert!(!dir.path().join("logcat-2.log").exists());
+        assert!(dir.path().join("logcat-3.log").exists());
+        assert!(dir.path().join("logcat-4.log").exists());
+        assert!(dir.path().join("user-notes.log").exists());
     }
 
     #[test]
