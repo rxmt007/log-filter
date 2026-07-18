@@ -199,41 +199,29 @@ impl Session {
         if !self.filter_active {
             return self.source_minimap(buckets);
         }
-
-        let mut bookmarks = BTreeSet::new();
-        let mut errors = BTreeSet::new();
-        for result_idx in 0..total {
-            let Some(source_idx) = self.current_result_source_idx(result_idx) else {
-                continue;
-            };
-            let Some(bucket) = bucket_for_zero_based(result_idx, total, buckets) else {
-                continue;
-            };
-            if self.is_bookmarked(source_idx as u64 + 1) {
-                bookmarks.insert(bucket);
-            }
-            if self.source_idx_is_error(source_idx as u64) {
-                errors.insert(bucket);
-            }
-        }
-        Minimap {
-            bookmarks: bookmarks.into_iter().collect(),
-            errors: errors.into_iter().collect(),
-        }
+        // 反向遍历:书签/错误行是小集合,逐个二分反查在过滤结果中的位置,
+        // 避免 O(过滤结果总数) 的全量扫描(minimap 会被状态事件高频触发)。
+        let bookmarks = self
+            .bookmark_source_lines()
+            .into_iter()
+            .filter_map(|line_no| self.filtered.binary_search(&(line_no - 1)).ok())
+            .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, buckets))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let errors = self
+            .error_lines
+            .iter()
+            .filter_map(|idx| self.filtered.binary_search(idx).ok())
+            .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, buckets))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Minimap { bookmarks, errors }
     }
 
     fn current_result_len(&self) -> usize {
         self.filtered_count()
-    }
-
-    fn current_result_source_idx(&self, result_idx: usize) -> Option<usize> {
-        if self.filter_active {
-            self.filtered.get(result_idx).map(|idx| *idx as usize)
-        } else if result_idx < self.indexer.total_lines() {
-            Some(result_idx)
-        } else {
-            None
-        }
     }
 
     fn current_result_index_for_source_idx(&self, source_idx: u64) -> Option<usize> {
@@ -251,10 +239,6 @@ impl Session {
             return None;
         }
         self.current_result_index_for_source_idx(line_no - 1)
-    }
-
-    fn source_idx_is_error(&self, source_idx: u64) -> bool {
-        self.error_lines.binary_search(&source_idx).is_ok()
     }
 
     fn source_minimap(&self, buckets: usize) -> Minimap {
@@ -953,6 +937,28 @@ mod tests {
         let map = s.minimap(4);
         assert_eq!(map.bookmarks, vec![1]);
         assert_eq!(map.errors, vec![3]);
+    }
+
+    #[test]
+    fn filtered_minimap_marks_only_buckets_containing_hits() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        for i in 0..8 {
+            let level = if i == 6 { "E" } else { "I" };
+            writeln!(f, "04-20 12:06:02.{i:03}   300   330 {level} Payment: m{i}").unwrap();
+        }
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.toggle_bookmark(2).unwrap();
+        // 过滤后结果为行 2(书签, result 0)与行 7(错误, result 1)
+        s.set_filter(&FilterSpec {
+            word_include: FilterField::plain(true, "m1|m6"),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let map = s.minimap(4);
+        assert_eq!(map.bookmarks, vec![0]);
+        assert_eq!(map.errors, vec![2]);
     }
 
     #[test]

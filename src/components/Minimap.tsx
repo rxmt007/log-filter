@@ -36,6 +36,7 @@ export function Minimap() {
   const grabOffsetRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
   const pendingIndexRef = useRef<number | null>(null);
+  const throttleRef = useRef<number | null>(null);
   const resultCount = status.filteredLines;
 
   const scheduleResultIndex = useCallback(
@@ -83,9 +84,13 @@ export function Minimap() {
       setData({ bookmarks: [], errors: [] });
       return;
     }
-    getMinimap(MINIMAP_BUCKETS)
-      .then(setData)
-      .catch(() => setData({ bookmarks: [], errors: [] }));
+    if (throttleRef.current != null) return;
+    throttleRef.current = window.setTimeout(() => {
+      throttleRef.current = null;
+      getMinimap(MINIMAP_BUCKETS)
+        .then(setData)
+        .catch(() => setData({ bookmarks: [], errors: [] }));
+    }, 250);
   }, [
     status.totalBytes,
     status.filteredLines,
@@ -94,6 +99,13 @@ export function Minimap() {
     bookmarkRevision,
     filterResultRevision,
   ]);
+
+  useEffect(
+    () => () => {
+      if (throttleRef.current != null) window.clearTimeout(throttleRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     return () => {
