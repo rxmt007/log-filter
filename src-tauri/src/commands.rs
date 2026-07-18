@@ -195,22 +195,39 @@ fn lock_child(child: &Arc<Mutex<std::process::Child>>) -> MutexGuard<'_, std::pr
     }
 }
 
-fn take_stream_task(
-    state: &AppState,
-    paused: bool,
-    clear_last_request: bool,
-) -> Option<StreamTask> {
+/// 停止当前流式任务的语义模式,决定 `paused` 标记与 `last_request` 的去留。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamStop {
+    /// 挂起:保留 last_request,标记 paused,可 resume。
+    Pause,
+    /// 停止:保留 last_request(供 clear 复用路径),不标记 paused。
+    Stop,
+    /// 遗弃:丢弃 last_request(切换到新会话前)。
+    Forget,
+}
+
+impl StreamStop {
+    fn paused(self) -> bool {
+        matches!(self, Self::Pause)
+    }
+
+    fn clears_last_request(self) -> bool {
+        matches!(self, Self::Forget)
+    }
+}
+
+fn take_stream_task(state: &AppState, mode: StreamStop) -> Option<StreamTask> {
     state.next_stream_generation();
     let mut runtime = state.lock_stream();
-    runtime.paused = paused;
-    if clear_last_request {
+    runtime.paused = mode.paused();
+    if mode.clears_last_request() {
         runtime.last_request = None;
     }
     runtime.task.take()
 }
 
-fn stop_stream_task(state: &AppState, paused: bool, clear_last_request: bool) {
-    let Some(task) = take_stream_task(state, paused, clear_last_request) else {
+fn stop_stream_task(state: &AppState, mode: StreamStop) {
+    let Some(task) = take_stream_task(state, mode) else {
         return;
     };
     {
@@ -390,7 +407,7 @@ fn append_search_for_range(
 
 #[tauri::command]
 pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result<Status, String> {
-    stop_stream_task(state.inner(), false, true);
+    stop_stream_task(state.inner(), StreamStop::Forget);
     let config = load_app_config()?;
     let session = logcore::session::Session::open_with_encoding(
         &PathBuf::from(&path),
@@ -473,7 +490,7 @@ fn start_logcat_blocking(
     state: &AppState,
     app: AppHandle,
 ) -> Result<StreamControlDto, String> {
-    stop_stream_task(state, false, true);
+    stop_stream_task(state, StreamStop::Forget);
     let config = load_app_config()?;
     let adb_path = resolve_adb_from_config(&config)?;
     let buffers = parse_logcat_request_buffers(&config, &request)?;
@@ -510,7 +527,7 @@ fn start_logcat_blocking(
 
 #[tauri::command]
 pub fn pause_logcat(state: State<AppState>) -> StreamControlDto {
-    stop_stream_task(state.inner(), true, false);
+    stop_stream_task(state.inner(), StreamStop::Pause);
     stream_status(state.inner())
 }
 
@@ -534,7 +551,7 @@ fn resume_logcat_blocking(state: &AppState, app: AppHandle) -> Result<StreamCont
             .clone()
             .ok_or_else(|| "no paused logcat session to resume".to_string())?
     };
-    stop_stream_task(state, true, false);
+    stop_stream_task(state, StreamStop::Pause);
     // 续抓时用最后一条日志时间戳做 `logcat -T`,避免 ring buffer 重放造成重复;
     // 尾部无可解析时间戳时 since_timestamp 保持 None,退化为全量重放。
     let mut request = request;
@@ -558,7 +575,7 @@ fn read_session_tail(path: &std::path::Path, max_bytes: u64) -> Option<String> {
 
 #[tauri::command]
 pub fn stop_logcat(state: State<AppState>) -> StreamControlDto {
-    stop_stream_task(state.inner(), false, false);
+    stop_stream_task(state.inner(), StreamStop::Stop);
     stream_status(state.inner())
 }
 
@@ -590,7 +607,7 @@ pub fn clear_logcat(state: State<AppState>) -> Result<StreamControlDto, String> 
             .as_ref()
             .map(|request| request.session_path.clone())
     };
-    stop_stream_task(state.inner(), false, false);
+    stop_stream_task(state.inner(), StreamStop::Stop);
     if let Some(path) = session_path {
         let config = load_app_config()?;
         let session_generation =
