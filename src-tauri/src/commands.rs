@@ -480,6 +480,25 @@ pub fn stop_logcat(state: State<AppState>) -> StreamControlDto {
     stream_status(state.inner())
 }
 
+/// 重建流式会话文件。顺序不可变:必须先 drop 旧 Session(释放 mmap),再截断文件——
+/// Windows 上截断带活动映射的文件报 ERROR_USER_MAPPED_FILE;Unix 上并发读旧 mmap 会 SIGBUS。
+fn reset_stream_session_file(
+    state: &AppState,
+    path: &std::path::Path,
+    encoding: logcore::encoding::TextEncoding,
+) -> Result<u64, String> {
+    *state.lock_session() = None;
+    File::create(path).map_err(|err| err.to_string())?;
+    let _ = fs::remove_file(logcore::bookmarks::sidecar_path_for(path));
+    let session = logcore::session::Session::open_with_encoding(path, encoding)
+        .map_err(|err| err.to_string())?;
+    let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.next_filter_task_generation();
+    state.next_search_task_generation();
+    *state.lock_session() = Some(session);
+    Ok(session_generation)
+}
+
 #[tauri::command]
 pub fn clear_logcat(state: State<AppState>) -> Result<StreamControlDto, String> {
     let session_path = {
@@ -492,14 +511,8 @@ pub fn clear_logcat(state: State<AppState>) -> Result<StreamControlDto, String> 
     stop_stream_task(state.inner(), false, false);
     if let Some(path) = session_path {
         let config = load_app_config()?;
-        File::create(&path).map_err(|err| err.to_string())?;
-        let session =
-            logcore::session::Session::open_with_encoding(&path, config_encoding(&config))
-                .map_err(|err| err.to_string())?;
-        let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        state.next_filter_task_generation();
-        state.next_search_task_generation();
-        *state.lock_session() = Some(session);
+        let session_generation =
+            reset_stream_session_file(state.inner(), &path, config_encoding(&config))?;
         let mut runtime = state.lock_stream();
         if let Some(request) = runtime.last_request.as_mut() {
             request.session_generation = session_generation;
@@ -1034,5 +1047,28 @@ mod tests {
             vec![logcore::adb::LogcatBuffer::Main]
         );
         assert!(parse_buffers(&["kernel".to_string()]).is_err());
+    }
+
+    #[test]
+    fn reset_stream_session_file_drops_old_mmap_then_truncates() {
+        let state = AppState::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logcat-1.log");
+        std::fs::write(&path, "04-20 12:06:02.125   146   179 D T: one\n").unwrap();
+        let mut session = logcore::session::Session::open(&path).unwrap();
+        session.index_all();
+        session.toggle_bookmark(1).unwrap();
+        *state.lock_session() = Some(session);
+        let before = state.generation.load(Ordering::SeqCst);
+
+        let generation =
+            reset_stream_session_file(&state, &path, logcore::encoding::TextEncoding::Utf8)
+                .unwrap();
+
+        assert_eq!(generation, before + 1);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        assert!(!logcore::bookmarks::sidecar_path_for(&path).exists());
+        let guard = state.lock_session();
+        assert_eq!(guard.as_ref().unwrap().total_lines(), 0);
     }
 }
