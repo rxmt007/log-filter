@@ -5,7 +5,7 @@ use crate::filter::{FilterError, FilterMatcher, FilterSpec};
 use crate::indexer::{line_span, Indexer};
 use crate::mmap_source::MmapSource;
 use crate::model::LogEntry;
-use crate::parser::parse_line;
+use crate::parser::parse_line_ref;
 use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
 };
@@ -402,8 +402,9 @@ impl Session {
             end,
             frontier,
         )) {
-            let entry = self.parse_source_span(span_start, span_end);
-            let marked = self.is_bookmarked(idx as u64 + 1);
+            let text = self.encoding.decode(&self.source.bytes()[span_start..span_end]);
+            let entry = parse_line_ref(&text);
+            let marked = matcher.requires_mark() && self.is_bookmarked(idx as u64 + 1);
             if matcher.is_match_with_mark(&entry, marked) {
                 matches.push(idx as u64);
             }
@@ -487,7 +488,8 @@ impl Session {
             end,
             frontier,
         )) {
-            let entry = self.parse_source_span(span_start, span_end);
+            let text = self.encoding.decode(&self.source.bytes()[span_start..span_end]);
+            let entry = parse_line_ref(&text);
             if matcher.is_entry_match(&entry) {
                 matches.push(idx as u64);
             }
@@ -587,7 +589,7 @@ impl Session {
 
     fn parse_source_span(&self, start: usize, end: usize) -> LogEntry {
         let text = self.encoding.decode(&self.source.bytes()[start..end]);
-        parse_line(&text)
+        LogEntry::from(parse_line_ref(&text))
     }
 
     fn source_line_bytes(&self, source_idx: usize, frontier: usize) -> Option<&[u8]> {

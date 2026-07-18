@@ -1,4 +1,5 @@
 use crate::model::LogEntry;
+use crate::parser::ParsedLine;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -253,27 +254,32 @@ impl FilterMatcher {
         })
     }
 
-    pub fn is_match(&self, entry: &LogEntry) -> bool {
+    /// 是否存在 marked-only 过滤:为 false 时 `filter_indexed_range` 可跳过书签查询。
+    pub fn requires_mark(&self) -> bool {
+        self.spec.marked_only
+    }
+
+    pub fn is_match(&self, entry: &ParsedLine<'_>) -> bool {
         self.is_match_with_mark(entry, false)
     }
 
-    pub fn is_match_with_mark(&self, entry: &LogEntry, marked: bool) -> bool {
+    pub fn is_match_with_mark(&self, entry: &ParsedLine<'_>, marked: bool) -> bool {
         if self.spec.marked_only && !marked {
             return false;
         }
-        if !self.spec.levels.is_all() && !self.spec.levels.contains_level(&entry.level) {
+        if !self.spec.levels.is_all() && !self.spec.levels.contains_level(entry.level) {
             return false;
         }
-        if !include_exact(&self.pid, &entry.pid) || !include_exact(&self.tid, &entry.tid) {
+        if !include_exact(&self.pid, entry.pid) || !include_exact(&self.tid, entry.tid) {
             return false;
         }
-        if !include_contains(&self.tag_include, &entry.tag)
-            || exclude_contains(&self.tag_exclude, &entry.tag)
+        if !include_contains(&self.tag_include, entry.tag)
+            || exclude_contains(&self.tag_exclude, entry.tag)
         {
             return false;
         }
-        if !include_contains(&self.word_include, &entry.message)
-            || exclude_contains(&self.word_exclude, &entry.message)
+        if !include_contains(&self.word_include, entry.message)
+            || exclude_contains(&self.word_exclude, entry.message)
         {
             return false;
         }
@@ -286,7 +292,7 @@ pub fn filter_entries(entries: &[LogEntry], spec: &FilterSpec) -> Result<Vec<u64
     Ok(entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, entry)| matcher.is_match(entry).then_some(idx as u64))
+        .filter_map(|(idx, entry)| matcher.is_match(&entry.as_parsed()).then_some(idx as u64))
         .collect())
 }
 
@@ -376,8 +382,8 @@ mod tests {
         .unwrap();
         let entry = entry("I", "100", "101", "Tag", "message");
 
-        assert!(!matcher.is_match_with_mark(&entry, false));
-        assert!(matcher.is_match_with_mark(&entry, true));
+        assert!(!matcher.is_match_with_mark(&entry.as_parsed(), false));
+        assert!(matcher.is_match_with_mark(&entry.as_parsed(), true));
     }
 
     #[test]

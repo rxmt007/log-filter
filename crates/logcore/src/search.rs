@@ -1,4 +1,5 @@
 use crate::model::LogEntry;
+use crate::parser::ParsedLine;
 use regex::{Regex, RegexBuilder};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +118,7 @@ impl SearchMatcher {
         self.0.is_match(text)
     }
 
-    pub fn is_entry_match(&self, entry: &LogEntry) -> bool {
+    pub fn is_entry_match(&self, entry: &ParsedLine<'_>) -> bool {
         entry_matches(entry, &self.0)
     }
 }
@@ -127,7 +128,7 @@ pub fn search_entries(entries: &[LogEntry], spec: &SearchSpec) -> Result<Vec<u64
     Ok(entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, entry)| matcher.is_entry_match(entry).then_some(idx as u64))
+        .filter_map(|(idx, entry)| matcher.is_entry_match(&entry.as_parsed()).then_some(idx as u64))
         .collect())
 }
 
@@ -164,14 +165,14 @@ pub fn next_match(matches: &[u64], from: u64, direction: SearchDirection) -> Opt
     }
 }
 
-fn entry_matches(entry: &LogEntry, compiled: &CompiledSearch) -> bool {
-    compiled.is_match(&entry.date)
-        || compiled.is_match(&entry.time)
-        || compiled.is_match(&entry.level)
-        || compiled.is_match(&entry.pid)
-        || compiled.is_match(&entry.tid)
-        || compiled.is_match(&entry.tag)
-        || compiled.is_match(&entry.message)
+fn entry_matches(entry: &ParsedLine<'_>, compiled: &CompiledSearch) -> bool {
+    compiled.is_match(entry.date)
+        || compiled.is_match(entry.time)
+        || compiled.is_match(entry.level)
+        || compiled.is_match(entry.pid)
+        || compiled.is_match(entry.tid)
+        || compiled.is_match(entry.tag)
+        || compiled.is_match(entry.message)
 }
 
 fn contains_case_insensitive_ascii(text: &str, needle: &str) -> bool {
