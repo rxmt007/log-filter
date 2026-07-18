@@ -11,7 +11,7 @@ use logcore::search::{SearchMatcher, SearchSpec};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -228,9 +228,13 @@ fn spawn_logcat_stream(
     let devices = logcore::adb::list_devices(&request.adb_path).map_err(|err| err.to_string())?;
     let device = logcore::adb::select_online_device(&devices, request.requested_serial.as_deref())?;
     let buffers = parse_buffers(&request.buffers)?;
-    let command =
-        logcore::adb::build_logcat_command(request.adb_path.clone(), &device.serial, &buffers);
-    let mut child = Command::new(&command.adb_path)
+    let command = logcore::adb::build_logcat_command(
+        request.adb_path.clone(),
+        &device.serial,
+        &buffers,
+        request.since_timestamp.as_deref(),
+    );
+    let mut child = logcore::adb::adb_command(&command.adb_path)
         .args(&command.args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -433,8 +437,15 @@ pub fn open_file(path: String, state: State<AppState>, app: AppHandle) -> Result
     Ok(status)
 }
 
+// adb 挂起时 `list_devices` 可能阻塞数秒(引擎侧 5s 超时),放到阻塞线程池避免冻结命令窗口。
 #[tauri::command]
-pub fn list_devices() -> Result<DeviceListDto, String> {
+pub async fn list_devices() -> Result<DeviceListDto, String> {
+    tauri::async_runtime::spawn_blocking(list_devices_blocking)
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn list_devices_blocking() -> Result<DeviceListDto, String> {
     let config = load_app_config()?;
     let adb_path = resolve_adb_from_config(&config)?;
     let devices = logcore::adb::list_devices(&adb_path).map_err(|err| err.to_string())?;
@@ -444,13 +455,25 @@ pub fn list_devices() -> Result<DeviceListDto, String> {
     })
 }
 
+// 启动流会 join 上一个 reader 线程(stop_stream_task)且要拉起 adb 子进程,放到阻塞线程池。
 #[tauri::command]
-pub fn start_logcat(
+pub async fn start_logcat(
     request: StartLogcatRequest,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<StreamControlDto, String> {
-    stop_stream_task(state.inner(), false, true);
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || start_logcat_blocking(request, &app_state, app))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn start_logcat_blocking(
+    request: StartLogcatRequest,
+    state: &AppState,
+    app: AppHandle,
+) -> Result<StreamControlDto, String> {
+    stop_stream_task(state, false, true);
     let config = load_app_config()?;
     let adb_path = resolve_adb_from_config(&config)?;
     let buffers = parse_logcat_request_buffers(&config, &request)?;
@@ -479,9 +502,10 @@ pub fn start_logcat(
             .collect(),
         session_path,
         session_generation,
+        since_timestamp: None,
     };
-    spawn_logcat_stream(state.inner().clone(), app, request_state)?;
-    Ok(stream_status(state.inner()))
+    spawn_logcat_stream(state.clone(), app, request_state)?;
+    Ok(stream_status(state))
 }
 
 #[tauri::command]
@@ -490,8 +514,19 @@ pub fn pause_logcat(state: State<AppState>) -> StreamControlDto {
     stream_status(state.inner())
 }
 
+// 恢复流会 join 上一个 reader 线程并重新拉起 adb,放到阻塞线程池。
 #[tauri::command]
-pub fn resume_logcat(state: State<AppState>, app: AppHandle) -> Result<StreamControlDto, String> {
+pub async fn resume_logcat(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<StreamControlDto, String> {
+    let app_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || resume_logcat_blocking(&app_state, app))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+fn resume_logcat_blocking(state: &AppState, app: AppHandle) -> Result<StreamControlDto, String> {
     let request = {
         let runtime = state.lock_stream();
         runtime
@@ -499,9 +534,26 @@ pub fn resume_logcat(state: State<AppState>, app: AppHandle) -> Result<StreamCon
             .clone()
             .ok_or_else(|| "no paused logcat session to resume".to_string())?
     };
-    stop_stream_task(state.inner(), true, false);
-    spawn_logcat_stream(state.inner().clone(), app, request)?;
-    Ok(stream_status(state.inner()))
+    stop_stream_task(state, true, false);
+    // 续抓时用最后一条日志时间戳做 `logcat -T`,避免 ring buffer 重放造成重复;
+    // 尾部无可解析时间戳时 since_timestamp 保持 None,退化为全量重放。
+    let mut request = request;
+    request.since_timestamp = read_session_tail(&request.session_path, 64 * 1024)
+        .as_deref()
+        .and_then(logcore::adb::last_log_timestamp);
+    spawn_logcat_stream(state.clone(), app, request)?;
+    Ok(stream_status(state))
+}
+
+/// 读会话文件末尾至多 max_bytes 的内容(lossy 解码),供 resume 提取最后时间戳。
+fn read_session_tail(path: &std::path::Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(max_bytes))).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 #[tauri::command]

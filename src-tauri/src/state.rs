@@ -38,6 +38,7 @@ pub struct StreamRequestState {
     pub buffers: Vec<String>,
     pub session_path: PathBuf,
     pub session_generation: u64,
+    pub since_timestamp: Option<String>,
 }
 
 impl AppState {

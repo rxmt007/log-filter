@@ -189,13 +189,18 @@ export function Toolbar() {
     }
   }, [openPath]);
 
+  const refreshInflightRef = useRef(false);
   const refreshDevices = useCallback(async () => {
+    if (refreshInflightRef.current) return;
+    refreshInflightRef.current = true;
     try {
       const result = await listDevices();
       setDevices(result.devices);
     } catch (err) {
       console.error("list_devices failed", err);
       setDevices([]);
+    } finally {
+      refreshInflightRef.current = false;
     }
   }, [setDevices]);
 
