@@ -1243,6 +1243,10 @@ mod tests {
         assert_eq!(rows[0].1.tag, "Two");
     }
 
+    // 下面两个测试模拟"外部进程截断会话文件":Windows 上带活动映射的文件无法被
+    // 外部截断(OS 报 1224 user-mapped section open),该场景仅存在于 Unix,
+    // 收缩重建路径在 Windows 上由操作系统天然免疫,故测试只在 Unix 编译。
+    #[cfg(unix)]
     #[test]
     fn remap_after_truncation_rebuilds_index_without_panic() {
         let dir = tempfile::tempdir().unwrap();
@@ -1268,6 +1272,7 @@ mod tests {
         assert_eq!(rows[0].1.message, "fresh");
     }
 
+    #[cfg(unix)]
     #[test]
     fn truncation_reset_rescans_filter_from_zero() {
         let dir = tempfile::tempdir().unwrap();
