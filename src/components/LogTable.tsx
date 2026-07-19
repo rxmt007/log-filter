@@ -711,13 +711,13 @@ export function LogTable() {
       </div>
       {sourceMode === "adb" && streamRunning && !tailFollowing && total > 0 && (
         <button
+          aria-label="Follow latest"
           className="lf-follow-tail"
           type="button"
-          title="回到底部并继续追踪最新日志"
+          title="Follow latest"
           onClick={resumeTailFollow}
         >
           <ChevronsDown />
-          追最新
         </button>
       )}
       {bookmarkMenu && (

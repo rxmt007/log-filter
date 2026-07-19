@@ -1436,7 +1436,7 @@
   font-size: 12px;
 }
 
-/* 抓取中且尾随被打断时,悬浮在表格右下角的"追最新"按钮 */
+/* 抓取中且尾随被打断时,悬浮在表格右下角的"追最新"图标按钮 */
 .lf-follow-tail {
   position: absolute;
   right: 22px;
@@ -1444,14 +1444,12 @@
   z-index: 6;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 13px;
+  justify-content: center;
+  padding: 8px;
   border: 1px solid var(--lf-accent-strong);
   border-radius: 999px;
   background: var(--lf-accent);
   color: #fff;
-  font-size: 12px;
-  line-height: 1;
   cursor: pointer;
   box-shadow: 0 3px 12px rgba(15, 23, 42, 0.28);
 }
@@ -1461,8 +1459,8 @@
 }
 
 .lf-follow-tail svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .lf-table-row {
