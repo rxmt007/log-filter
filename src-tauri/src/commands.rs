@@ -1482,6 +1482,52 @@ mod tests {
     }
 
     #[test]
+    fn chunked_export_all_view_crosses_write_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.log");
+        let mut content = String::new();
+        for i in 0..9000 {
+            content.push_str(&format!(
+                "04-20 12:06:02.{:03}   200   220 I Net: msg {i}\n",
+                i % 1000
+            ));
+        }
+        std::fs::write(&src, &content).unwrap();
+
+        let expected_path = dir.path().join("expected.log");
+        {
+            let mut oracle = logcore::session::Session::open(&src).unwrap();
+            oracle.index_all();
+            oracle
+                .export_view(logcore::session::RowsView::All, &expected_path)
+                .unwrap();
+        }
+
+        let (state, generation) = export_state_with_session(&src);
+        let out_path = dir.path().join("chunked.log");
+        let request = ExportRequest {
+            mode: "view".to_string(),
+            view: Some("all".to_string()),
+            start_line: None,
+            end_line: None,
+            path: out_path.to_string_lossy().to_string(),
+        };
+        let mut progress_calls = Vec::new();
+        let summary = run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
+            progress_calls.push((lines, bytes, done));
+        })
+        .unwrap();
+
+        // 9000 行 / 4096 每批 = 3 个写批次;输出必须与 oracle 完全一致
+        assert_eq!(
+            std::fs::read(&out_path).unwrap(),
+            std::fs::read(&expected_path).unwrap()
+        );
+        assert_eq!(summary.written_lines, 9000);
+        assert_eq!(progress_calls.last().map(|c| c.2), Some(true));
+    }
+
+    #[test]
     fn chunked_export_range_matches_export_range_output_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src.log");

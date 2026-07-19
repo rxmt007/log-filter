@@ -278,15 +278,6 @@ pub struct ExportSummaryDto {
     pub written_bytes: u64,
 }
 
-impl From<logcore::export::ExportSummary> for ExportSummaryDto {
-    fn from(value: logcore::export::ExportSummary) -> Self {
-        Self {
-            written_lines: value.written_lines,
-            written_bytes: value.written_bytes,
-        }
-    }
-}
-
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportProgressDto {
