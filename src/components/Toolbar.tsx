@@ -516,6 +516,7 @@ export function Toolbar() {
                 : []),
             ]}
             menuLabel="打开文件"
+            triggerTooltip="打开文件"
             onSelect={(value) => {
               if (value === "open") {
                 void onOpen();

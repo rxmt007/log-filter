@@ -1436,6 +1436,35 @@
   font-size: 12px;
 }
 
+/* 抓取中且尾随被打断时,悬浮在表格右下角的"追最新"按钮 */
+.lf-follow-tail {
+  position: absolute;
+  right: 22px;
+  bottom: 14px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  border: 1px solid var(--lf-accent-strong);
+  border-radius: 999px;
+  background: var(--lf-accent);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.28);
+}
+
+.lf-follow-tail:hover {
+  background: var(--lf-accent-strong);
+}
+
+.lf-follow-tail svg {
+  width: 14px;
+  height: 14px;
+}
+
 .lf-table-row {
   position: absolute;
   top: 0;

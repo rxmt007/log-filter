@@ -26,6 +26,7 @@ interface DropdownMenuProps<T extends string> {
   menuLabel: string;
   onSelect: (value: T) => void;
   trigger: (args: { open: boolean; buttonId: string; menuId: string }) => ReactNode;
+  triggerTooltip?: string;
 }
 
 export function DropdownMenu<T extends string>({
@@ -36,6 +37,7 @@ export function DropdownMenu<T extends string>({
   menuLabel,
   onSelect,
   trigger,
+  triggerTooltip,
 }: DropdownMenuProps<T>) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -81,6 +83,7 @@ export function DropdownMenu<T extends string>({
         aria-controls={menuId}
         aria-expanded={open}
         aria-haspopup="menu"
+        data-tooltip={triggerTooltip}
         disabled={disabled}
         id={buttonId}
         type="button"

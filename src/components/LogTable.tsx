@@ -6,7 +6,7 @@ import type {
   WheelEvent as ReactWheelEvent,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bookmark, Columns3 } from "lucide-react";
+import { Bookmark, ChevronsDown, Columns3 } from "lucide-react";
 import { splitHighlightTokens } from "@/lib/highlight";
 import { getRows, listBookmarks, saveAppConfig, toggleBookmark } from "@/lib/ipc";
 import { RowBlockCache } from "@/lib/rowCache";
@@ -150,6 +150,10 @@ export function LogTable() {
   const setViewportResultIndex = useSession((s) => s.setViewportResultIndex);
   const setTailFollowingFromViewport = useSession((s) => s.setTailFollowingFromViewport);
   const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
+  const streamRunning = useSession((s) => s.streamRunning);
+  const tailFollowing = useSession((s) => s.tailFollowing);
+  const setTailFollowing = useSession((s) => s.setTailFollowing);
+  const requestTailFollow = useSession((s) => s.requestTailFollow);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
@@ -511,6 +515,13 @@ export function LogTable() {
     return "当前结果没有命中行";
   }, [status.totalBytes]);
 
+  const resumeTailFollow = useCallback(() => {
+    const count = useSession.getState().status.filteredLines;
+    if (count <= 0) return;
+    setTailFollowing(true);
+    requestTailFollow(count - 1);
+  }, [requestTailFollow, setTailFollowing]);
+
   const toggleRowBookmark = useCallback(
     async (row: Row) => {
       const marked = await toggleBookmark(row.lineNo);
@@ -698,6 +709,17 @@ export function LogTable() {
           </div>
         )}
       </div>
+      {sourceMode === "adb" && streamRunning && !tailFollowing && total > 0 && (
+        <button
+          className="lf-follow-tail"
+          type="button"
+          title="回到底部并继续追踪最新日志"
+          onClick={resumeTailFollow}
+        >
+          <ChevronsDown />
+          追最新
+        </button>
+      )}
       {bookmarkMenu && (
         <div
           className="lf-table-context-menu"
