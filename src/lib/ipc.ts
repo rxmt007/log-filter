@@ -68,6 +68,8 @@ export const getMinimap = (buckets: number) => invoke<MinimapData>("get_minimap"
 export const exportLogs = (request: ExportRequest) =>
   invoke<ExportSummary>("export_logs", { request });
 
+export const cancelExport = () => invoke<void>("cancel_export");
+
 export const splitLogFile = (request: SplitRequest) =>
   invoke<SplitSummary>("split_log_file", { request });
 

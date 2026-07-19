@@ -28,6 +28,7 @@ pub fn run() {
             commands::line_to_result_index,
             commands::get_minimap,
             commands::export_logs,
+            commands::cancel_export,
             commands::split_log_file,
             commands::get_config,
             commands::set_config

@@ -13,6 +13,7 @@ pub struct AppState {
     pub generation: Arc<AtomicU64>,
     pub filter_task_generation: Arc<AtomicU64>,
     pub search_task_generation: Arc<AtomicU64>,
+    pub export_task_generation: Arc<AtomicU64>,
     pub stream_generation: Arc<AtomicU64>,
     pub stream: Arc<Mutex<StreamRuntime>>,
 }
@@ -48,6 +49,7 @@ impl AppState {
             generation: Arc::new(AtomicU64::new(0)),
             filter_task_generation: Arc::new(AtomicU64::new(0)),
             search_task_generation: Arc::new(AtomicU64::new(0)),
+            export_task_generation: Arc::new(AtomicU64::new(0)),
             stream_generation: Arc::new(AtomicU64::new(0)),
             stream: Arc::new(Mutex::new(StreamRuntime::default())),
         }
@@ -80,6 +82,14 @@ impl AppState {
 
     pub fn is_current_search_task(&self, task_generation: u64) -> bool {
         self.search_task_generation.load(Ordering::SeqCst) == task_generation
+    }
+
+    pub fn next_export_generation(&self) -> u64 {
+        self.export_task_generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn is_current_export(&self, generation: u64) -> bool {
+        self.export_task_generation.load(Ordering::SeqCst) == generation
     }
 
     pub fn lock_stream(&self) -> MutexGuard<'_, StreamRuntime> {
@@ -150,6 +160,16 @@ mod tests {
         let second_search = state.next_search_task_generation();
         assert!(!state.is_current_search_task(first_search));
         assert!(state.is_current_search_task(second_search));
+    }
+
+    #[test]
+    fn export_generations_cancel_stale_export_work() {
+        let state = AppState::new();
+
+        let first_export = state.next_export_generation();
+        let second_export = state.next_export_generation();
+        assert!(!state.is_current_export(first_export));
+        assert!(state.is_current_export(second_export));
     }
 
     #[test]

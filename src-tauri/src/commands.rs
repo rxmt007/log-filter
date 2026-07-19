@@ -1054,18 +1054,30 @@ pub async fn export_logs(
     app: AppHandle,
 ) -> Result<ExportSummaryDto, String> {
     let app_state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || export_logs_blocking(&app_state, request, app))
-        .await
-        .map_err(|err| err.to_string())?
+    // 起始即领取新导出代号:这也会取消任何仍在跑的旧导出(cancel_export 同此机制)。
+    let export_generation = app_state.next_export_generation();
+    tauri::async_runtime::spawn_blocking(move || {
+        export_logs_blocking(&app_state, export_generation, request, app)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// 用户主动取消导出:递增导出代号,让在跑的 run_chunked_export 在下一批检测到并中止。
+#[tauri::command]
+pub fn cancel_export(state: State<AppState>) {
+    state.next_export_generation();
 }
 
 fn export_logs_blocking(
     app_state: &AppState,
+    export_generation: u64,
     request: ExportRequest,
     app: AppHandle,
 ) -> Result<ExportSummaryDto, String> {
     // 导出全程用同一 generation 快照;发现代号失效即中止(见 run_chunked_export)。
     let session_generation = app_state.generation.load(Ordering::SeqCst);
+    let output_path = request.path.clone();
     let mut on_progress = |written_lines: usize, written_bytes: u64, done: bool| {
         let _ = app.emit(
             "export:progress",
@@ -1073,10 +1085,33 @@ fn export_logs_blocking(
                 written_lines,
                 written_bytes,
                 done,
+                // 仅最终成功事件携带输出路径,供前端 toast「打开所在目录」。
+                path: done.then(|| output_path.clone()),
+                cancelled: false,
             },
         );
     };
-    run_chunked_export(app_state, session_generation, &request, &mut on_progress)
+    let summary = run_chunked_export(
+        app_state,
+        session_generation,
+        export_generation,
+        &request,
+        &mut on_progress,
+    )?;
+    // 取消不由 on_progress 上报(它不知道 cancelled),这里补发一个终态事件。
+    if summary.cancelled {
+        let _ = app.emit(
+            "export:progress",
+            ExportProgressDto {
+                written_lines: summary.written_lines,
+                written_bytes: summary.written_bytes,
+                done: true,
+                path: None,
+                cancelled: true,
+            },
+        );
+    }
+    Ok(summary)
 }
 
 /// 分段导出编排。进度回调 on_progress(written_lines, written_bytes, done) 在锁外调用;
@@ -1084,6 +1119,7 @@ fn export_logs_blocking(
 fn run_chunked_export(
     app_state: &AppState,
     session_generation: u64,
+    export_generation: u64,
     request: &ExportRequest,
     on_progress: &mut dyn FnMut(usize, u64, bool),
 ) -> Result<ExportSummaryDto, String> {
@@ -1124,6 +1160,10 @@ fn run_chunked_export(
 
     // Phase A:分块驱动索引补完;每轮锁外让出,避免饿死 get_rows/get_status。
     loop {
+        // Phase A 的输出文件尚未创建,取消时无半成品可删。
+        if !app_state.is_current_export(export_generation) {
+            return Ok(cancelled_summary(0, 0));
+        }
         let done = {
             let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
                 return Err("session changed during export".to_string());
@@ -1177,10 +1217,14 @@ fn run_chunked_export(
                 let Some(indices) = run_chunked_scan(
                     app_state,
                     session_generation,
-                    || true,
+                    || app_state.is_current_export(export_generation),
                     |session, start, end| session.filter_indexed_range(&matcher, start, end),
                     |_, _| {},
                 ) else {
+                    // None 可能是会话换掉或用户取消:代号已失效 ⇒ 取消(输出文件尚未创建)。
+                    if !app_state.is_current_export(export_generation) {
+                        return Ok(cancelled_summary(0, 0));
+                    }
                     return Err("session changed during export".to_string());
                 };
                 ExportSource::Indices(indices)
@@ -1203,7 +1247,14 @@ fn run_chunked_export(
 
     let total_len = plan.len();
     let mut cursor = 0usize;
+    let mut first_batch = true;
     while cursor < total_len {
+        // 每批开工前校验导出代号:失效即取消 —— 丢弃 writer、删半成品文件、返回 cancelled。
+        if !app_state.is_current_export(export_generation) {
+            drop(writer);
+            let _ = fs::remove_file(&output);
+            return Ok(cancelled_summary(written_lines, written_bytes));
+        }
         let batch_end = cursor.saturating_add(EXPORT_CHUNK_LINES).min(total_len);
         buf.clear();
         let batch_lines;
@@ -1228,7 +1279,9 @@ fn run_chunked_export(
         }
         writer.write_all(&buf).map_err(|err| err.to_string())?;
         written_lines += batch_lines;
-        if written_lines - last_emitted >= EXPORT_PROGRESS_STRIDE {
+        // 首批总是上报一次(即时反馈,也让取消得以在下一批生效),之后按 stride 节流。
+        if first_batch || written_lines - last_emitted >= EXPORT_PROGRESS_STRIDE {
+            first_batch = false;
             last_emitted = written_lines;
             on_progress(written_lines, written_bytes, false);
         }
@@ -1241,7 +1294,17 @@ fn run_chunked_export(
     Ok(ExportSummaryDto {
         written_lines,
         written_bytes,
+        cancelled: false,
     })
+}
+
+/// 取消导出的终态 summary(cancelled=true)。半成品文件已由调用点删除。
+fn cancelled_summary(written_lines: usize, written_bytes: u64) -> ExportSummaryDto {
+    ExportSummaryDto {
+        written_lines,
+        written_bytes,
+        cancelled: true,
+    }
 }
 
 /// 导出对象:统一成"按 view_idx 取 0-based 源行号"的迭代抽象。
@@ -1474,16 +1537,23 @@ mod tests {
             end_line: None,
             path: out_path.to_string_lossy().to_string(),
         };
+        let export_generation = state.next_export_generation();
         let mut progress_calls = Vec::new();
-        let summary =
-            run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
+        let summary = run_chunked_export(
+            &state,
+            generation,
+            export_generation,
+            &request,
+            &mut |lines, bytes, done| {
                 progress_calls.push((lines, bytes, done));
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
 
         let expected = std::fs::read(&expected_path).unwrap();
         let actual = std::fs::read(&out_path).unwrap();
         assert_eq!(actual, expected);
+        assert!(!summary.cancelled);
         assert_eq!(summary.written_bytes as usize, actual.len());
         assert_eq!(progress_calls.last().map(|c| c.2), Some(true)); // 最终 done 事件
     }
@@ -1519,18 +1589,25 @@ mod tests {
             end_line: None,
             path: out_path.to_string_lossy().to_string(),
         };
+        let export_generation = state.next_export_generation();
         let mut progress_calls = Vec::new();
-        let summary =
-            run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
+        let summary = run_chunked_export(
+            &state,
+            generation,
+            export_generation,
+            &request,
+            &mut |lines, bytes, done| {
                 progress_calls.push((lines, bytes, done));
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
 
         // 9000 行 / 4096 每批 = 3 个写批次;输出必须与 oracle 完全一致
         assert_eq!(
             std::fs::read(&out_path).unwrap(),
             std::fs::read(&expected_path).unwrap()
         );
+        assert!(!summary.cancelled);
         assert_eq!(summary.written_lines, 9000);
         assert_eq!(progress_calls.last().map(|c| c.2), Some(true));
     }
@@ -1559,11 +1636,20 @@ mod tests {
             end_line: Some(3),
             path: out_path.to_string_lossy().to_string(),
         };
-        let summary = run_chunked_export(&state, generation, &request, &mut |_, _, _| {}).unwrap();
+        let export_generation = state.next_export_generation();
+        let summary = run_chunked_export(
+            &state,
+            generation,
+            export_generation,
+            &request,
+            &mut |_, _, _| {},
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read(&out_path).unwrap(),
             std::fs::read(&expected_path).unwrap()
         );
+        assert!(!summary.cancelled);
         assert_eq!(summary.written_lines, 2);
     }
 
@@ -1581,8 +1667,63 @@ mod tests {
             end_line: None,
             path: dir.path().join("out.log").to_string_lossy().to_string(),
         };
-        let err = run_chunked_export(&state, generation, &request, &mut |_, _, _| {}).unwrap_err();
+        let export_generation = state.next_export_generation();
+        let err = run_chunked_export(
+            &state,
+            generation,
+            export_generation,
+            &request,
+            &mut |_, _, _| {},
+        )
+        .unwrap_err();
         assert!(err.contains("session changed"), "{err}");
+    }
+
+    #[test]
+    fn cancelled_export_deletes_partial_output_and_reports_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.log");
+        let mut content = String::new();
+        for i in 0..9000 {
+            content.push_str(&format!(
+                "04-20 12:06:02.{:03}   200   220 I Net: msg {i}\n",
+                i % 1000
+            ));
+        }
+        std::fs::write(&src, &content).unwrap();
+
+        let (state, generation) = export_state_with_session(&src);
+        let export_generation = state.next_export_generation();
+        let out_path = dir.path().join("chunked.log");
+        let request = ExportRequest {
+            mode: "view".to_string(),
+            view: Some("all".to_string()),
+            start_line: None,
+            end_line: None,
+            path: out_path.to_string_lossy().to_string(),
+        };
+
+        // 首次进度回调即模拟用户取消(递增导出代号),后续批次应检测到并中止。
+        let mut fired = false;
+        let summary = run_chunked_export(
+            &state,
+            generation,
+            export_generation,
+            &request,
+            &mut |_, _, _| {
+                if !fired {
+                    fired = true;
+                    state.next_export_generation();
+                }
+            },
+        )
+        .unwrap();
+
+        assert!(summary.cancelled, "expected cancelled summary");
+        assert!(
+            !out_path.exists(),
+            "cancelled export must delete the partial output file"
+        );
     }
 
     #[test]

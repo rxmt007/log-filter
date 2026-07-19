@@ -283,6 +283,7 @@ pub struct ExportRequest {
 pub struct ExportSummaryDto {
     pub written_lines: usize,
     pub written_bytes: u64,
+    pub cancelled: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -291,6 +292,10 @@ pub struct ExportProgressDto {
     pub written_lines: usize,
     pub written_bytes: u64,
     pub done: bool,
+    /// 输出文件路径:仅最终成功事件(done=true 且未取消)携带,进度中为 None。
+    pub path: Option<String>,
+    /// 取消标记:仅最终取消事件携带 true,进度中为 false。
+    pub cancelled: bool,
 }
 
 #[derive(Deserialize, Clone)]

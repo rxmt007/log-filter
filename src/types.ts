@@ -170,12 +170,15 @@ export interface ExportRequest {
 export interface ExportSummary {
   writtenLines: number;
   writtenBytes: number;
+  cancelled: boolean;
 }
 
 export interface ExportProgress {
   writtenLines: number;
   writtenBytes: number;
   done: boolean;
+  path: string | null;
+  cancelled: boolean;
 }
 
 export interface SplitRequest {
