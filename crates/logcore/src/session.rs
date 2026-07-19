@@ -29,6 +29,14 @@ pub struct Minimap {
     pub errors: Vec<usize>,
 }
 
+/// 导出计划:一次持锁产出的**快照**。AllLines 用行号区间(不物化);
+/// Indices 是 0-based 源行号数组(Filtered 克隆命中数组;Bookmarks/Errors 转换/克隆小数组)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExportPlan {
+    AllLines { total: usize },
+    Indices(Vec<u32>),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResultTarget {
     pub line_no: u64,
@@ -383,6 +391,62 @@ impl Session {
         Ok(summary)
     }
 
+    /// 对指定视图产出导出快照。Filtered 且过滤未激活时按 All 处理(与 export_view 一致)。
+    /// 注意:Filtered 激活时返回**当前** filtered 的克隆;调用方若需要"完整重算"语义,
+    /// 应先用 FilterMatcher 分块重算出局部数组,不使用本方法的 Filtered 分支。
+    pub fn export_plan_snapshot(&self, view: RowsView) -> ExportPlan {
+        match view {
+            RowsView::All => ExportPlan::AllLines {
+                total: self.total_lines(),
+            },
+            RowsView::Filtered => {
+                if self.filter_active {
+                    ExportPlan::Indices(self.filtered.clone())
+                } else {
+                    ExportPlan::AllLines {
+                        total: self.total_lines(),
+                    }
+                }
+            }
+            RowsView::Bookmarks => ExportPlan::Indices(
+                self.bookmark_source_lines()
+                    .into_iter()
+                    // 转 0-based;超过 u32 的行号不可能是有效源行号,跳过。
+                    .filter_map(|line_no| u32::try_from(line_no - 1).ok())
+                    .collect(),
+            ),
+            RowsView::Errors => ExportPlan::Indices(self.error_lines.clone()),
+        }
+    }
+
+    /// 把第 source_idx 行(0-based)的原始字节(含行尾换行)追加进 out,返回追加的字节数;
+    /// 行不可用(未索引/越界)返回 0。供"锁内拷贝、锁外写盘"的分段导出使用。
+    pub fn append_line_bytes(&self, source_idx: usize, out: &mut Vec<u8>) -> u64 {
+        let frontier = self.indexed_frontier();
+        match self.source_line_bytes(source_idx, frontier) {
+            Some(bytes) => {
+                out.extend_from_slice(bytes);
+                bytes.len() as u64
+            }
+            None => 0,
+        }
+    }
+
+    /// 校验导出目标合法(不得与源文件相同)并确保父目录存在。
+    /// 从 create_export_file 中拆出,后者改为先调用本方法。
+    pub fn validate_export_target(&self, output: &Path) -> io::Result<()> {
+        if self.is_source_path(output) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "export output must differ from source file",
+            ));
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
     pub fn set_filter(&mut self, spec: &FilterSpec) -> Result<usize, FilterError> {
         if let Some(count) = self.set_filter_pending(spec)? {
             return Ok(count);
@@ -636,15 +700,7 @@ impl Session {
     }
 
     fn create_export_file(&self, output: &Path) -> io::Result<BufWriter<File>> {
-        if self.is_source_path(output) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "export output must differ from source file",
-            ));
-        }
-        if let Some(parent) = output.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        self.validate_export_target(output)?;
         Ok(BufWriter::new(File::create(output)?))
     }
 
@@ -1009,6 +1065,68 @@ mod tests {
         let map = s.minimap(4);
         assert_eq!(map.bookmarks, vec![0]);
         assert_eq!(map.errors, vec![2]);
+    }
+
+    #[test]
+    fn append_line_bytes_copies_raw_line_and_reports_length() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let mut out = Vec::new();
+        let n = s.append_line_bytes(1, &mut out);
+        assert_eq!(
+            out,
+            b"04-20 12:06:02.225   200   220 I Network: GET /home ok\n"
+        );
+        assert_eq!(n, out.len() as u64);
+        assert_eq!(s.append_line_bytes(99, &mut out), 0); // 越界行不追加
+        assert_eq!(out.len(), n as usize);
+    }
+
+    #[test]
+    fn export_plan_snapshot_matches_view_semantics() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        s.toggle_bookmark(2).unwrap();
+
+        assert_eq!(
+            s.export_plan_snapshot(RowsView::All),
+            ExportPlan::AllLines { total: 4 }
+        );
+        // 过滤未激活时 Filtered 退化为 All
+        assert_eq!(
+            s.export_plan_snapshot(RowsView::Filtered),
+            ExportPlan::AllLines { total: 4 }
+        );
+        s.set_filter(&FilterSpec {
+            tag_include: FilterField::plain(true, "Network"),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            s.export_plan_snapshot(RowsView::Filtered),
+            ExportPlan::Indices(vec![1, 2])
+        );
+        assert_eq!(
+            s.export_plan_snapshot(RowsView::Bookmarks),
+            ExportPlan::Indices(vec![1])
+        );
+        assert_eq!(
+            s.export_plan_snapshot(RowsView::Errors),
+            ExportPlan::Indices(vec![3])
+        );
+    }
+
+    #[test]
+    fn validate_export_target_rejects_source_file() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        assert!(s.validate_export_target(f.path()).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        assert!(s.validate_export_target(&dir.path().join("sub/out.log")).is_ok());
+        assert!(dir.path().join("sub").exists()); // 父目录已创建
     }
 
     #[test]
