@@ -240,9 +240,16 @@ pub struct SearchProgressDto {
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct MinimapBucketDto {
+    pub bucket: usize,
+    pub count: u32,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MinimapDto {
     pub bookmarks: Vec<usize>,
-    pub errors: Vec<usize>,
+    pub errors: Vec<MinimapBucketDto>,
 }
 
 #[derive(Serialize, Clone)]

@@ -21,6 +21,20 @@ export function bucketRanges(buckets: number[]) {
   return ranges;
 }
 
+/** 错误刻度样式:位置来自桶序号,透明度与桶内错误密度成正比(密度 = count / 每桶行数)。 */
+export function errorTickStyle(
+  entry: { bucket: number; count: number },
+  totalRows: number,
+  buckets = MINIMAP_BUCKETS,
+): { top: string; height: string; opacity: number } {
+  const rowsPerBucket = Math.max(1, totalRows / buckets);
+  const density = Math.min(1, entry.count / rowsPerBucket);
+  const opacity = Math.min(1, 0.16 + 0.84 * Math.min(1, density * 6));
+  const top = (entry.bucket / buckets) * 100;
+  const height = Math.max(0.55, 100 / buckets);
+  return { top: `${formatPercent(top)}%`, height: `${formatPercent(height)}%`, opacity };
+}
+
 export function rangeStyle(range: { start: number; end: number }, buckets = MINIMAP_BUCKETS) {
   const start = (range.start / buckets) * 100;
   const end = ((range.end + 1) / buckets) * 100;

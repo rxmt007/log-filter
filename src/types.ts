@@ -115,7 +115,7 @@ export interface ScrollRequest {
 
 export interface MinimapData {
   bookmarks: number[];
-  errors: number[];
+  errors: Array<{ bucket: number; count: number }>;
 }
 
 export interface NavigationTarget {

@@ -9,7 +9,7 @@ use crate::parser::parse_line_ref;
 use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
@@ -26,10 +26,18 @@ pub enum RowsView {
     Errors,
 }
 
+/// 小地图错误刻度:一个桶及桶内错误行数。前端据 count/每桶行数 计算刻度透明度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinimapBucket {
+    pub bucket: usize,
+    pub count: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Minimap {
     pub bookmarks: Vec<usize>,
-    pub errors: Vec<usize>,
+    /// 升序,每桶一条,count = 桶内错误行数(密度加权,取代旧的"命中即整桶"二值语义)。
+    pub errors: Vec<MinimapBucket>,
 }
 
 /// 导出计划:一次持锁产出的**快照**。AllLines 用行号区间(不物化);
@@ -254,14 +262,16 @@ impl Session {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let errors = self
-            .error_lines
-            .iter()
-            .filter_map(|idx| self.filtered.binary_search(idx).ok())
-            .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, buckets))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        // 错误按桶累加:反查过滤结果中的位置,再定位其所在桶,同桶多条错误 count 递增。
+        let mut error_counts: BTreeMap<usize, u32> = BTreeMap::new();
+        for idx in &self.error_lines {
+            if let Ok(result_idx) = self.filtered.binary_search(idx) {
+                if let Some(bucket) = bucket_for_zero_based(result_idx, total, buckets) {
+                    *error_counts.entry(bucket).or_insert(0) += 1;
+                }
+            }
+        }
+        let errors = collect_minimap_buckets(error_counts);
         Minimap { bookmarks, errors }
     }
 
@@ -297,13 +307,13 @@ impl Session {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let errors = self
-            .error_lines
-            .iter()
-            .filter_map(|idx| bucket_for_zero_based(*idx as usize, total, buckets))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let mut error_counts: BTreeMap<usize, u32> = BTreeMap::new();
+        for idx in &self.error_lines {
+            if let Some(bucket) = bucket_for_zero_based(*idx as usize, total, buckets) {
+                *error_counts.entry(bucket).or_insert(0) += 1;
+            }
+        }
+        let errors = collect_minimap_buckets(error_counts);
         Minimap { bookmarks, errors }
     }
 
@@ -854,6 +864,14 @@ fn push_hit(matches: &mut Vec<u32>, idx: usize) {
     }
 }
 
+/// 把"桶→错误行数"映射按桶升序收成 `MinimapBucket` 列表(BTreeMap 已保证键有序)。
+fn collect_minimap_buckets(counts: BTreeMap<usize, u32>) -> Vec<MinimapBucket> {
+    counts
+        .into_iter()
+        .map(|(bucket, count)| MinimapBucket { bucket, count })
+        .collect()
+}
+
 fn bucket_for_zero_based(index: usize, total: usize, buckets: usize) -> Option<usize> {
     if total == 0 || buckets == 0 || index >= total {
         return None;
@@ -1020,7 +1038,31 @@ mod tests {
         .unwrap();
 
         let map = s.minimap(4);
-        assert_eq!(map.errors, vec![0, 1, 2, 3]);
+        assert_eq!(
+            map.errors,
+            vec![
+                MinimapBucket { bucket: 0, count: 1 },
+                MinimapBucket { bucket: 1, count: 1 },
+                MinimapBucket { bucket: 2, count: 1 },
+                MinimapBucket { bucket: 3, count: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn minimap_counts_multiple_errors_in_same_bucket() {
+        // 8 行 / 4 桶 ⇒ 每桶 2 行;第 0、1 行都是 E,同落桶 0 ⇒ count == 2。
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "04-20 12:06:02.000   300   330 E Payment: boom 0").unwrap();
+        writeln!(f, "04-20 12:06:02.001   300   330 E Payment: boom 1").unwrap();
+        for i in 2..8 {
+            writeln!(f, "04-20 12:06:02.{i:03}   300   330 I Payment: info {i}").unwrap();
+        }
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+
+        let map = s.minimap(4);
+        assert_eq!(map.errors, vec![MinimapBucket { bucket: 0, count: 2 }]);
     }
 
     #[test]
@@ -1127,7 +1169,7 @@ mod tests {
 
         let map = s.minimap(4);
         assert_eq!(map.bookmarks, vec![1]);
-        assert_eq!(map.errors, vec![3]);
+        assert_eq!(map.errors, vec![MinimapBucket { bucket: 3, count: 1 }]);
     }
 
     #[test]
@@ -1149,7 +1191,7 @@ mod tests {
 
         let map = s.minimap(4);
         assert_eq!(map.bookmarks, vec![0]);
-        assert_eq!(map.errors, vec![2]);
+        assert_eq!(map.errors, vec![MinimapBucket { bucket: 2, count: 1 }]);
     }
 
     #[test]

@@ -9,6 +9,7 @@ import {
 import { getMinimap } from "@/lib/ipc";
 import {
   bucketRanges,
+  errorTickStyle,
   indexToViewportTopPx,
   MINIMAP_BUCKETS,
   pointerToResultIndex,
@@ -186,11 +187,11 @@ export function Minimap() {
           />
         ))
       )}
-      {bucketRanges(data.errors).map((range) => (
+      {data.errors.map((entry) => (
         <span
           className="lf-minimap-segment lf-minimap-error"
-          key={`e-${range.start}-${range.end}`}
-          style={rangeStyle(range)}
+          key={`e-${entry.bucket}`}
+          style={{ ...errorTickStyle(entry, resultCount) }}
         />
       ))}
       <span className="lf-minimap-viewport" style={{ top: `${viewportTop}%` }} />

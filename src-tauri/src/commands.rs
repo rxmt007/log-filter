@@ -1,8 +1,8 @@
 use crate::dto::{
     AppConfigDto, DeviceListDto, ExportProgressDto, ExportRequest, ExportSummaryDto, FilterDoneDto,
-    FilterSpecDto, MinimapDto, NavigationTargetDto, Row, SearchProgressDto, SearchResult,
-    SearchSpecDto, SplitProgressDto, SplitRequest, SplitSummaryDto, StartLogcatRequest, Status,
-    StreamAppendDto, StreamControlDto,
+    FilterSpecDto, MinimapBucketDto, MinimapDto, NavigationTargetDto, Row, SearchProgressDto,
+    SearchResult, SearchSpecDto, SplitProgressDto, SplitRequest, SplitSummaryDto,
+    StartLogcatRequest, Status, StreamAppendDto, StreamControlDto,
 };
 use crate::state::AppState;
 use crate::state::{StreamRequestState, StreamTask};
@@ -1032,7 +1032,14 @@ pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
     let minimap = session.minimap(buckets);
     MinimapDto {
         bookmarks: minimap.bookmarks,
-        errors: minimap.errors,
+        errors: minimap
+            .errors
+            .into_iter()
+            .map(|entry| MinimapBucketDto {
+                bucket: entry.bucket,
+                count: entry.count,
+            })
+            .collect(),
     }
 }
 
