@@ -47,7 +47,8 @@ pub fn parse_threadtime_ref(line: &str) -> Option<ParsedLine<'_>> {
     }
     let tail = rest_after_tokens(line, 5)?;
     let (tag, message) = if let Some(colon) = tail.find(':') {
-        (&tail[..colon], tail[colon + 1..].trim_start())
+        // 真机 threadtime 会把短 tag 填充到固定宽度(如 `vold    :`),去掉尾部填充。
+        (tail[..colon].trim_end(), tail[colon + 1..].trim_start())
     } else if let Some(ws) = tail.find(char::is_whitespace) {
         (&tail[..ws], tail[ws..].trim_start())
     } else {
@@ -254,6 +255,15 @@ mod tests {
         let raw = parse_line("--------- beginning of main");
         assert_eq!(raw.message, "--------- beginning of main");
         assert_eq!(raw.tag, "");
+    }
+
+    #[test]
+    fn threadtime_padded_tag_is_trimmed() {
+        // 真机(Android 9 / MiTV)的 threadtime 输出会把短 tag 填充到固定宽度:`I vold    : msg`,
+        // tag 必须去掉尾部填充空格。
+        let e = parse_line("01-01 08:00:14.364  3176  3176 I vold    : Vold 3.0 firing up");
+        assert_eq!(e.tag, "vold");
+        assert_eq!(e.message, "Vold 3.0 firing up");
     }
 
     #[test]
