@@ -172,6 +172,12 @@ export interface ExportSummary {
   writtenBytes: number;
 }
 
+export interface ExportProgress {
+  writtenLines: number;
+  writtenBytes: number;
+  done: boolean;
+}
+
 export interface SplitRequest {
   path: string;
   outDir: string;

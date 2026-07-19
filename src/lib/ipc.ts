@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppConfig,
   DeviceList,
+  ExportProgress,
   ExportRequest,
   ExportSummary,
   FilterDone,
@@ -88,3 +89,6 @@ export const onStreamAppend = (cb: (append: StreamAppend) => void): Promise<Unli
 
 export const onSplitProgress = (cb: (progress: SplitProgress) => void): Promise<UnlistenFn> =>
   listen<SplitProgress>("split:progress", (e) => cb(e.payload));
+
+export const onExportProgress = (cb: (progress: ExportProgress) => void): Promise<UnlistenFn> =>
+  listen<ExportProgress>("export:progress", (e) => cb(e.payload));

@@ -4,9 +4,15 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/ui/dropdown";
-import { exportLogs, onSplitProgress, saveAppConfig, splitLogFile } from "@/lib/ipc";
+import {
+  exportLogs,
+  onExportProgress,
+  onSplitProgress,
+  saveAppConfig,
+  splitLogFile,
+} from "@/lib/ipc";
 import { useSession } from "@/store/session";
-import type { AppConfig, RowsView, SplitProgress } from "@/types";
+import type { AppConfig, ExportProgress, RowsView, SplitProgress } from "@/types";
 
 interface DialogProps {
   onClose: () => void;
@@ -59,8 +65,16 @@ export function ExportDialog({ onClose }: DialogProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [tone, setTone] = useState<"error" | "ok">("ok");
+  const [progress, setProgress] = useState<ExportProgress | null>(null);
 
   const disabled = busy || !status.totalBytes || !path.trim();
+
+  useEffect(() => {
+    const un = onExportProgress(setProgress);
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   const chooseOutput = async () => {
     const picked = await save({
@@ -73,6 +87,7 @@ export function ExportDialog({ onClose }: DialogProps) {
   const runExport = async () => {
     setBusy(true);
     setMessage("");
+    setProgress(null);
     try {
       const result = await exportLogs(
         mode === "range" ? { mode, startLine, endLine, path } : { mode, view: exportView, path },
@@ -152,7 +167,11 @@ export function ExportDialog({ onClose }: DialogProps) {
         </Button>
         <Button className="lf-dialog-primary" disabled={disabled} onClick={runExport}>
           <Save />
-          {busy ? "导出中" : "导出"}
+          {busy
+            ? progress
+              ? `导出中 · 已写入 ${progress.writtenLines.toLocaleString()} 行`
+              : "导出中"
+            : "导出"}
         </Button>
       </div>
     </DialogShell>
