@@ -27,8 +27,8 @@
     "active": true,
     "targets": ["msi", "nsis", "dmg", "deb"],
     "publisher": "rxmt007",
-    "shortDescription": "Cross-platform Android logcat viewer for huge log files",
-    "longDescription": "LogFilter is a cross-platform desktop Android logcat viewer with mmap-backed indexing, filtering, search, live adb capture, export, and large-file splitting.",
+    "shortDescription": "Cross-platform Android logcat viewer",
+    "longDescription": "LogFilter is a cross-platform desktop Android logcat viewer with mmap-backed indexing, filtering, search, live adb capture, export, and log splitting.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
