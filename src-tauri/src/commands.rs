@@ -1196,7 +1196,7 @@ fn run_chunked_export(
     while cursor < total_len {
         let batch_end = cursor.saturating_add(EXPORT_CHUNK_LINES).min(total_len);
         buf.clear();
-        let mut batch_lines = 0usize;
+        let batch_lines;
         {
             let Some(guard) = app_state.lock_session_if_current(session_generation) else {
                 return Err("session changed during export".to_string());
@@ -1204,14 +1204,17 @@ fn run_chunked_export(
             let Some(session) = guard.as_ref() else {
                 return Err("open a log file before exporting".to_string());
             };
-            for view_idx in cursor..batch_end {
-                let source_idx = plan.source_idx(view_idx);
-                let appended = session.append_line_bytes(source_idx, &mut buf);
-                if appended > 0 {
-                    batch_lines += 1;
-                    written_bytes += appended;
+            // 单次持锁批量拷贝:一次前向扫描解析该批 span,取代逐行检查点回退。
+            let (lines, bytes) = match &plan {
+                ExportSource::Range { first, .. } => {
+                    session.append_line_range_bytes(first + cursor, batch_end - cursor, &mut buf)
                 }
-            }
+                ExportSource::Indices(indices) => {
+                    session.append_sorted_lines_bytes(&indices[cursor..batch_end], &mut buf)
+                }
+            };
+            batch_lines = lines;
+            written_bytes += bytes;
         }
         writer.write_all(&buf).map_err(|err| err.to_string())?;
         written_lines += batch_lines;
@@ -1254,13 +1257,6 @@ impl ExportSource {
         match self {
             ExportSource::Range { len, .. } => *len,
             ExportSource::Indices(indices) => indices.len(),
-        }
-    }
-
-    fn source_idx(&self, view_idx: usize) -> usize {
-        match self {
-            ExportSource::Range { first, .. } => first + view_idx,
-            ExportSource::Indices(indices) => indices[view_idx] as usize,
         }
     }
 }

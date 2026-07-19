@@ -1,6 +1,6 @@
 use crate::bookmarks::{BookmarkDirection, BookmarkStore};
 use crate::encoding::{ResolvedTextEncoding, TextEncoding};
-use crate::export::{write_raw_line, ExportSummary};
+use crate::export::ExportSummary;
 use crate::filter::{FilterError, FilterMatcher, FilterSpec};
 use crate::indexer::Indexer;
 use crate::mmap_source::MmapSource;
@@ -14,6 +14,9 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 use std::path::PathBuf;
+
+/// 导出分批行数:每批用批量原语拷进临时缓冲再写盘,界定内存占用。
+const EXPORT_CHUNK_LINES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowsView {
@@ -307,7 +310,6 @@ impl Session {
     pub fn export_view(&mut self, view: RowsView, output: &Path) -> io::Result<ExportSummary> {
         self.prepare_file_tool()?;
         let mut writer = self.create_export_file(output)?;
-        let frontier = self.indexed_frontier();
         let effective_view = if view == RowsView::Filtered && !self.filter_active {
             RowsView::All
         } else {
@@ -318,41 +320,30 @@ impl Session {
             written_bytes: 0,
         };
 
+        let mut buf = Vec::new();
         match effective_view {
             RowsView::All => {
-                for source_idx in 0..self.indexer.total_lines() {
-                    self.write_source_line(source_idx, frontier, &mut writer, &mut summary)?;
-                }
+                self.write_line_range(
+                    0,
+                    self.indexer.total_lines(),
+                    &mut buf,
+                    &mut writer,
+                    &mut summary,
+                )?;
             }
             RowsView::Filtered => {
-                for source_idx in &self.filtered {
-                    self.write_source_line(
-                        *source_idx as usize,
-                        frontier,
-                        &mut writer,
-                        &mut summary,
-                    )?;
-                }
+                self.write_sorted_lines(&self.filtered, &mut buf, &mut writer, &mut summary)?;
             }
             RowsView::Bookmarks => {
-                for line_no in self.bookmark_source_lines() {
-                    self.write_source_line(
-                        (line_no - 1) as usize,
-                        frontier,
-                        &mut writer,
-                        &mut summary,
-                    )?;
-                }
+                let indices: Vec<u32> = self
+                    .bookmark_source_lines()
+                    .into_iter()
+                    .filter_map(|line_no| u32::try_from(line_no - 1).ok())
+                    .collect();
+                self.write_sorted_lines(&indices, &mut buf, &mut writer, &mut summary)?;
             }
             RowsView::Errors => {
-                for source_idx in &self.error_lines {
-                    self.write_source_line(
-                        *source_idx as usize,
-                        frontier,
-                        &mut writer,
-                        &mut summary,
-                    )?;
-                }
+                self.write_sorted_lines(&self.error_lines, &mut buf, &mut writer, &mut summary)?;
             }
         }
 
@@ -374,7 +365,6 @@ impl Session {
             ));
         }
         let mut writer = self.create_export_file(output)?;
-        let frontier = self.indexed_frontier();
         let total = self.indexer.total_lines() as u64;
         let start = start_line_no.min(total + 1);
         let end = end_line_no.min(total);
@@ -383,9 +373,11 @@ impl Session {
             written_bytes: 0,
         };
 
-        for line_no in start..=end {
-            self.write_source_line((line_no - 1) as usize, frontier, &mut writer, &mut summary)?;
-        }
+        // 1-based [start, end] → 0-based [start-1, end);空区间(start>end)输出 0 行。
+        let first = start.saturating_sub(1) as usize;
+        let count = (end + 1).saturating_sub(start) as usize;
+        let mut buf = Vec::new();
+        self.write_line_range(first, count, &mut buf, &mut writer, &mut summary)?;
 
         writer.flush()?;
         Ok(summary)
@@ -430,6 +422,69 @@ impl Session {
             }
             None => 0,
         }
+    }
+
+    /// 把一批**升序**源行号的原始字节(含行尾换行)追加进 out,返回 (追加的行数, 追加的字节数)。
+    /// 单次前向扫描 [首行, 末行] 区间,复杂度 O(区间行数),不做每行独立的检查点回退。
+    /// 不可用的行(未索引/越界)跳过。indices 为空返回 (0, 0)。
+    pub fn append_sorted_lines_bytes(&self, indices: &[u32], out: &mut Vec<u8>) -> (usize, u64) {
+        debug_assert!(
+            indices.windows(2).all(|w| w[0] <= w[1]),
+            "append_sorted_lines_bytes requires ascending indices"
+        );
+        let Some(&first) = indices.first() else {
+            return (0, 0);
+        };
+        let first = first as usize;
+        let last = *indices.last().unwrap() as usize;
+        let frontier = self.indexed_frontier();
+        let bytes = self.source.bytes();
+        let mut lines = 0usize;
+        let mut written = 0u64;
+        let mut cursor = 0usize; // indices 中下一个待拷贝行号(升序)
+        // 单次前向扫描 [first, last+1),不物化 span Vec;命中行(== indices[cursor])才拷字节。
+        // 越界行(≥ total_lines)不会被 for_each_line_span 产出,cursor 到达末尾后自然停。
+        self.indexer.for_each_line_span(
+            bytes,
+            first,
+            last.saturating_add(1),
+            frontier,
+            |line, span_start, span_end| {
+                while cursor < indices.len() && (indices[cursor] as usize) < line {
+                    cursor += 1; // 未产出/重复的小于当前行的行号:跳过
+                }
+                if cursor < indices.len() && indices[cursor] as usize == line {
+                    out.extend_from_slice(&bytes[span_start..span_end]);
+                    written += (span_end - span_start) as u64;
+                    lines += 1;
+                    cursor += 1;
+                }
+            },
+        );
+        (lines, written)
+    }
+
+    /// 把连续行区间 [start, start+count) 的原始字节追加进 out,返回 (行数, 字节数)。
+    /// 单次前向扫描,不物化 span Vec,越过末尾的部分自动裁剪。
+    pub fn append_line_range_bytes(
+        &self,
+        start: usize,
+        count: usize,
+        out: &mut Vec<u8>,
+    ) -> (usize, u64) {
+        let total = self.indexer.total_lines();
+        let end = start.saturating_add(count).min(total);
+        let frontier = self.indexed_frontier();
+        let bytes = self.source.bytes();
+        let mut lines = 0usize;
+        let mut written = 0u64;
+        self.indexer
+            .for_each_line_span(bytes, start, end, frontier, |_, span_start, span_end| {
+                out.extend_from_slice(&bytes[span_start..span_end]);
+                written += (span_end - span_start) as u64;
+                lines += 1;
+            });
+        (lines, written)
     }
 
     /// 校验导出目标合法(不得与源文件相同)并确保父目录存在。
@@ -685,16 +740,45 @@ impl Session {
         Some(&self.source.bytes()[start..end])
     }
 
-    fn write_source_line(
+    /// 分批(每批 EXPORT_CHUNK_LINES 行)把连续行区间 [start, start+count) 用批量原语拷进
+    /// `buf` 再写盘,单次前向扫描,避免一次性物化整段字节。
+    fn write_line_range(
         &self,
-        source_idx: usize,
-        frontier: usize,
+        start: usize,
+        count: usize,
+        buf: &mut Vec<u8>,
         writer: &mut impl Write,
         summary: &mut ExportSummary,
     ) -> io::Result<()> {
-        if let Some(bytes) = self.source_line_bytes(source_idx, frontier) {
-            summary.written_bytes += write_raw_line(writer, bytes)?;
-            summary.written_lines += 1;
+        let total = self.indexer.total_lines();
+        let end = start.saturating_add(count).min(total);
+        let mut cursor = start.min(end);
+        while cursor < end {
+            let batch_end = cursor.saturating_add(EXPORT_CHUNK_LINES).min(end);
+            buf.clear();
+            let (lines, bytes) = self.append_line_range_bytes(cursor, batch_end - cursor, buf);
+            writer.write_all(buf)?;
+            summary.written_lines += lines;
+            summary.written_bytes += bytes;
+            cursor = batch_end;
+        }
+        Ok(())
+    }
+
+    /// 分批把一批升序源行号用批量原语拷进 `buf` 再写盘,单次前向扫描每个分批。
+    fn write_sorted_lines(
+        &self,
+        indices: &[u32],
+        buf: &mut Vec<u8>,
+        writer: &mut impl Write,
+        summary: &mut ExportSummary,
+    ) -> io::Result<()> {
+        for chunk in indices.chunks(EXPORT_CHUNK_LINES) {
+            buf.clear();
+            let (lines, bytes) = self.append_sorted_lines_bytes(chunk, buf);
+            writer.write_all(buf)?;
+            summary.written_lines += lines;
+            summary.written_bytes += bytes;
         }
         Ok(())
     }
@@ -1081,6 +1165,78 @@ mod tests {
         assert_eq!(n, out.len() as u64);
         assert_eq!(s.append_line_bytes(99, &mut out), 0); // 越界行不追加
         assert_eq!(out.len(), n as usize);
+    }
+
+    #[test]
+    fn append_sorted_lines_bytes_matches_per_line_oracle() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+
+        // 等价预言:批量拷贝应逐字节等于逐行 append_line_bytes 拼接。
+        let indices = [0u32, 2, 3];
+        let mut oracle = Vec::new();
+        for idx in indices {
+            s.append_line_bytes(idx as usize, &mut oracle);
+        }
+
+        let mut batch = Vec::new();
+        let (lines, bytes) = s.append_sorted_lines_bytes(&indices, &mut batch);
+        assert_eq!(batch, oracle);
+        assert_eq!(lines, 3);
+        assert_eq!(bytes, oracle.len() as u64);
+    }
+
+    #[test]
+    fn append_sorted_lines_bytes_handles_empty_and_out_of_range() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+
+        // 空输入
+        let mut out = Vec::new();
+        assert_eq!(s.append_sorted_lines_bytes(&[], &mut out), (0, 0));
+        assert!(out.is_empty());
+
+        // 越界行(99 ≥ total_lines)被跳过,只拷第 1 行。
+        let mut out = Vec::new();
+        let (lines, bytes) = s.append_sorted_lines_bytes(&[1, 99], &mut out);
+        let mut expected = Vec::new();
+        s.append_line_bytes(1, &mut expected);
+        assert_eq!(out, expected);
+        assert_eq!(lines, 1);
+        assert_eq!(bytes, expected.len() as u64);
+    }
+
+    #[test]
+    fn append_line_range_bytes_full_range_equals_file_bytes() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+
+        let mut out = Vec::new();
+        let (lines, bytes) = s.append_line_range_bytes(0, s.total_lines(), &mut out);
+        let file_bytes = std::fs::read(f.path()).unwrap();
+        assert_eq!(out, file_bytes);
+        assert_eq!(lines, 4);
+        assert_eq!(bytes, file_bytes.len() as u64);
+    }
+
+    #[test]
+    fn append_line_range_bytes_clamps_past_eof() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+
+        // 从第 3 行起要 100 行,应裁到文件末尾(行 3、4)。
+        let mut out = Vec::new();
+        let (lines, bytes) = s.append_line_range_bytes(2, 100, &mut out);
+        let mut expected = Vec::new();
+        s.append_line_bytes(2, &mut expected);
+        s.append_line_bytes(3, &mut expected);
+        assert_eq!(out, expected);
+        assert_eq!(lines, 2);
+        assert_eq!(bytes, expected.len() as u64);
     }
 
     #[test]

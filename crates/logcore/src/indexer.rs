@@ -88,24 +88,41 @@ impl Indexer {
         frontier: usize,
     ) -> Vec<(usize, usize)> {
         let end = end.min(self.total_lines);
+        let mut spans = Vec::with_capacity(end.saturating_sub(start));
+        self.for_each_line_span(bytes, start, end, frontier, |_, span_start, span_end| {
+            spans.push((span_start, span_end));
+        });
+        spans
+    }
+
+    /// 单次前向扫描 [start, end),对每一行调用 `f(line, span_start, span_end)`,
+    /// 不物化 Vec。`line_spans` 与导出批量原语共用此扫描:定位一次检查点、一路 memchr 到底。
+    pub fn for_each_line_span(
+        &self,
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+        frontier: usize,
+        mut f: impl FnMut(usize, usize, usize),
+    ) {
+        let end = end.min(self.total_lines);
         if start >= end {
-            return Vec::new();
+            return;
         }
         let frontier = frontier.min(bytes.len());
         let Some(checkpoint) = self.checkpoint_before_or_at(start) else {
-            return Vec::new();
+            return;
         };
         let mut line = checkpoint.line;
         let mut offset = checkpoint.offset as usize;
         while line < start {
             let Some(next) = next_line_start(bytes, offset) else {
-                return Vec::new();
+                return;
             };
             offset = next;
             line += 1;
         }
 
-        let mut spans = Vec::with_capacity(end - start);
         while line < end {
             let line_start = offset;
             let line_end = if line + 1 < self.total_lines {
@@ -116,11 +133,10 @@ impl Indexer {
             } else {
                 frontier
             };
-            spans.push((line_start, line_end.min(frontier)));
+            f(line, line_start, line_end.min(frontier));
             offset = line_end;
             line += 1;
         }
-        spans
     }
 
     fn checkpoint_before_or_at(&self, line: usize) -> Option<LineCheckpoint> {
