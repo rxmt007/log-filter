@@ -1,17 +1,11 @@
-# 三系统 CI 门禁:测试 + fmt + clippy + 前端检查。
-# 触发收缩(控制计费分钟,macOS 按 10x 计):
-# - PR:只跑 Ubuntu + Windows(Windows 无本地验证必须保留;macOS 即开发机,PR 阶段边际价值最低)
-# - main push:完整三系统(合并后最终安全网)
-# - 纯文档变更(docs/**, *.md)不触发;裸分支 push 不触发(仅 PR / main / 手动)
+# 三系统 CI 门禁:dev 为日常缓冲分支(不跑 CI,依赖本地全套验证);
+# 只有 dev→main 的批量 PR 触发完整三系统矩阵(含 macOS,与贡献者开发机无关);
+# rebase 合并绿 PR 后内容与已测树一致,故 main push 不再重复跑;手动触发兜底。
 name: CI
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
   pull_request:
+    branches: [main]
     paths-ignore:
       - "docs/**"
       - "**.md"
@@ -26,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest","windows-latest"]') || fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
