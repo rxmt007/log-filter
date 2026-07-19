@@ -1,11 +1,20 @@
-# 三系统 CI 门禁:测试 + clippy + 前端检查。
-# Windows 是主打平台且开发机为 macOS,cfg(windows) 代码(adb CREATE_NO_WINDOW 等)只有这里能编译验证。
+# 三系统 CI 门禁:测试 + fmt + clippy + 前端检查。
+# 触发收缩(控制计费分钟,macOS 按 10x 计):
+# - PR:只跑 Ubuntu + Windows(Windows 无本地验证必须保留;macOS 即开发机,PR 阶段边际价值最低)
+# - main push:完整三系统(合并后最终安全网)
+# - 纯文档变更(docs/**, *.md)不触发;裸分支 push 不触发(仅 PR / main / 手动)
 name: CI
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest","windows-latest"]') || fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
