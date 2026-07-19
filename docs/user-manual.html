@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LogFilter 用户手册</title>
+<style>
+  :root {
+    --bg: #f6f7fa;
+    --panel: #ffffff;
+    --text: #1f2430;
+    --muted: #667085;
+    --border: #e3e6ec;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, .10);
+    --code-bg: #eef1f6;
+    --code-text: #334155;
+    --hit-bg: rgba(245, 158, 11, .45);
+    --thead-bg: #f1f3f8;
+    --shadow: 0 1px 3px rgba(16, 24, 40, .06);
+    --topbar-h: 58px;
+  }
+  html[data-theme="dark"] {
+    --bg: #12141a;
+    --panel: #1a1d26;
+    --text: #e6e9f2;
+    --muted: #9aa1b2;
+    --border: #2a2f3d;
+    --accent: #7aa2ff;
+    --accent-soft: rgba(122, 162, 255, .14);
+    --code-bg: #232735;
+    --code-text: #cbd5e1;
+    --hit-bg: rgba(245, 158, 11, .40);
+    --thead-bg: #20242f;
+    --shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    height: var(--topbar-h);
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow);
+  }
+  .brand { font-weight: 700; font-size: 16px; white-space: nowrap; }
+  .brand small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .filter-wrap { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+  #filterInput {
+    flex: 1; min-width: 0; max-width: 460px;
+    height: 34px; padding: 0 12px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text);
+    font-size: 14px; outline: none;
+  }
+  #filterInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #filterStat { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  #themeBtn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; flex-shrink: 0;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  #themeBtn:hover { background: var(--accent-soft); }
+  #themeBtn svg { width: 17px; height: 17px; }
+  html[data-theme="dark"] #themeBtn .icon-moon { display: none; }
+  html:not([data-theme="dark"]) #themeBtn .icon-sun { display: none; }
+
+  /* ---------- 布局 ---------- */
+  .layout {
+    display: flex; align-items: flex-start;
+    max-width: 1200px; margin: 0 auto;
+    padding: calc(var(--topbar-h) + 18px) 16px 60px;
+    gap: 26px;
+  }
+  .sidebar {
+    position: sticky; top: calc(var(--topbar-h) + 18px);
+    width: 232px; flex-shrink: 0;
+    max-height: calc(100vh - var(--topbar-h) - 36px);
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+  .toc-summary {
+    display: none; padding: 10px 14px; cursor: pointer;
+    font-weight: 600; list-style: none;
+  }
+  .toc-summary::-webkit-details-marker { display: none; }
+  .toc nav ul { list-style: none; margin: 0; padding: 8px; }
+  .toc nav a {
+    display: block; padding: 6px 10px; border-radius: 7px;
+    color: var(--muted); text-decoration: none; font-size: 13.5px;
+    border-left: 2px solid transparent;
+  }
+  .toc nav a:hover { color: var(--text); background: var(--accent-soft); }
+  .toc nav a.active {
+    color: var(--accent); background: var(--accent-soft);
+    border-left-color: var(--accent); font-weight: 600;
+  }
+  .toc nav li.dimmed a { opacity: .35; }
+  .toc-actions {
+    display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--border);
+  }
+  .toc-actions button {
+    flex: 1; padding: 5px 0; font-size: 12.5px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--panel); color: var(--muted);
+  }
+  .toc-actions button:hover { color: var(--accent); background: var(--accent-soft); }
+
+  main { flex: 1; min-width: 0; }
+
+  /* ---------- 简介 ---------- */
+  .intro {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: var(--shadow);
+    padding: 22px 26px; margin-bottom: 16px;
+  }
+  .intro h1 { margin: 0 0 10px; font-size: 24px; }
+
+  /* ---------- 章节卡片(可折叠) ---------- */
+  details.section {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: var(--shadow);
+    margin-bottom: 14px;
+    scroll-margin-top: calc(var(--topbar-h) + 16px);
+    overflow: hidden;
+  }
+  details.section > summary {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 20px; cursor: pointer; user-select: none;
+    list-style: none;
+  }
+  details.section > summary::-webkit-details-marker { display: none; }
+  details.section > summary::before {
+    content: ""; flex-shrink: 0;
+    width: 8px; height: 8px;
+    border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+    transform: rotate(-45deg); transition: transform .15s ease;
+    margin-top: -2px;
+  }
+  details.section[open] > summary::before { transform: rotate(45deg); margin-top: -5px; }
+  details.section > summary:hover { background: var(--accent-soft); }
+  details.section > summary h2 { display: inline; margin: 0; font-size: 18.5px; }
+  .sec-body { padding: 4px 24px 20px; border-top: 1px solid var(--border); }
+  .sec-body h3 { font-size: 15.5px; margin: 22px 0 8px; }
+  .sec-body p { margin: 10px 0; }
+  .sec-body ul, .sec-body ol { margin: 8px 0; padding-left: 24px; }
+  .sec-body li { margin: 4px 0; }
+
+  /* ---------- 通用元素 ---------- */
+  code {
+    background: var(--code-bg); color: var(--code-text);
+    border-radius: 5px; padding: 1.5px 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    font-size: .88em; word-break: break-all;
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    font-size: 13px; line-height: 1.6;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre.ascii { line-height: 1.35; }
+  blockquote {
+    margin: 12px 0; padding: 8px 14px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft); border-radius: 0 8px 8px 0;
+    color: var(--muted);
+  }
+  blockquote p { margin: 4px 0; }
+  .tbl-wrap { overflow-x: auto; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 7px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--thead-bg); font-weight: 600; white-space: nowrap; }
+  mark.flt-hit { background: var(--hit-bg); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+  .faq-item { margin: 0 0 16px; }
+  .faq-item .q { font-weight: 600; margin: 0 0 2px; }
+  .faq-item .a { margin: 0; color: var(--text); }
+
+  .no-result {
+    display: none; text-align: center; color: var(--muted);
+    padding: 40px 0; font-size: 14px;
+  }
+
+  a { color: var(--accent); }
+
+  /* ---------- 移动端(≤720px 单栏) ---------- */
+  @media (max-width: 720px) {
+    .layout { display: block; padding: calc(var(--topbar-h) + 12px) 10px 40px; }
+    .sidebar { position: static; width: 100%; max-height: none; margin-bottom: 14px; }
+    .toc-summary { display: block; }
+    .brand small { display: none; }
+    #filterStat { display: none; }
+    .sec-body { padding: 4px 16px 16px; }
+    .intro { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="brand">LogFilter<small>用户手册</small></span>
+  <div class="filter-wrap">
+    <input id="filterInput" type="search" placeholder="过滤章节:输入关键词(标题 + 正文)…" autocomplete="off">
+    <span id="filterStat"></span>
+  </div>
+  <button id="themeBtn" type="button" title="切换明/暗主题" aria-label="切换明/暗主题">
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <details class="toc" id="tocBox" open>
+      <summary class="toc-summary">目录</summary>
+      <nav aria-label="目录">
+        <ul id="tocList">
+          <li><a href="#sec-quick">5 分钟上手</a></li>
+          <li><a href="#sec-1">1. 安装</a></li>
+          <li><a href="#sec-2">2. 界面总览</a></li>
+          <li><a href="#sec-3">3. 从设备抓取日志(adb)</a></li>
+          <li><a href="#sec-4">4. 打开文件与最近文件</a></li>
+          <li><a href="#sec-5">5. 浏览、列与尾随</a></li>
+          <li><a href="#sec-6">6. 过滤</a></li>
+          <li><a href="#sec-7">7. 高亮(3 组)</a></li>
+          <li><a href="#sec-8">8. 搜索</a></li>
+          <li><a href="#sec-9">9. 行号跳转</a></li>
+          <li><a href="#sec-10">10. 书签</a></li>
+          <li><a href="#sec-11">11. Minimap(小地图)</a></li>
+          <li><a href="#sec-12">12. 导出</a></li>
+          <li><a href="#sec-13">13. 切分大文件</a></li>
+          <li><a href="#sec-14">14. 设置</a></li>
+          <li><a href="#sec-15">15. 快捷键一览</a></li>
+          <li><a href="#sec-16">16. 常见问题(FAQ)</a></li>
+        </ul>
+      </nav>
+      <div class="toc-actions">
+        <button id="expandAll" type="button">全部展开</button>
+        <button id="collapseAll" type="button">全部折叠</button>
+      </div>
+    </details>
+  </aside>
+
+  <main>
+    <div class="intro">
+      <h1>LogFilter 用户手册</h1>
+      <p>LogFilter 是一款跨平台桌面版 Android logcat 日志查看器(Windows / macOS / Linux),支持从设备实时抓取日志,也支持打开 10GB+ 的超大日志文件,并提供过滤、搜索、高亮、书签、导出、切分等功能。</p>
+      <blockquote><p>本手册面向使用者。所有描述均以当前版本的实际行为为准。</p></blockquote>
+    </div>
+
+    <details class="section" id="sec-quick" open>
+      <summary><h2>5 分钟上手</h2></summary>
+      <div class="sec-body">
+        <ol>
+          <li><strong>安装</strong>:从 GitHub Actions 的 "Desktop Build" 工作流产物下载对应平台安装包(Windows <code>.msi</code>/<code>.exe</code>、macOS <code>.dmg</code>、Linux <code>.deb</code>),安装后启动。</li>
+          <li><strong>看日志,二选一</strong>:
+            <ul>
+              <li><strong>连设备抓</strong>:用 USB 连接已开启开发者调试的 Android 设备 → 左上角设备下拉选中设备 → 点工具栏的 ▶(Start)开始抓取,新日志会自动滚动到底部;</li>
+              <li><strong>开文件看</strong>:按 <code>Cmd/Ctrl+O</code>(或点工具栏文件夹图标)打开一个 logcat 日志文件,大文件会后台建索引,状态栏能看到进度,期间即可浏览。</li>
+            </ul>
+          </li>
+          <li><strong>过滤</strong>:点级别芯片(V/D/I/W/E/F)只看想要的级别;在过滤条里填 Tag / PID / 内容关键词,多个值用 <code>|</code> 分隔,约 0.2 秒后结果自动刷新。</li>
+          <li><strong>搜索</strong>:按 <code>Cmd/Ctrl+F</code> 聚焦搜索框,输入关键词即时统计命中数,用 ↑/↓ 按钮在命中间跳转。</li>
+          <li><strong>标记重点</strong>:双击某行打书签(行首出现书签图标),<code>F2</code>/<code>F3</code> 在书签间跳转;书签自动保存,下次打开同一文件还在。</li>
+        </ol>
+      </div>
+    </details>
+
+    <details class="section" id="sec-1" open>
+      <summary><h2>1. 安装</h2></summary>
+      <div class="sec-body">
+        <h3>1.1 从 GitHub Actions 下载安装包(推荐)</h3>
+        <p>打包由仓库的 <strong>"Desktop Build"</strong> 工作流完成,手动触发或推送 <code>v*</code> 版本标签时运行,三个平台各产出一个 artifact:</p>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Artifact 名称</th><th>平台</th><th>包含文件</th></tr></thead>
+            <tbody>
+              <tr><td><code>logfilter-windows-latest</code></td><td>Windows</td><td><code>.msi</code>(MSI 安装包)、<code>.exe</code>(NSIS 安装器)</td></tr>
+              <tr><td><code>logfilter-macos-latest</code></td><td>macOS</td><td><code>.dmg</code></td></tr>
+              <tr><td><code>logfilter-ubuntu-22.04</code></td><td>Linux(Debian/Ubuntu)</td><td><code>.deb</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>怎么做:</strong></p>
+        <ol>
+          <li>打开仓库页面(github.com/rxmt007/log-filter)→ <strong>Actions</strong> 标签页;</li>
+          <li>左侧选择 <strong>Desktop Build</strong> 工作流;若近期没有运行记录,点右侧 <strong>Run workflow</strong> 手动触发(需要仓库权限),等待三个平台的任务完成;</li>
+          <li>进入完成的运行页面,底部 <strong>Artifacts</strong> 区域下载对应平台的压缩包并解压;</li>
+          <li>安装:
+            <ul>
+              <li><strong>Windows</strong>:双击 <code>.msi</code> 或 <code>.exe</code> 按向导安装;</li>
+              <li><strong>macOS</strong>:打开 <code>.dmg</code>,把应用拖入"应用程序"文件夹;</li>
+              <li><strong>Linux</strong>:<code>sudo dpkg -i &lt;文件名&gt;.deb</code>(或用系统的软件安装器打开)。</li>
+            </ul>
+          </li>
+        </ol>
+        <h3>1.2 从源码运行(开发者方式)</h3>
+        <p>前置条件:Rust(stable 工具链)、Node.js 22、pnpm。</p>
+<pre><code>git clone &lt;仓库地址&gt;
+cd log-filter
+pnpm install
+pnpm tauri dev        # 开发模式直接启动
+# 或
+pnpm tauri build      # 本机打安装包,产物在仓库根 target/release/bundle/</code></pre>
+      </div>
+    </details>
+
+    <details class="section" id="sec-2" open>
+      <summary><h2>2. 界面总览</h2></summary>
+      <div class="sec-body">
+        <p>窗口从上到下分为四块:</p>
+<pre class="ascii">┌──────────────────────────────────────────────────────┐
+│ 工具栏(第 1 行):设备下拉 · 命令输入框(带预设下拉)     │
+│ 工具栏(第 2 行):▶ ⏸ ⏹ 🗑 | 打开 导出 切分 设置 主题 |   │
+│                  级别芯片 · 仅标记 | 搜索框 | 行号跳转   │
+│ 过滤条:6 个过滤字段 + 3 组高亮                          │
+├───┬──────────────────────────────────────────────────┤
+│ 小 │  日志表格(书签/行号/日期/时间/级别/PID/TID/Tag/消息) │
+│ 地 │                                                  │
+│ 图 │                                                  │
+├───┴──────────────────────────────────────────────────┤
+│ 状态栏:已加载行数 · 当前结果 · 索引进度 · 当前行 · 编码 · 来源 │
+└──────────────────────────────────────────────────────┘</pre>
+        <ul>
+          <li><strong>工具栏</strong>:抓取控制(Start/Pause/Stop/Clear)、打开文件(含最近文件)、导出、切分、设置、明暗主题切换、级别芯片、"仅标记"开关、搜索框(带大小写/正则开关和上一个/下一个)、行号跳转框。</li>
+          <li><strong>过滤条</strong>:Tag 包含 / Tag 屏蔽 / PID / TID / 内容包含 / 内容屏蔽 六个字段,以及 3 组关键词高亮,每项都有独立启用开关。</li>
+          <li><strong>表格</strong>:虚拟化渲染,千万行级文件也能流畅滚动;没有数据时显示空状态,提供"从设备抓取"和"打开文件"两个快捷按钮。</li>
+          <li><strong>Minimap(小地图)</strong>:表格左侧细长条,纵览全局的错误密度(红色)与书签位置(蓝色),可点击/拖拽快速定位。</li>
+          <li><strong>状态栏</strong>:<code>已加载 N 行</code>、<code>当前结果 N 行</code>(开了"仅标记"会追加提示)、<code>索引 x%</code>(索引进行中会标注"进行中")、<code>当前 第 N 行</code>、编码、右侧显示数据来源(<code>adb · 设备序列号</code> 或文件路径)。</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="section" id="sec-3" open>
+      <summary><h2>3. 从设备抓取日志(adb)</h2></summary>
+      <div class="sec-body">
+        <h3>3.1 准备</h3>
+        <ul>
+          <li>设备开启"开发者选项 → USB 调试",用数据线连接电脑;</li>
+          <li>电脑上需要有 <code>adb</code>(Android platform-tools)。应用会按以下顺序自动寻找:设置里配置的 ADB 路径 → 系统 <code>PATH</code> → 常见 SDK 位置(<code>ANDROID_HOME</code>/<code>ANDROID_SDK_ROOT</code> 下的 <code>platform-tools</code>、macOS 的 <code>~/Library/Android/sdk/platform-tools</code>、Linux 的 <code>~/Android/Sdk/platform-tools</code>、Windows 的 <code>%LOCALAPPDATA%\Android\Sdk\platform-tools</code>)。都找不到时启动抓取会报错,请到设置里手动指定(见<a href="#sec-14">第 14 章</a>)。</li>
+        </ul>
+        <h3>3.2 选择设备</h3>
+        <ul>
+          <li>左上角是<strong>设备下拉</strong>,每 4 秒自动刷新一次 <code>adb devices</code> 的结果;</li>
+          <li>每项显示"型号(或序列号)· 状态",在线设备前有绿点;离线/未授权设备置灰不可选;</li>
+          <li>检测到设备后会自动选中第一台在线设备;没有任何设备时显示"无在线设备"。</li>
+        </ul>
+        <h3>3.3 命令输入与预设</h3>
+        <p>设备下拉右侧是<strong>命令输入框</strong>。出于安全与解析兼容考虑,<strong>只支持一种命令形态</strong>:</p>
+<pre><code>logcat -v threadtime -b &lt;缓冲区&gt;</code></pre>
+        <ul>
+          <li><code>&lt;缓冲区&gt;</code> 可选:<code>main</code>、<code>system</code>、<code>radio</code>、<code>events</code>、<code>crash</code>,且一次只能指定一个 <code>-b</code>;</li>
+          <li>不支持其它参数、不支持管道/重定向等复合 shell 写法(输入 <code>|</code>、<code>&amp;</code>、<code>;</code>、<code>&lt;</code>、<code>&gt;</code> 会直接报错);</li>
+          <li>输入后按 <strong>Enter</strong> 或点击输入框外提交;命令不合法时输入框标红并提示原因,按 <strong>Escape</strong> 可恢复为上次已保存的命令;</li>
+          <li>输入框右侧的下拉是<strong>预设命令</strong>:内置 5 条(对应 5 个缓冲区),你提交过的合法命令也会自动存为预设(最多额外保存 20 条),点选即用。</li>
+        </ul>
+        <h3>3.4 抓取控制按钮</h3>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>按钮</th><th>何时可用</th><th>行为</th></tr></thead>
+            <tbody>
+              <tr><td>▶ <strong>Start</strong></td><td>未在抓取时</td><td>按当前命令启动 <code>adb logcat</code>,新建一个会话文件并开始写入;表格自动尾随最新日志</td></tr>
+              <tr><td>▶ <strong>Resume</strong></td><td>已暂停时(同一个 ▶ 按钮,悬停提示变为 Resume)</td><td>续抓:从会话文件末尾取出最后一条日志的时间戳,以 <code>logcat -T "&lt;时间戳&gt;"</code> 继续抓取。<strong>边界时间戳包含在内,同一毫秒内的日志可能出现少量重复行</strong>,这是刻意为之(宁可重复、不可漏抓)</td></tr>
+              <tr><td>⏸ <strong>Pause</strong></td><td>抓取运行中</td><td>暂停:停止 logcat 子进程,已抓内容全部保留,可正常浏览/过滤/搜索</td></tr>
+              <tr><td>⏹ <strong>Stop</strong></td><td>运行中或已暂停</td><td>结束本次抓取。内容保留可继续查看,再点 ▶ 会开始一次全新抓取</td></tr>
+              <tr><td>🗑 <strong>Clear</strong></td><td>adb 模式且有内容时</td><td>清空当前内容并新建会话文件,重新开始一段干净的抓取</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>关于旧设备</strong>:<code>logcat -T &lt;时间&gt;</code> 在个别老系统上不受支持,此时设备端 logcat 会立即退出,表现为<strong>点 Resume 后日志流自动停止</strong>(按钮回到可 Start 状态)。遇到这种情况请直接点 ▶ 重新开始抓取(会从缓冲区头部重抓)。</p>
+        <h3>3.5 会话文件去哪了</h3>
+        <p>抓取的日志实时写入本地会话文件,文件名形如 <code>logcat-&lt;毫秒时间戳&gt;.log</code>,位于设置中的"存储位置"(默认为应用配置目录下的 <code>sessions/</code> 子目录)。应用自动清理旧会话,<strong>只保留最近 10 份</strong>;需要长期留存的请用导出功能(<a href="#sec-12">第 12 章</a>)。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-4" open>
+      <summary><h2>4. 打开文件与最近文件</h2></summary>
+      <div class="sec-body">
+        <p>支持 <code>logcat -v time</code> 与 <code>-v threadtime</code> 两种格式的日志文件,打开时自动识别。</p>
+        <p><strong>怎么做:</strong></p>
+        <ol>
+          <li>点工具栏的<strong>文件夹图标</strong>,在下拉中选"打开文件...",或直接按 <code>Cmd/Ctrl+O</code>;</li>
+          <li>在系统文件对话框中选择日志文件;</li>
+          <li>大文件(GB 级)会立即可见,同时后台建立索引——状态栏显示"索引 x% · 进行中",索引期间即可滚动浏览,过滤/搜索的结果会随索引推进逐步补全。</li>
+        </ol>
+        <p><strong>最近文件</strong>:文件夹图标的下拉里会列出最近打开过的文件(显示文件名,悬停可见完整路径),点击即可重新打开。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-5" open>
+      <summary><h2>5. 浏览、列与尾随</h2></summary>
+      <div class="sec-body">
+        <h3>5.1 表格列</h3>
+        <p>默认列:书签、行号、日期、时间、级别、PID、TID、Tag、消息。</p>
+        <ul>
+          <li><strong>显示/隐藏列</strong>:点表头右侧的<strong>列按钮</strong>(网格图标),勾选/取消勾选;"消息"列不可隐藏;</li>
+          <li><strong>调整列宽</strong>:拖拽表头单元格右缘的把手;</li>
+          <li>列的显隐与宽度会自动保存,下次启动保持。</li>
+        </ul>
+        <h3>5.2 选择与复制</h3>
+        <ul>
+          <li>单击行选中(状态栏"当前 第 N 行"随之更新);</li>
+          <li>用鼠标拖选表格文本后按 <code>Cmd/Ctrl+C</code>,会按当前可见列把选中范围内的<strong>整行</strong>格式化复制(书签列除外)。</li>
+        </ul>
+        <h3>5.3 尾随最新(仅 adb 抓取模式)</h3>
+        <p>抓取进行中,表格默认<strong>尾随</strong>:新日志到达自动滚到底部。</p>
+        <ul>
+          <li><strong>暂停尾随</strong>:向上滚动、点击某行、搜索/跳转/书签导航/拖 Minimap、修改过滤条件,任一操作都会暂停尾随,方便你停下来看;</li>
+          <li><strong>恢复尾随</strong>:手动滚动到表格最底部即自动恢复;或点击表格<strong>右下角的"追最新"图标按钮</strong>(双下箭头,仅在抓取运行中且未尾随时出现)。</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="section" id="sec-6" open>
+      <summary><h2>6. 过滤</h2></summary>
+      <div class="sec-body">
+        <p>所有过滤条件<strong>叠加生效</strong>(同时满足才显示),修改后约 0.2 秒自动应用。当前过滤条件会随配置保存,重启应用后自动恢复。</p>
+        <h3>6.1 级别芯片</h3>
+        <p>工具栏"级别"区域:<code>全部</code> + <code>V / D / I / W / E / F</code>(Verbose/Debug/Info/Warning/Error/Fatal)。</p>
+        <ul>
+          <li>点击单个字母芯片切换该级别的显示/隐藏;点"全部"一键恢复全选;</li>
+          <li><strong>注意</strong>:只要选择了级别子集(不是全选),<strong>没有级别字段的行会被一并隐藏</strong>——例如 logcat 缓冲区分隔行 <code>--------- beginning of main</code>。想看到这类行,请把级别恢复为"全部"。</li>
+        </ul>
+        <h3>6.2 仅标记</h3>
+        <p>级别芯片旁的"仅标记"芯片:开启后只显示打了书签的行(详见<a href="#sec-10">第 10 章</a>)。</p>
+        <h3>6.3 六个过滤字段</h3>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>字段</th><th>含义</th><th>正则开关</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Tag 包含</strong>(+)</td><td>只显示 Tag 匹配的行</td><td>有</td></tr>
+              <tr><td><strong>Tag 屏蔽</strong>(−)</td><td>隐藏 Tag 匹配的行</td><td>有</td></tr>
+              <tr><td><strong>PID</strong></td><td>只显示指定进程号的行</td><td>无</td></tr>
+              <tr><td><strong>TID</strong></td><td>只显示指定线程号的行</td><td>无</td></tr>
+              <tr><td><strong>内容包含</strong>(+)</td><td>只显示消息内容含关键词的行</td><td>有</td></tr>
+              <tr><td><strong>内容屏蔽</strong>(−)</td><td>隐藏消息内容含关键词的行</td><td>有</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>怎么用:</strong></p>
+        <ol>
+          <li>点字段左侧的<strong>开关</strong>启用(未启用的字段不参与过滤);</li>
+          <li>在输入框填写条件,<strong>多个值用 <code>|</code> 分隔</strong>,例如 PID 填 <code>12043|146</code>、Tag 包含填 <code>ActivityManager|WindowManager</code>;</li>
+          <li>Tag 和内容四个字段各有 <code>.*</code> <strong>正则开关</strong>:开启后按正则表达式匹配,关闭时按普通子串匹配(<code>|</code> 分隔多值)。</li>
+        </ol>
+        <blockquote><p>提示(adb 模式):修改任何过滤条件都会暂停尾随,改完后点右下角"追最新"恢复。</p></blockquote>
+      </div>
+    </details>
+
+    <details class="section" id="sec-7" open>
+      <summary><h2>7. 高亮(3 组)</h2></summary>
+      <div class="sec-body">
+        <p>过滤条下方有 <strong>3 组关键词高亮</strong>,只给命中文本上色、<strong>不影响过滤结果</strong>。</p>
+        <p>每组包含:</p>
+        <ul>
+          <li><strong>启用开关</strong>;</li>
+          <li><strong>关键词输入框</strong>;</li>
+          <li><code>.*</code> <strong>正则开关</strong>;</li>
+          <li><code>Aa</code> <strong>大小写敏感开关</strong>;</li>
+          <li><strong>颜色选择</strong>:yellow / green / blue / purple。</li>
+        </ul>
+        <p>命中的文本在"消息"列中以对应颜色标出。若同一段文本同时命中搜索词和高亮词,<strong>优先显示搜索命中的样式</strong>。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-8" open>
+      <summary><h2>8. 搜索</h2></summary>
+      <div class="sec-body">
+        <p>工具栏右侧的搜索框(<code>Cmd/Ctrl+F</code> 快速聚焦):</p>
+        <ol>
+          <li>输入关键词,约 0.18 秒后自动在<strong>当前结果</strong>中全量搜索,框内计数显示 <code>当前命中行号 / 命中总数</code>;</li>
+          <li><code>Aa</code> 切换大小写敏感,<code>.*</code> 切换正则模式;</li>
+          <li>点 <strong>↑(上一个)/ ↓(下一个)</strong> 在命中之间跳转,命中行居中显示并选中;</li>
+          <li>清空搜索框即清除搜索状态。</li>
+        </ol>
+        <p>搜索命中的文本在消息列中以高亮标记显示。adb 模式下,输入或切换搜索选项会暂停尾随。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-9" open>
+      <summary><h2>9. 行号跳转</h2></summary>
+      <div class="sec-body">
+        <p>搜索框右侧是<strong>行号跳转框</strong>(<code>Cmd/Ctrl+G</code> 快速聚焦):</p>
+        <ol>
+          <li>输入目标<strong>行号</strong>(指原始文件/会话中的行号,即"行号"列显示的数字);</li>
+          <li>按 <strong>Enter</strong> 或点"跳转",目标行居中显示并选中。</li>
+        </ol>
+        <p><strong>注意</strong>:如果目标行被当前过滤条件隐藏(不在当前结果里),跳转不会发生;请先放宽过滤条件再跳。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-10" open>
+      <summary><h2>10. 书签</h2></summary>
+      <div class="sec-body">
+        <h3>10.1 标记与取消</h3>
+        <ul>
+          <li><strong>双击</strong>某一行:切换该行书签(行首书签列出现/消失图标);</li>
+          <li><strong>右键</strong>某一行(或先拖选多行文本再右键):弹出菜单,选"<strong>标记选中行</strong>"批量打书签,或"<strong>取消标记</strong>"批量移除。</li>
+        </ul>
+        <h3>10.2 书签导航</h3>
+        <ul>
+          <li><strong>F2</strong>:跳到上一个书签;<strong>F3</strong>:跳到下一个书签(到头/到尾会回绕);</li>
+          <li>只在<strong>当前过滤结果可见</strong>的书签间跳转;</li>
+          <li>配合"仅标记"芯片可以只看所有书签行。</li>
+        </ul>
+        <h3>10.3 持久化</h3>
+        <p>书签自动保存在<strong>日志文件同目录</strong>的侧车文件中,文件名为 <code>&lt;日志文件名&gt;.lfbookmarks.toml</code>(例如 <code>device.log</code> 对应 <code>device.log.lfbookmarks.toml</code>)。下次打开同一文件时书签自动恢复。</p>
+        <p><strong>注意</strong>:若日志所在目录<strong>只读</strong>(如挂载的只读盘、无写权限的目录),打/取消书签时保存会失败并报错。请把日志复制到可写目录后再打书签。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-11" open>
+      <summary><h2>11. Minimap(小地图)</h2></summary>
+      <div class="sec-body">
+        <p>表格左侧的细长条是整个当前结果的纵览:</p>
+        <ul>
+          <li><strong>红色刻度 = 错误密度</strong>:每个刻度代表一段区域内的 Error/Fatal 行,<strong>颜色越深(越不透明),该区域错误越密集</strong>;</li>
+          <li><strong>蓝色段 = 书签位置</strong>(开启"仅标记"时整条显示为连续蓝色);</li>
+          <li><strong>浅色滑块 = 当前视口</strong>在全文中的位置。</li>
+        </ul>
+        <p><strong>怎么用:</strong></p>
+        <ul>
+          <li><strong>点击</strong>小地图任意位置:表格立即定位到对应区域;</li>
+          <li><strong>按住拖拽</strong>:连续滚动定位(点在视口滑块内拖动为抓取式拖动,不跳变);</li>
+          <li>拖动小地图会暂停尾随。</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="section" id="sec-12" open>
+      <summary><h2>12. 导出</h2></summary>
+      <div class="sec-body">
+        <p>点工具栏的<strong>导出图标</strong>(下载箭头)打开导出对话框。</p>
+        <p><strong>怎么做:</strong></p>
+        <ol>
+          <li>选导出模式:
+            <ul>
+              <li><strong>当前结果</strong>:再从下拉选择内容——<code>全部日志</code> / <code>当前结果</code>(默认,即当前过滤后的行)/ <code>已标记</code>(书签行)/ <code>错误/Fatal</code>;</li>
+              <li><strong>行号范围</strong>:填开始行、结束行(原始行号);</li>
+            </ul>
+          </li>
+          <li>选<strong>输出文件</strong>:点文件夹按钮打开保存对话框(默认名 <code>logfilter-export.log</code>,支持 <code>.log</code>/<code>.txt</code>),或直接输入路径;</li>
+          <li>点<strong>导出</strong>:按钮变为"导出中 · 已写入 N 行"实时显示进度;导出期间出现<strong>取消</strong>按钮,点它中止;</li>
+          <li>完成后对话框内显示"已导出 N 行 · M bytes";同时窗口会弹出全局 <strong>toast 提示</strong>,附带"<strong>打开所在目录</strong>"按钮,一键在文件管理器中定位导出文件。即使你在导出过程中关掉了对话框,完成时 toast 仍会弹出。</li>
+        </ol>
+        <p>导出在后台分块进行,不会卡住界面,大文件导出期间可以继续浏览日志。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-13" open>
+      <summary><h2>13. 切分大文件</h2></summary>
+      <div class="sec-body">
+        <p>点工具栏的<strong>切分图标</strong>打开"切分日志"对话框,把一个大日志文件切成多个小文件。</p>
+        <p><strong>怎么做:</strong></p>
+        <ol>
+          <li><strong>源文件</strong>:默认为当前打开的文件,可点文件夹按钮另选;</li>
+          <li><strong>输出目录</strong>:默认为设置中的存储位置,可另选;</li>
+          <li><strong>方式</strong>:
+            <ul>
+              <li><strong>按行数</strong>:每份固定行数(默认 100000 行);</li>
+              <li><strong>按字节</strong>:每份约定字节数,<strong>按行对齐——绝不会把一行从中间切断</strong>,因此每份实际大小会略有出入;</li>
+            </ul>
+          </li>
+          <li>点<strong>切分</strong>:按钮显示"切分中 · 已生成 N 份"进度;完成后显示"已生成 N 个文件 · M bytes"。</li>
+        </ol>
+      </div>
+    </details>
+
+    <details class="section" id="sec-14" open>
+      <summary><h2>14. 设置</h2></summary>
+      <div class="sec-body">
+        <p>点工具栏的<strong>齿轮图标</strong>打开设置对话框,修改后点<strong>保存</strong>生效:</p>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>设置项</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>主题</strong></td><td>浅色 / 深色(工具栏的太阳/月亮按钮也可随时一键切换)</td></tr>
+              <tr><td><strong>配置文件</strong></td><td>只读展示当前配置文件路径</td></tr>
+              <tr><td><strong>编码</strong></td><td><code>UTF-8</code>(默认)或 <code>Local</code>(本地编码),影响日志文本的解码方式</td></tr>
+              <tr><td><strong>存储位置</strong></td><td>adb 抓取会话文件的保存目录;留空用默认位置</td></tr>
+              <tr><td><strong>ADB 路径</strong></td><td>手动指定 adb 可执行文件;留空则自动在 PATH 和常见 SDK 位置扫描</td></tr>
+              <tr><td><strong>字体</strong></td><td>表格字号,10–20</td></tr>
+              <tr><td><strong>行高</strong></td><td>表格行高,16–32</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>配置以 TOML 格式存放在各平台标准位置:Windows <code>%APPDATA%\LogFilter</code>、macOS <code>~/Library/Application Support/LogFilter</code>、Linux <code>~/.config/logfilter</code>。窗口尺寸、表格列布局、最近文件、上次的过滤条件、命令预设等都会自动记忆。</p>
+      </div>
+    </details>
+
+    <details class="section" id="sec-15" open>
+      <summary><h2>15. 快捷键一览</h2></summary>
+      <div class="sec-body">
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>快捷键</th><th>功能</th></tr></thead>
+            <tbody>
+              <tr><td><code>Cmd/Ctrl + O</code></td><td>打开文件</td></tr>
+              <tr><td><code>Cmd/Ctrl + F</code></td><td>聚焦搜索框(并全选已有内容)</td></tr>
+              <tr><td><code>Cmd/Ctrl + G</code></td><td>聚焦行号跳转框</td></tr>
+              <tr><td><code>F2</code></td><td>上一个书签</td></tr>
+              <tr><td><code>F3</code></td><td>下一个书签</td></tr>
+              <tr><td><code>Cmd/Ctrl + C</code></td><td>复制表格中选中的整行文本</td></tr>
+              <tr><td><code>Enter</code>(命令框)</td><td>提交 logcat 命令</td></tr>
+              <tr><td><code>Escape</code>(命令框)</td><td>放弃修改,恢复上次命令</td></tr>
+              <tr><td><code>Enter</code>(跳转框)</td><td>跳转到行号</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details class="section" id="sec-16" open>
+      <summary><h2>16. 常见问题(FAQ)</h2></summary>
+      <div class="sec-body">
+        <div class="faq-item">
+          <p class="q">Q:设备下拉显示"无在线设备"?</p>
+          <p class="a">A:确认设备已开启 USB 调试且数据线连接正常;在设备上允许调试授权弹窗。下拉每 4 秒自动刷新,不用手动操作。若列表里有设备但置灰,说明它处于 offline/unauthorized 状态,重插数据线或在设备上重新授权。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:点 Start 报错 "adb executable was not found"?</p>
+          <p class="a">A:电脑上没有 adb 或不在自动扫描范围内。打开设置 → <strong>ADB 路径</strong>,点文件夹按钮选中 adb 可执行文件(Windows 为 <code>adb.exe</code>)并保存;或安装 Android platform-tools 并加入 PATH。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:想清掉屏幕上的旧日志重新抓?</p>
+          <p class="a">A:点工具栏的 🗑(Clear)。它会清空当前内容并新建会话文件,立即继续抓取。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:打开几个 GB 的大文件,怎么知道加载好了没有?</p>
+          <p class="a">A:打开后立刻就能浏览,同时看<strong>状态栏</strong>的"索引 x%":显示"进行中"表示后台还在建索引,过滤/搜索结果会随进度补全;到 100% 后所有功能覆盖全文件。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:Resume 续抓后看到重复的日志行?</p>
+          <p class="a">A:正常现象。续抓用 <code>logcat -T &lt;最后时间戳&gt;</code>,边界毫秒内的日志会被再次收取,因此同一毫秒可能出现少量重复,不会漏日志。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:点 Resume 后立刻就停了?</p>
+          <p class="a">A:个别老设备的 logcat 不支持 <code>-T &lt;时间&gt;</code> 参数,进程会立即退出,表现为流自动停止。请直接点 ▶ 重新开始一次全新抓取。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:跳转行号没反应?</p>
+          <p class="a">A:目标行被当前过滤条件隐藏了。恢复级别为"全部"、关闭相关过滤字段后再试。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:打书签时报错?</p>
+          <p class="a">A:书签保存在日志文件同目录的 <code>.lfbookmarks.toml</code> 侧车文件里,目录只读时会保存失败。把日志文件复制到可写目录后再打开即可。</p>
+        </div>
+        <div class="faq-item">
+          <p class="q">Q:<code>--------- beginning of main</code> 这类分隔行不见了?</p>
+          <p class="a">A:你选择了级别子集。这类行没有级别字段,只在级别为"全部"时显示。</p>
+        </div>
+      </div>
+    </details>
+
+    <p class="no-result" id="noResult">没有章节命中当前关键词。</p>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var root = document.documentElement;
+  var THEME_KEY = "logfilter-manual-theme";
+  var media = window.matchMedia("(prefers-color-scheme: dark)");
+
+  /* ---------- 主题:跟随系统 + 手动切换 + localStorage 记忆 ---------- */
+  function applyTheme(theme) {
+    root.dataset.theme = theme === "dark" ? "dark" : "light";
+  }
+  function storedTheme() {
+    try { return localStorage.getItem(THEME_KEY); } catch (e) { return null; }
+  }
+  function initTheme() {
+    var saved = storedTheme();
+    if (saved === "dark" || saved === "light") applyTheme(saved);
+    else applyTheme(media.matches ? "dark" : "light");
+  }
+  initTheme();
+  if (media.addEventListener) {
+    media.addEventListener("change", function (e) {
+      if (!storedTheme()) applyTheme(e.matches ? "dark" : "light");
+    });
+  }
+  document.getElementById("themeBtn").addEventListener("click", function () {
+    var next = root.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* 忽略 */ }
+  });
+
+  /* ---------- 章节 / 目录 ---------- */
+  var sections = Array.prototype.slice.call(document.querySelectorAll("details.section"));
+  var tocLinks = Array.prototype.slice.call(document.querySelectorAll("#tocList a"));
+  var linkById = {};
+  tocLinks.forEach(function (a) { linkById[a.getAttribute("href").slice(1)] = a; });
+
+  tocLinks.forEach(function (a) {
+    a.addEventListener("click", function () {
+      var sec = document.getElementById(a.getAttribute("href").slice(1));
+      if (sec) sec.open = true; /* 跳转前展开目标章节 */
+      if (window.innerWidth <= 720) tocBox.open = false;
+    });
+  });
+
+  document.getElementById("expandAll").addEventListener("click", function () {
+    sections.forEach(function (s) { if (s.style.display !== "none") s.open = true; });
+  });
+  document.getElementById("collapseAll").addEventListener("click", function () {
+    sections.forEach(function (s) { s.open = false; });
+  });
+
+  /* ---------- 移动端目录折叠 ---------- */
+  var tocBox = document.getElementById("tocBox");
+  function syncToc() {
+    if (window.innerWidth > 720) tocBox.open = true;
+  }
+  syncToc();
+  window.addEventListener("resize", syncToc);
+  if (window.innerWidth <= 720) tocBox.open = false;
+
+  /* ---------- Scrollspy:滚动高亮当前章节 ---------- */
+  var spyTicking = false;
+  function updateSpy() {
+    spyTicking = false;
+    var offset = 80;
+    var current = null;
+    for (var i = 0; i < sections.length; i++) {
+      var s = sections[i];
+      if (s.style.display === "none") continue;
+      if (s.getBoundingClientRect().top <= offset) current = s;
+      else if (current) break;
+    }
+    if (!current) {
+      for (var j = 0; j < sections.length; j++) {
+        if (sections[j].style.display !== "none") { current = sections[j]; break; }
+      }
+    }
+    tocLinks.forEach(function (a) { a.classList.remove("active"); });
+    if (current && linkById[current.id]) {
+      var link = linkById[current.id];
+      link.classList.add("active");
+      if (link.scrollIntoView && window.innerWidth > 720) {
+        link.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+  window.addEventListener("scroll", function () {
+    if (!spyTicking) { spyTicking = true; requestAnimationFrame(updateSpy); }
+  }, { passive: true });
+  updateSpy();
+
+  /* ---------- 即时过滤:标题 + 正文匹配章节并高亮命中 ---------- */
+  var filterInput = document.getElementById("filterInput");
+  var filterStat = document.getElementById("filterStat");
+  var noResult = document.getElementById("noResult");
+  var openSnapshot = null;
+
+  function clearMarks(rootEl) {
+    var marks = rootEl.querySelectorAll("mark.flt-hit");
+    for (var i = 0; i < marks.length; i++) {
+      var m = marks[i];
+      m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+    }
+    rootEl.normalize();
+  }
+
+  function markNode(node, query) {
+    if (node.nodeType === 3) {
+      var text = node.nodeValue;
+      var lower = text.toLowerCase();
+      var idx = lower.indexOf(query);
+      if (idx === -1) return;
+      var frag = document.createDocumentFragment();
+      var last = 0;
+      while (idx !== -1) {
+        if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+        var mk = document.createElement("mark");
+        mk.className = "flt-hit";
+        mk.textContent = text.slice(idx, idx + query.length);
+        frag.appendChild(mk);
+        last = idx + query.length;
+        idx = lower.indexOf(query, last);
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    } else if (node.nodeType === 1 && node.tagName !== "MARK") {
+      var children = Array.prototype.slice.call(node.childNodes);
+      for (var i = 0; i < children.length; i++) markNode(children[i], query);
+    }
+  }
+
+  function applyFilter() {
+    var q = filterInput.value.trim().toLowerCase();
+
+    if (!q) {
+      sections.forEach(function (s) {
+        clearMarks(s);
+        s.style.display = "";
+      });
+      if (openSnapshot) {
+        sections.forEach(function (s, i) { s.open = openSnapshot[i]; });
+        openSnapshot = null;
+      }
+      tocLinks.forEach(function (a) { a.parentNode.classList.remove("dimmed"); });
+      filterStat.textContent = "";
+      noResult.style.display = "none";
+      updateSpy();
+      return;
+    }
+
+    if (!openSnapshot) openSnapshot = sections.map(function (s) { return s.open; });
+
+    var hits = 0;
+    sections.forEach(function (s) {
+      clearMarks(s);
+      var matched = s.textContent.toLowerCase().indexOf(q) !== -1;
+      s.style.display = matched ? "" : "none";
+      var link = linkById[s.id];
+      if (link) link.parentNode.classList.toggle("dimmed", !matched);
+      if (matched) {
+        hits++;
+        s.open = true;
+        markNode(s, q);
+      }
+    });
+    filterStat.textContent = "命中 " + hits + " / " + sections.length + " 章";
+    noResult.style.display = hits === 0 ? "block" : "none";
+    updateSpy();
+  }
+
+  var debounceTimer = null;
+  filterInput.addEventListener("input", function () {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(applyFilter, 150);
+  });
+})();
+</script>
+</body>
+</html>

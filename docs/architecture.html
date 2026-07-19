@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LogFilter 架构文档</title>
+<script>
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('lf-theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') {
+    t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', t);
+})();
+</script>
+<style>
+:root {
+  --bg: #f5f6f9;
+  --panel: #ffffff;
+  --text: #1f2430;
+  --muted: #5b6472;
+  --border: #e2e6ee;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, .10);
+  --code-bg: #edf0f6;
+  --code-text: #37415b;
+  --pre-bg: #f0f2f7;
+  --note-bg: #fbf6e9;
+  --warn: #b45309;
+  --warn-bg: rgba(217, 119, 6, .09);
+  --line: #8b97ab;
+  --fe: #2f6fdb;
+  --cmd: #c07a10;
+  --core: #0d9268;
+  --fe-bg: rgba(59, 130, 246, .07);
+  --cmd-bg: rgba(217, 119, 6, .07);
+  --core-bg: rgba(13, 146, 104, .07);
+  --mod-bg: #ffffff;
+  --mod-hover: rgba(37, 99, 235, .12);
+  --shadow: 0 1px 3px rgba(15, 23, 42, .08);
+  --tbl-head: #f1f3f8;
+}
+[data-theme="dark"] {
+  --bg: #0f1420;
+  --panel: #161d2c;
+  --text: #e6eaf2;
+  --muted: #9aa4b5;
+  --border: #2a3245;
+  --accent: #6ea0ff;
+  --accent-soft: rgba(110, 160, 255, .14);
+  --code-bg: #222c42;
+  --code-text: #cdd7ea;
+  --pre-bg: #131a2a;
+  --note-bg: #2a2717;
+  --warn: #e5a04a;
+  --warn-bg: rgba(229, 160, 74, .12);
+  --line: #74819a;
+  --fe: #7aa7f5;
+  --cmd: #e3a94f;
+  --core: #4cc39a;
+  --fe-bg: rgba(122, 167, 245, .08);
+  --cmd-bg: rgba(227, 169, 79, .08);
+  --core-bg: rgba(76, 195, 154, .08);
+  --mod-bg: #1b2334;
+  --mod-hover: rgba(110, 160, 255, .16);
+  --shadow: 0 1px 3px rgba(0, 0, 0, .35);
+  --tbl-head: #1b2334;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  font-size: 15px;
+  line-height: 1.75;
+}
+code, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Code", monospace;
+}
+code {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border-radius: 4px;
+  padding: .08em .35em;
+  font-size: .88em;
+  word-break: break-all;
+}
+pre {
+  background: var(--pre-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  line-height: 1.6;
+}
+pre code { background: none; padding: 0; color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+strong { font-weight: 650; }
+
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 60;
+  display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.topbar .title { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .spacer { flex: 1; }
+.topbar button {
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid transparent; border-radius: 6px;
+  padding: 5px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+.topbar button:hover { border-color: var(--accent); }
+#menuBtn { display: none; }
+
+.sidebar {
+  position: fixed; top: 52px; left: 0; bottom: 0; width: 272px; z-index: 50;
+  background: var(--panel); border-right: 1px solid var(--border);
+  overflow-y: auto; padding: 14px 10px 48px;
+}
+.toc { list-style: none; margin: 0; padding: 0; }
+.toc li { margin: 0; }
+.toc a {
+  display: block; padding: 4px 10px; border-radius: 6px;
+  color: var(--muted); font-size: 13.5px; line-height: 1.5;
+}
+.toc a:hover { color: var(--text); background: var(--accent-soft); text-decoration: none; }
+.toc a.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.toc .sub a { padding-left: 26px; font-size: 12.5px; }
+.backdrop {
+  display: none; position: fixed; inset: 52px 0 0 0; z-index: 45;
+  background: rgba(0, 0, 0, .4);
+}
+
+main { margin-left: 272px; padding: 76px 36px 90px; max-width: 1180px; }
+.page-head h1 { font-size: 26px; margin: 0 0 10px; }
+.intro-note {
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  border-radius: 0 8px 8px 0; padding: 10px 16px; color: var(--muted); font-size: 14px;
+}
+.meta-list { color: var(--muted); font-size: 14px; padding-left: 20px; }
+section { margin-top: 44px; }
+h2 {
+  font-size: 21px; margin: 0 0 14px; padding-bottom: 8px;
+  border-bottom: 2px solid var(--border); scroll-margin-top: 70px;
+}
+h3 { font-size: 17px; margin: 28px 0 10px; scroll-margin-top: 70px; }
+h2 .no, h3 .no { color: var(--accent); margin-right: 8px; }
+p { margin: 10px 0; }
+ul, ol { margin: 10px 0; padding-left: 24px; }
+li { margin: 4px 0; }
+li > ul { margin: 4px 0; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; }
+table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 560px; }
+table.tbl th, table.tbl td {
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border);
+  vertical-align: top; line-height: 1.6;
+}
+table.tbl th { background: var(--tbl-head); font-weight: 650; white-space: nowrap; }
+table.tbl tr:last-child td { border-bottom: none; }
+
+.rule-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 14px 0; }
+.rule-card {
+  background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+  border-radius: 8px; padding: 12px 16px; box-shadow: var(--shadow); font-size: 14px;
+}
+.rule-card .rc-title { font-weight: 700; margin-bottom: 4px; }
+
+.inv-card {
+  background: var(--panel); border: 1px solid var(--border); border-left: 5px solid var(--accent);
+  border-radius: 10px; padding: 14px 20px; margin: 16px 0; box-shadow: var(--shadow);
+}
+.inv-card > h3 { margin: 0 0 8px; }
+.inv-card .tag {
+  display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+  color: var(--accent); background: var(--accent-soft); border-radius: 4px;
+  padding: 1px 8px; margin-right: 8px; vertical-align: 2px;
+}
+.inv-card.warn { border-left-color: var(--warn); }
+.inv-card.warn .tag { color: var(--warn); background: var(--warn-bg); }
+.inv-quote {
+  border-left: 4px solid var(--accent); background: var(--accent-soft);
+  border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 12px 0;
+  font-weight: 650; font-size: 15px;
+}
+.lesson-card {
+  border: 1px solid var(--border); border-left: 5px solid var(--warn);
+  background: var(--warn-bg); border-radius: 10px; padding: 12px 18px; margin: 14px 0;
+}
+
+.diagram-wrap {
+  overflow-x: auto; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px; margin: 14px 0; box-shadow: var(--shadow);
+}
+svg.diagram { display: block; width: 100%; height: auto; min-width: 860px; }
+svg.diagram text { font-family: inherit; fill: var(--text); }
+.diagram-tip {
+  margin: -4px 0 16px; padding: 8px 14px; border: 1px dashed var(--border);
+  border-radius: 8px; color: var(--muted); font-size: 13px; min-height: 38px;
+}
+.diagram-tip.on { border-color: var(--accent); color: var(--text); }
+.diagram-tip strong { color: var(--accent); }
+
+.layer-box { rx: 12; stroke-width: 1.5; }
+.layer-fe   { fill: var(--fe-bg);   stroke: var(--fe); }
+.layer-cmd  { fill: var(--cmd-bg);  stroke: var(--cmd); }
+.layer-core { fill: var(--core-bg); stroke: var(--core); }
+.layer-title { font-size: 15px; font-weight: 700; }
+.layer-sub { font-size: 12px; fill: var(--muted); }
+.arch-mod { cursor: pointer; }
+.arch-mod rect {
+  fill: var(--mod-bg); stroke: var(--border); stroke-width: 1;
+  transition: fill .12s, stroke .12s;
+}
+.arch-mod text { pointer-events: none; }
+.arch-mod .m-name { font-size: 12.5px; font-weight: 600; text-anchor: middle; }
+.arch-mod .m-sub { font-size: 10.5px; fill: var(--muted); text-anchor: middle; }
+.arch-mod:hover rect { fill: var(--mod-hover); stroke: var(--accent); stroke-width: 1.8; }
+.arch-mod:hover .m-name { fill: var(--accent); }
+.arch-arrow { stroke: var(--line); stroke-width: 1.6; }
+.arch-arrow-label { font-size: 12.5px; fill: var(--muted); }
+
+.lane-box { fill: var(--mod-bg); stroke: var(--border); rx: 7; }
+.lane-title { font-size: 13px; font-weight: 650; text-anchor: middle; }
+.lifeline { stroke: var(--border); stroke-width: 1.2; stroke-dasharray: 4 4; }
+.seq-line { stroke: var(--line); stroke-width: 1.5; marker-end: url(#mArrow); }
+.seq-line.ret { stroke-dasharray: 5 4; }
+.seq-label { font-size: 12px; fill: var(--muted); text-anchor: middle; }
+.seq-note rect { fill: var(--note-bg); stroke: var(--border); rx: 6; }
+.seq-note text { font-size: 11.5px; text-anchor: middle; }
+.loop-frame { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 6 4; rx: 8; }
+.loop-label { font-size: 11.5px; font-weight: 650; fill: var(--muted); }
+.seq-step { transition: opacity .15s; }
+.seq-step:hover .seq-line { stroke: var(--accent); stroke-width: 2.2; marker-end: url(#mArrowAccent); }
+.seq-step:hover .seq-label, .seq-step:hover .seq-note text { fill: var(--accent); font-weight: 650; }
+.seq-step:hover .seq-note rect { stroke: var(--accent); stroke-width: 1.6; }
+svg.diagram:has(.seq-step:hover) .seq-step:not(:hover) { opacity: .35; }
+
+.flow-step rect.fbox {
+  fill: var(--mod-bg); stroke: var(--border); stroke-width: 1.2; rx: 10;
+  transition: fill .12s, stroke .12s;
+}
+.flow-step .f-title { font-size: 13.5px; font-weight: 700; text-anchor: middle; }
+.flow-step .f-line { font-size: 11.5px; fill: var(--muted); text-anchor: middle; }
+.flow-step rect.fsub { fill: var(--accent-soft); stroke: var(--border); rx: 8; }
+.flow-step:hover rect.fbox { stroke: var(--accent); stroke-width: 2; fill: var(--mod-hover); }
+.flow-step:hover .f-title { fill: var(--accent); }
+.flow-step { transition: opacity .15s; }
+svg.diagram:has(.flow-step:hover) .flow-step:not(:hover) { opacity: .4; }
+.flow-arrow { stroke: var(--line); stroke-width: 1.6; marker-end: url(#mArrow); }
+
+.ipc-filter-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0 4px; }
+.ipc-filter-bar input {
+  flex: 1; min-width: 220px; max-width: 420px;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 14px; font-size: 14px; font-family: inherit; outline: none;
+}
+.ipc-filter-bar input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ipc-filter-count { color: var(--muted); font-size: 13px; }
+tr.ipc-hidden { display: none; }
+
+footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 16px; }
+
+@media (max-width: 960px) {
+  #menuBtn { display: inline-block; }
+  .sidebar { transform: translateX(-105%); transition: transform .2s ease; box-shadow: none; }
+  .sidebar.open { transform: none; box-shadow: 0 8px 30px rgba(0, 0, 0, .35); }
+  .backdrop.show { display: block; }
+  main { margin-left: 0; padding: 70px 14px 70px; }
+  body { font-size: 14.5px; }
+  h2 { font-size: 19px; }
+  table.tbl { font-size: 13px; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="mArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--line)"></path>
+    </marker>
+    <marker id="mArrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"></path>
+    </marker>
+  </defs>
+</svg>
+
+<div class="topbar">
+  <button id="menuBtn" aria-label="打开目录">目录</button>
+  <div class="title">LogFilter 架构文档</div>
+  <div class="spacer"></div>
+  <button id="themeBtn">切换深色</button>
+</div>
+<div class="backdrop" id="backdrop"></div>
+
+<nav class="sidebar" id="sidebar">
+  <ul class="toc" id="toc">
+    <li><a href="#sec-1">1. 分层总览与架构铁律</a></li>
+    <li><a href="#sec-2">2. logcore 模块地图</a>
+      <ul class="toc sub">
+        <li><a href="#sec-2-1">2.1 model</a></li>
+        <li><a href="#sec-2-2">2.2 mmap_source</a></li>
+        <li><a href="#sec-2-3">2.3 indexer</a></li>
+        <li><a href="#sec-2-4">2.4 parser</a></li>
+        <li><a href="#sec-2-5">2.5 filter</a></li>
+        <li><a href="#sec-2-6">2.6 search</a></li>
+        <li><a href="#sec-2-7">2.7 bookmarks</a></li>
+        <li><a href="#sec-2-8">2.8 session</a></li>
+        <li><a href="#sec-2-9">2.9 adb</a></li>
+        <li><a href="#sec-2-10">2.10 export / split</a></li>
+        <li><a href="#sec-2-11">2.11 config</a></li>
+        <li><a href="#sec-2-12">2.12 encoding</a></li>
+      </ul>
+    </li>
+    <li><a href="#sec-3">3. src-tauri 命令层</a></li>
+    <li><a href="#sec-4">4. 并发模型(重点)</a>
+      <ul class="toc sub">
+        <li><a href="#sec-4-1">4.1 单会话互斥锁</a></li>
+        <li><a href="#sec-4-2">4.2 会话代号与写侧不变量</a></li>
+        <li><a href="#sec-4-3">4.3 任务代号(取消机制)</a></li>
+        <li><a href="#sec-4-4">4.4 流式 reader 线程生命周期</a></li>
+        <li><a href="#sec-4-5">4.5 已知可接受的窄竞态</a></li>
+      </ul>
+    </li>
+    <li><a href="#sec-5">5. 关键流程</a>
+      <ul class="toc sub">
+        <li><a href="#sec-5-1">5.1 打开文件</a></li>
+        <li><a href="#sec-5-2">5.2 流式抓取</a></li>
+        <li><a href="#sec-5-3">5.3 过滤 / 搜索</a></li>
+        <li><a href="#sec-5-4">5.4 分段导出</a></li>
+        <li><a href="#sec-5-5">5.5 切分</a></li>
+      </ul>
+    </li>
+    <li><a href="#sec-6">6. IPC 契约</a>
+      <ul class="toc sub">
+        <li><a href="#sec-6-1">6.1 命令(23 个)</a></li>
+        <li><a href="#sec-6-2">6.2 事件</a></li>
+      </ul>
+    </li>
+    <li><a href="#sec-7">7. 前端要点</a>
+      <ul class="toc sub">
+        <li><a href="#sec-7-1">7.1 zustand store</a></li>
+        <li><a href="#sec-7-2">7.2 RowBlockCache</a></li>
+        <li><a href="#sec-7-3">7.3 虚拟列表分块拉取</a></li>
+        <li><a href="#sec-7-4">7.4 事件接线与节流</a></li>
+        <li><a href="#sec-7-5">7.5 Minimap</a></li>
+        <li><a href="#sec-7-6">7.6 其他 lib</a></li>
+      </ul>
+    </li>
+    <li><a href="#sec-8">8. 性能基线与回归</a></li>
+    <li><a href="#sec-9">9. 测试地图</a>
+      <ul class="toc sub">
+        <li><a href="#sec-9-1">9.1 logcore 单测</a></li>
+        <li><a href="#sec-9-2">9.2 src-tauri 单测</a></li>
+        <li><a href="#sec-9-3">9.3 前端 vitest</a></li>
+      </ul>
+    </li>
+    <li><a href="#sec-10">10. 分支与 CI(工程约定)</a></li>
+  </ul>
+</nav>
+
+<main>
+
+<div class="page-head">
+  <h1>LogFilter 架构文档</h1>
+  <div class="intro-note">
+    面向新接手的开发者 / AI 助手。本文描述<strong>现状代码</strong>的分层、模块职责、并发模型与关键流程;设计动机与需求背景见规范文档
+    <a href="superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md"><code>docs/superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md</code></a>。
+    本文中的行为描述均以源码为准;若与本文不一致,以源码为准并请更新本文。
+  </div>
+  <ul class="meta-list">
+    <li>仓库:<code>github.com/rxmt007/log-filter</code>(私有)</li>
+    <li>技术栈:Rust 引擎(<code>logcore</code>,mmap + 检查点索引)+ Tauri v2 + React 19 / TypeScript + zustand + TanStack Virtual + Tailwind v4(CSS-first)</li>
+    <li>目标:跨平台桌面 logcat 查看器,支持 10GB+ 超大日志文件</li>
+  </ul>
+</div>
+
+<!-- ================================================================ 1 -->
+<section id="sec-1">
+  <h2><span class="no">1.</span>分层总览与架构铁律</h2>
+
+  <div class="diagram-wrap">
+    <svg class="diagram" viewBox="0 0 980 640" role="img" aria-label="前端 / 命令层 / logcore 分层架构图">
+      <!-- 前端层 -->
+      <rect class="layer-box layer-fe" x="20" y="14" width="940" height="152"></rect>
+      <text class="layer-title" x="40" y="42">前端 src/ — React 19 + zustand + TanStack Virtual</text>
+      <text class="layer-sub" x="40" y="63">只经 get_rows(view, start, count≤512) 拉可见窗口 · RowBlockCache(64 块 LRU)+ 事件驱动状态</text>
+      <g class="arch-mod" data-name="store/session.ts" data-tip="zustand 单一 useSession store:会话身份、事件守卫、过滤、搜索/导航、尾随状态机、配置" data-target="sec-7-1">
+        <rect x="40" y="78" width="146" height="70" rx="8"></rect>
+        <text class="m-name" x="113" y="107">store/session.ts</text>
+        <text class="m-sub" x="113" y="126">zustand 单一 store</text>
+      </g>
+      <g class="arch-mod" data-name="lib/rowCache.ts" data-tip="以 200 行为块的行缓存,64 块 LRU 上限,纪元(epoch)防闪烁" data-target="sec-7-2">
+        <rect x="191" y="78" width="146" height="70" rx="8"></rect>
+        <text class="m-name" x="264" y="107">lib/rowCache.ts</text>
+        <text class="m-sub" x="264" y="126">200 行/块 · 64 块 LRU</text>
+      </g>
+      <g class="arch-mod" data-name="components/LogTable.tsx" data-tip="TanStack Virtual 虚拟列表,统一请求 filtered 视图,200 行块分块拉取" data-target="sec-7-3">
+        <rect x="342" y="78" width="146" height="70" rx="8"></rect>
+        <text class="m-name" x="415" y="107">LogTable.tsx</text>
+        <text class="m-sub" x="415" y="126">TanStack Virtual</text>
+      </g>
+      <g class="arch-mod" data-name="App.tsx + lib/streamAppend.ts" data-tip="事件接线与节流:stream:append 75ms 合并、过滤条件 220ms 防抖下发" data-target="sec-7-4">
+        <rect x="493" y="78" width="146" height="70" rx="8"></rect>
+        <text class="m-name" x="566" y="107">App.tsx</text>
+        <text class="m-sub" x="566" y="126">事件接线与节流</text>
+      </g>
+      <g class="arch-mod" data-name="components/Minimap.tsx" data-tip="固定 180 桶 minimap,get_minimap 调用 250ms 节流,错误刻度密度渲染" data-target="sec-7-5">
+        <rect x="644" y="78" width="146" height="70" rx="8"></rect>
+        <text class="m-name" x="717" y="107">Minimap.tsx</text>
+        <text class="m-sub" x="717" y="126">180 桶 · 250ms 节流</text>
+      </g>
+      <g class="arch-mod" data-name="lib/ipc.ts" data-tip="唯一的 invoke/listen 封装层,命令名与事件名只出现在这里" data-target="sec-7-6">
+        <rect x="795" y="78" width="146" height="70" rx="8"></rect>
+        <text class="m-name" x="868" y="107">lib/ipc.ts</text>
+        <text class="m-sub" x="868" y="126">invoke/listen 封装</text>
+      </g>
+      <!-- 前端 -> 命令层 -->
+      <line class="arch-arrow" x1="490" y1="166" x2="490" y2="208" marker-end="url(#mArrow)"></line>
+      <text class="arch-arrow-label" x="505" y="192">Tauri IPC(命令 + 事件)</text>
+      <!-- 命令层 -->
+      <rect class="layer-box layer-cmd" x="20" y="212" width="940" height="124"></rect>
+      <text class="layer-title" x="40" y="240">src-tauri/ 薄命令层 — Tauri v2</text>
+      <g class="arch-mod" data-name="state.rs" data-tip="全局 AppState:会话锁 + 五个代号计数器 + 流运行时" data-target="sec-3">
+        <rect x="40" y="256" width="176" height="64" rx="8"></rect>
+        <text class="m-name" x="128" y="283">state.rs</text>
+        <text class="m-sub" x="128" y="301">会话锁 + 代号 + 流运行时</text>
+      </g>
+      <g class="arch-mod" data-name="commands.rs" data-tip="23 个 Tauri 命令 + 后台任务编排(索引/过滤/搜索/流式/导出/切分)" data-target="sec-3">
+        <rect x="221" y="256" width="176" height="64" rx="8"></rect>
+        <text class="m-name" x="309" y="283">commands.rs</text>
+        <text class="m-sub" x="309" y="301">23 命令 + 后台任务编排</text>
+      </g>
+      <g class="arch-mod" data-name="dto.rs" data-tip="序列化边界:camelCase DTO 与 logcore 类型互转(配置转换会走 normalized())" data-target="sec-3">
+        <rect x="402" y="256" width="176" height="64" rx="8"></rect>
+        <text class="m-name" x="490" y="283">dto.rs</text>
+        <text class="m-sub" x="490" y="301">camelCase 序列化边界</text>
+      </g>
+      <g class="arch-mod" data-name="lib.rs" data-tip="Tauri Builder:注册插件(opener/dialog)、manage(AppState)、命令表" data-target="sec-3">
+        <rect x="583" y="256" width="176" height="64" rx="8"></rect>
+        <text class="m-name" x="671" y="283">lib.rs</text>
+        <text class="m-sub" x="671" y="301">Builder / 插件 / 命令表</text>
+      </g>
+      <g class="arch-mod" data-name="main.rs" data-tip="入口,调 lib::run()" data-target="sec-3">
+        <rect x="764" y="256" width="176" height="64" rx="8"></rect>
+        <text class="m-name" x="852" y="283">main.rs</text>
+        <text class="m-sub" x="852" y="301">入口:lib::run()</text>
+      </g>
+      <!-- 命令层 -> logcore -->
+      <line class="arch-arrow" x1="490" y1="336" x2="490" y2="378" marker-end="url(#mArrow)"></line>
+      <text class="arch-arrow-label" x="505" y="362">普通 Rust 函数调用</text>
+      <!-- logcore 层 -->
+      <rect class="layer-box layer-core" x="20" y="382" width="940" height="244"></rect>
+      <text class="layer-title" x="40" y="410">crates/logcore/ 纯引擎 — 不依赖 Tauri / UI,可独立单测</text>
+      <text class="layer-sub" x="40" y="431">mmap + 检查点行索引 + 借用式解析 + 过滤/搜索/书签/导出/切分</text>
+      <g class="arch-mod" data-name="model" data-tip="一条日志的 owned 解析结果:LogEntry(7 字段)、as_parsed()" data-target="sec-2-1">
+        <rect x="40" y="446" width="124" height="56" rx="8"></rect>
+        <text class="m-name" x="102" y="470">model</text>
+        <text class="m-sub" x="102" y="488">LogEntry 7 字段</text>
+      </g>
+      <g class="arch-mod" data-name="mmap_source" data-tip="只读内存映射文件源:MmapSource(空文件时 mmap 为 None)" data-target="sec-2-2">
+        <rect x="169" y="446" width="124" height="56" rx="8"></rect>
+        <text class="m-name" x="231" y="470">mmap_source</text>
+        <text class="m-sub" x="231" y="488">只读内存映射</text>
+      </g>
+      <g class="arch-mod" data-name="indexer" data-tip="增量检查点行索引:Indexer、for_each_line_span,stride 1024" data-target="sec-2-3">
+        <rect x="298" y="446" width="124" height="56" rx="8"></rect>
+        <text class="m-name" x="360" y="470">indexer</text>
+        <text class="m-sub" x="360" y="488">检查点 stride 1024</text>
+      </g>
+      <g class="arch-mod" data-name="parser" data-tip="logcat 两种格式的借用式解析:ParsedLine、parse_line_ref、level_byte_of_line" data-target="sec-2-4">
+        <rect x="427" y="446" width="124" height="56" rx="8"></rect>
+        <text class="m-name" x="489" y="470">parser</text>
+        <text class="m-sub" x="489" y="488">借用式零分配解析</text>
+      </g>
+      <g class="arch-mod" data-name="filter" data-tip="7 类叠加过滤 + 级别位掩码:FilterSpec、LevelMask、FilterMatcher" data-target="sec-2-5">
+        <rect x="556" y="446" width="124" height="56" rx="8"></rect>
+        <text class="m-name" x="618" y="470">filter</text>
+        <text class="m-sub" x="618" y="488">7 类叠加过滤</text>
+      </g>
+      <g class="arch-mod" data-name="search" data-tip="全字段全局搜索:SearchSpec、SearchMatcher、next_match" data-target="sec-2-6">
+        <rect x="685" y="446" width="124" height="56" rx="8"></rect>
+        <text class="m-name" x="747" y="470">search</text>
+        <text class="m-sub" x="747" y="488">全字段全局搜索</text>
+      </g>
+      <g class="arch-mod" data-name="bookmarks" data-tip="书签侧车持久化:BookmarkStore、sidecar_path_for" data-target="sec-2-7">
+        <rect x="814" y="446" width="124" height="56" rx="8"></rect>
+        <text class="m-name" x="876" y="470">bookmarks</text>
+        <text class="m-sub" x="876" y="488">侧车持久化</text>
+      </g>
+      <g class="arch-mod" data-name="session" data-tip="核心状态机(索引/过滤/搜索/视图/导出原语):Session、RowsView、ExportPlan" data-target="sec-2-8">
+        <rect x="40" y="514" width="146" height="56" rx="8"></rect>
+        <text class="m-name" x="113" y="538">session</text>
+        <text class="m-sub" x="113" y="556">核心状态机</text>
+      </g>
+      <g class="arch-mod" data-name="adb" data-tip="adb 命令构造、设备列举、时间戳提取:LogcatSpec、build_logcat_command、last_log_timestamp" data-target="sec-2-9">
+        <rect x="191" y="514" width="146" height="56" rx="8"></rect>
+        <text class="m-name" x="264" y="538">adb</text>
+        <text class="m-sub" x="264" y="556">命令构造 / 设备 / 时间戳</text>
+      </g>
+      <g class="arch-mod" data-name="export" data-tip="导出摘要与原始字节写出:ExportSummary、write_raw_line" data-target="sec-2-10">
+        <rect x="342" y="514" width="146" height="56" rx="8"></rect>
+        <text class="m-name" x="415" y="538">export</text>
+        <text class="m-sub" x="415" y="556">摘要 + 原始字节写出</text>
+      </g>
+      <g class="arch-mod" data-name="split" data-tip="大文件切分(整行对齐):SplitMode、split_file_with_progress" data-target="sec-2-10">
+        <rect x="493" y="514" width="146" height="56" rx="8"></rect>
+        <text class="m-name" x="566" y="538">split</text>
+        <text class="m-sub" x="566" y="556">整行对齐切分</text>
+      </g>
+      <g class="arch-mod" data-name="config" data-tip="TOML 应用配置(加载/保存/归一化):AppConfig、default_config_dir" data-target="sec-2-11">
+        <rect x="644" y="514" width="146" height="56" rx="8"></rect>
+        <text class="m-name" x="717" y="538">config</text>
+        <text class="m-sub" x="717" y="556">TOML 应用配置</text>
+      </g>
+      <g class="arch-mod" data-name="encoding" data-tip="UTF-8 / 本地编码解码:TextEncoding、ResolvedTextEncoding" data-target="sec-2-12">
+        <rect x="795" y="514" width="146" height="56" rx="8"></rect>
+        <text class="m-name" x="868" y="538">encoding</text>
+        <text class="m-sub" x="868" y="556">UTF-8 / 本地编码</text>
+      </g>
+    </svg>
+  </div>
+  <div class="diagram-tip" id="archTip">悬停模块查看职责一句话;点击模块跳转到对应章节。</div>
+
+  <p>四条<strong>架构铁律</strong>(不可违背):</p>
+  <div class="rule-cards">
+    <div class="rule-card">
+      <div class="rc-title">1. 只传可见窗口</div>
+      前端永不整体接收文件。一律经 <code>get_rows(view, start, count)</code> 取窗口,<code>count</code> 有硬上限(<code>MAX_ROWS = 512</code>,见 <code>src-tauri/src/commands.rs</code>)。任何"把整文件 / 整过滤结果发给前端"的做法都禁止。
+    </div>
+    <div class="rule-card">
+      <div class="rc-title">2. 引擎与 UI 解耦</div>
+      <code>logcore</code> 不依赖 Tauri / UI;解析、索引、过滤、搜索、切分全部可脱离界面单测。
+    </div>
+    <div class="rule-card">
+      <div class="rc-title">3. 绝不整体载入</div>
+      文件用 mmap(<code>MmapSource</code>);过滤 / 搜索只产出<strong>命中行号数组</strong>(<code>Vec&lt;u32&gt;</code>,0-based 源行号),不复制文本。
+    </div>
+    <div class="rule-card">
+      <div class="rc-title">4. 纯函数先行 TDD</div>
+      解析器、过滤器等为纯函数,先写测试再写实现。
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ 2 -->
+<section id="sec-2">
+  <h2><span class="no">2.</span>logcore 模块地图</h2>
+  <p>目录:<code>crates/logcore/src/</code>。</p>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>模块</th><th>职责一句话</th><th>关键类型 / 函数</th></tr></thead>
+      <tbody>
+        <tr><td><code>model</code></td><td>一条日志的 owned 解析结果</td><td><code>LogEntry</code>(7 字段)、<code>as_parsed()</code></td></tr>
+        <tr><td><code>mmap_source</code></td><td>只读内存映射文件源</td><td><code>MmapSource</code>(空文件时 mmap 为 None)</td></tr>
+        <tr><td><code>indexer</code></td><td>增量检查点行索引</td><td><code>Indexer</code>、<code>for_each_line_span</code></td></tr>
+        <tr><td><code>parser</code></td><td>logcat 两种格式的借用式解析</td><td><code>ParsedLine&lt;'a&gt;</code>、<code>parse_line_ref</code>、<code>level_byte_of_line</code></td></tr>
+        <tr><td><code>filter</code></td><td>7 类叠加过滤 + 级别位掩码</td><td><code>FilterSpec</code>、<code>LevelMask</code>、<code>FilterMatcher</code></td></tr>
+        <tr><td><code>search</code></td><td>全字段全局搜索</td><td><code>SearchSpec</code>、<code>SearchMatcher</code>、<code>next_match</code></td></tr>
+        <tr><td><code>bookmarks</code></td><td>书签侧车持久化</td><td><code>BookmarkStore</code>、<code>sidecar_path_for</code></td></tr>
+        <tr><td><code>session</code></td><td>核心状态机(索引/过滤/搜索/视图/导出原语)</td><td><code>Session</code>、<code>RowsView</code>、<code>ExportPlan</code></td></tr>
+        <tr><td><code>adb</code></td><td>adb 命令构造、设备列举、时间戳提取</td><td><code>LogcatSpec</code>、<code>build_logcat_command</code>、<code>last_log_timestamp</code></td></tr>
+        <tr><td><code>export</code></td><td>导出摘要与原始字节写出</td><td><code>ExportSummary</code>、<code>write_raw_line</code></td></tr>
+        <tr><td><code>split</code></td><td>大文件切分(整行对齐)</td><td><code>SplitMode</code>、<code>split_file_with_progress</code></td></tr>
+        <tr><td><code>config</code></td><td>TOML 应用配置(加载/保存/归一化)</td><td><code>AppConfig</code>、<code>default_config_dir</code></td></tr>
+        <tr><td><code>encoding</code></td><td>UTF-8 / 本地编码解码</td><td><code>TextEncoding</code>、<code>ResolvedTextEncoding</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="sec-2-1"><span class="no">2.1</span>model</h3>
+  <p><code>LogEntry</code> 是 owned 的 7 字段结构(<code>date/time/level/pid/tid/tag/message</code>),<strong>不含行号</strong>(行号由 <code>Session</code> 在取行时赋值,1-based)。<code>as_parsed()</code> 提供零拷贝借用视图,让匹配器统一走借用式路径;<code>From&lt;ParsedLine&gt;</code> 只在 <code>get_rows</code> → IPC 边界处使用。</p>
+
+  <h3 id="sec-2-2"><span class="no">2.2</span>mmap_source</h3>
+  <p><code>MmapSource::open</code> 打开只读映射;0 长度文件无法 mmap,内部用 <code>Option&lt;Mmap&gt;</code> 表达,<code>bytes()</code> 对空文件返回空切片。<strong>已知残留风险</strong>(见源码注释):外部截断由 <code>Session::remap_source</code> 侦测重建,但两次 remap 之间发生的截断仍可能在访问已消失页时触发 SIGBUS。</p>
+
+  <h3 id="sec-2-3"><span class="no">2.3</span>indexer —— 检查点行索引(stride 1024)</h3>
+  <p>不为每行存偏移(10GB 文件 ~3 亿行,每行一个 u64 就是 2.4GB)。<code>Indexer</code> 每隔 <code>DEFAULT_CHECKPOINT_STRIDE = 1024</code> 行记录一个 <code>LineCheckpoint { line, offset }</code>;定位第 i 行时二分找到 <code>&lt;= i</code> 的最近检查点,再用 memchr 前向扫到目标行。</p>
+  <ul>
+    <li><code>step(bytes, budget)</code>:从内部 cursor 起最多处理 budget 字节,memchr_iter 找换行;可增量调用(文件增长后再 step 会把"尾行后追加"的新行正确计入)。</li>
+    <li><code>for_each_line_span(bytes, start, end, frontier, f)</code>:<strong>单次前向扫描</strong>产出区间内每行的字节 span,不物化 Vec;<code>line_spans</code> 与导出批量原语共用此扫描——定位一次检查点、一路 memchr 到底(这是导出吞吐 21× 修复的关键,见 <a href="#sec-8">§8</a>)。</li>
+    <li><code>frontier</code> 参数:索引未完成时把行尾裁剪到已索引前沿,防止把未索引的整段剩余当成一行。</li>
+  </ul>
+
+  <h3 id="sec-2-4"><span class="no">2.4</span>parser —— 借用式零分配解析</h3>
+  <p>仅支持两种 logcat 格式,自动识别,失败回退整行作 message:</p>
+  <ul>
+    <li><code>parse_threadtime_ref</code>:<code>MM-DD HH:MM:SS.mmm  PID  TID L Tag: message</code>。真机(Android 9 / MiTV 实测)会把短 tag 填充到固定宽度(如 <code>vold&nbsp;&nbsp;&nbsp;&nbsp;:</code>),解析时 <code>trim_end</code> 去掉填充。</li>
+    <li><code>parse_time_ref</code>:<code>MM-DD HH:MM:SS.mmm L/Tag(  pid): message</code>。用 <code>char_indices</code> 安全取"级别 + 斜杠",多字节字符(中文/emoji)不会 byte 切片 panic。</li>
+  </ul>
+  <p><code>ParsedLine&lt;'a&gt;</code> 七个字段全是源文本切片,过滤/搜索热路径<strong>零堆分配</strong>;owned <code>LogEntry</code> 仅在 IPC 边界生成。</p>
+  <p><code>level_byte_of_line(&amp;[u8]) -&gt; Option&lt;u8&gt;</code>:字节级零分配地判断一行级别(<code>b'V'..b'F'</code>),语义与 <code>parse_line(...).level</code> 一致(有等价性测试)。供索引期错误行扫描(<code>Session::refresh_error_lines</code>)这类热路径使用,避免整行 UTF-8 解码。</p>
+
+  <h3 id="sec-2-5"><span class="no">2.5</span>filter —— 7 类叠加过滤</h3>
+  <p><code>FilterSpec</code> 的 7 类条件为<strong>合取</strong>(全部满足才命中):</p>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>条件</th><th>语义</th><th>匹配方式</th></tr></thead>
+      <tbody>
+        <tr><td><code>levels: LevelMask</code></td><td>级别位掩码(V=1,D=2,I=4,W=8,E=16,F=32)</td><td>全选时不过滤(raw 行也保留);非全选时 raw 行(无级别)被排除</td></tr>
+        <tr><td><code>marked_only</code></td><td>只看书签行</td><td>依赖 <code>is_match_with_mark</code> 传入的 marked 标记</td></tr>
+        <tr><td><code>pid</code> / <code>tid</code></td><td>进程/线程号</td><td><strong>精确相等</strong>(<code>equals_any</code>)</td></tr>
+        <tr><td><code>tag_include</code> / <code>tag_exclude</code></td><td>Tag 显示/排除</td><td>子串包含(<code>contains_any</code>)</td></tr>
+        <tr><td><code>word_include</code> / <code>word_exclude</code></td><td>关键词 查找/排除</td><td>对 message 子串包含</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>每个字段是 <code>FilterField { enabled, pattern, regex }</code>;pattern 按 <code>|</code> 拆多值(任一命中即可),每个值可整体切换为正则。正则编译失败返回 <code>FilterError</code>(命令层转为用户可见错误)。<code>FilterMatcher</code> 是编译后的匹配器(正则只编译一次),<code>requires_mark()</code> 供 <code>Session</code> 决定是否需要查书签。<code>highlights: Vec&lt;HighlightRule&gt;</code>(默认黄/绿/蓝三条)只用于前端渲染,不参与过滤,随 spec 持久化到配置。</p>
+
+  <h3 id="sec-2-6"><span class="no">2.6</span>search</h3>
+  <p><code>SearchSpec { query, regex, case_sensitive }</code>。编译为三态 <code>CompiledSearch</code>:Empty(空查询不命中)/ Plain(区分大小写明文,直接 <code>contains</code>)/ Regex。<strong>大小写不敏感明文</strong>走 regex 引擎(<code>regex::escape</code> 转义字面量 + <code>case_insensitive</code>),兼顾 ASCII 与 Unicode 折叠,避免 lowercase 拷贝(元字符按字面量处理,有测试)。<code>is_entry_match</code> 对 7 个字段逐一尝试。<code>next_match(matches, from, direction)</code> 在升序命中数组上二分 + 环绕导航。</p>
+
+  <h3 id="sec-2-7"><span class="no">2.7</span>bookmarks —— 侧车持久化</h3>
+  <p><code>BookmarkStore</code> 内部 <code>BTreeSet&lt;u64&gt;</code>,存 <strong>1-based 行号</strong>。每次 <code>Session::toggle_bookmark</code> 即时写侧车文件:<code>&lt;日志文件路径&gt;.lfbookmarks.toml</code>(TOML,<code>version/source/lines</code>)。打开文件时自动加载。<code>next(from, direction)</code> 环绕导航。</p>
+
+  <h3 id="sec-2-8"><span class="no">2.8</span>session —— 核心状态机</h3>
+  <p><code>Session</code> 聚合:<code>source(MmapSource) + indexer + filtered(Vec&lt;u32&gt;) + filter_active + filter_spec + search_matches(Vec&lt;u32&gt;) + search_spec + bookmarks + error_lines(Vec&lt;u32&gt;) + error_scan_lines + encoding</code>。要点:</p>
+  <ul>
+    <li><strong>四个视图</strong> <code>RowsView::{All, Filtered, Bookmarks, Errors}</code>。<code>get_rows_for_view</code> 按视图把 view_idx 映射回源行号再解析;Filtered 未激活时自动退化为 All(前端因此可以永远请求 filtered 视图)。返回 <code>(1-based 行号, LogEntry)</code>。</li>
+    <li><strong>默认过滤不物化</strong>:<code>FilterSpec</code> 非激活时 <code>filtered</code> 保持空、<code>filter_active=false</code>,<code>filtered_count()</code> 直接返回 <code>total_lines()</code>——不为"全命中"生成 3 亿元素数组。</li>
+    <li><strong>索引前沿</strong>:<code>indexed_frontier()</code> 在索引未完成时返回 <code>indexer.cursor()</code>,<code>get_rows</code> 等一切读行路径用它裁剪,防止前沿行把未索引剩余吞成一行(有回归测试)。</li>
+    <li><strong>错误行增量扫描</strong>:<code>refresh_error_lines</code> 在每次 <code>index_step</code> 后从 <code>error_scan_lines</code> 游标起用 <code>level_byte_of_line</code> 扫 <code>E/F</code> 行,只前进不回扫。</li>
+    <li><strong>过滤/搜索的三段式 API</strong>(供命令层分块调度):<code>set_filter_pending</code>(存 spec、校验正则;非激活时立即清空返回)→ <code>filter_indexed_range(matcher, start, end)</code>(只读,产出区间命中)→ <code>apply_filter_results</code> / <code>append_filter_results</code>(写回;append 会 sort+dedup)。搜索同构(<code>set_search_pending</code> / <code>search_indexed_range</code> / <code>apply|append_search_results</code>)。</li>
+    <li><strong>remap</strong>:<code>remap_source()</code> 重新 stat 文件——未增长时跳过(流式 reader 每个读块都调,mmap/munmap 不便宜);增长时重映射;<strong>收缩</strong>(外部截断/轮转)时重映射并 <code>reset_derived_state()</code>(新建 Indexer、清 filtered/search/errors、<code>filter_active=false</code>,<code>filter_spec</code> 保留),返回 reset=true,<strong>重扫由调用方负责</strong>。<code>remap_and_index_step(budget)</code> 把 remap 与一步索引合并,返回 <code>RemapStep { reset, done }</code>。</li>
+    <li><strong>命中数组用 u32</strong>:<code>push_hit</code> 对超出 u32 的行号跳过并 debug_assert(10GB 实际 ~3 亿行,距 u32 上限尚有一个数量级)。</li>
+    <li><strong>minimap(buckets)</strong>:书签桶 + 错误桶(<code>MinimapBucket { bucket, count }</code>,密度加权)。过滤激活时<strong>反向遍历</strong>:书签/错误是小集合,逐个二分反查在 filtered 中的位置,避免 O(过滤结果总数) 全扫(minimap 被状态事件高频触发)。</li>
+    <li><strong>导出原语</strong>(供命令层"锁内拷贝、锁外写盘"的分段导出,见 <a href="#sec-5-4">§5.4</a>):
+      <ul>
+        <li><code>export_plan_snapshot(view) -&gt; ExportPlan</code>:一次持锁产出快照。<code>AllLines { total }</code>(行区间,不物化)或 <code>Indices(Vec&lt;u32&gt;)</code>(Filtered 克隆命中数组;Bookmarks/Errors 转换/克隆小数组)。</li>
+        <li><code>append_line_range_bytes(start, count, out)</code> / <code>append_sorted_lines_bytes(indices, out)</code>:把连续区间 / 一批升序行号的<strong>原始字节</strong>(含行尾换行)追加进缓冲,单次前向扫描,返回 (行数, 字节数);越界行跳过。</li>
+        <li><code>validate_export_target(output)</code>:目标不得与源文件相同(含 canonicalize 比对),确保父目录存在。</li>
+        <li>遗留的同步整体导出 <code>export_view</code> / <code>export_range</code> 仍在(内部也分批,<code>EXPORT_CHUNK_LINES = 4096</code>),现作为分段导出等价性测试的 oracle。</li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3 id="sec-2-9"><span class="no">2.9</span>adb</h3>
+  <ul>
+    <li><code>LogcatSpec::parse</code>:只接受 <code>logcat -v threadtime [-b &lt;buffer&gt;]</code>,buffer 限 main/system/radio/events/crash,单个 <code>-b</code>;含 <code>| &amp; ; &gt; &lt;</code> 的复合 shell 命令直接拒绝(防注入)。<code>normalized()</code> 输出规范形式。</li>
+    <li><code>build_logcat_command(adb_path, serial, buffers, since)</code>:构造 <code>adb -s &lt;serial&gt; logcat -v threadtime -b &lt;buf&gt;... [-T &lt;time&gt;]</code>;buffers 去重,空则 main。</li>
+    <li><code>adb_command(path)</code>:<strong>所有 adb 子进程必须经此创建</strong>——Windows 下加 <code>CREATE_NO_WINDOW</code>,抑制控制台窗口闪烁。</li>
+    <li><code>list_devices_with_timeout</code>(默认 5s):轮询 <code>try_wait</code>,超时 kill 子进程返回 <code>TimedOut</code>——adb server 冷启动或 USB 抖动时 <code>adb devices</code> 可能长时间挂起,避免上层轮询堆积。</li>
+    <li><code>parse_adb_devices</code> / <code>select_online_device</code>:解析 <code>adb devices -l</code>(serial、state、model/product/transport_id),优先指定 serial 的在线设备,否则第一台在线设备。</li>
+    <li><code>last_log_timestamp(tail_text)</code>:从会话文件尾部文本反向找最后一条可解析日志的 <code>MM-DD HH:MM:SS.mmm</code> 时间戳,供 resume 时 <code>logcat -T</code> 续抓去重。真机结论(Android 9 / MiTV):<code>-T "&lt;time&gt;"</code> 续抓可用且<strong>包含</strong>边界时间戳(同毫秒有少量重复行,靠追加后的 sort+dedup 语义与用户容忍度消化);旧设备不支持 <code>-T</code> 时 logcat 立即退出,表现为流自动停止。</li>
+    <li><code>resolve_adb_path</code>:配置路径 → <code>PATH</code> 扫描 → 常见位置(<code>ANDROID_HOME</code>/<code>ANDROID_SDK_ROOT</code> 的 platform-tools、<code>~/Library/Android/sdk</code>、<code>~/Android/Sdk</code>、Windows <code>LOCALAPPDATA</code>)。</li>
+  </ul>
+
+  <h3 id="sec-2-10"><span class="no">2.10</span>export / split</h3>
+  <p><code>export.rs</code> 很薄:<code>ExportSummary { written_lines, written_bytes }</code> 与 <code>write_raw_line</code>(写原始字节并返回长度)。分段导出的主体在 <code>Session</code> 原语 + <code>commands.rs::run_chunked_export</code>。</p>
+  <p><code>split.rs</code>:<code>SplitMode::{Bytes(n), Lines(n)}</code>,64KB BufReader <code>read_until(b'\n')</code> 逐行搬运,<strong>永远整行对齐</strong>——分片不截断行;单行超过字节上限时该行独占一个分片(可能超限)。分片命名 <code>&lt;原文件名&gt;.partNNN</code>(001 起)。每关闭一个分片(writer 已 flush、字节已落盘)回调 <code>on_part(已完成分片数, 已处理字节)</code>。0 上限被拒绝。</p>
+
+  <h3 id="sec-2-11"><span class="no">2.11</span>config</h3>
+  <p><code>AppConfig</code>(TOML):theme(light/dark)、adb_path、storage_dir(流式会话文件目录)、encoding、font_size(10..=20)、row_height(16..=32)、table(9 列的宽度/可见性,带 min/max 钳制;message 列强制可见;全隐藏时回退默认)、recent_files(去重、上限 10)、last_filter(含 highlights,空则补默认三条)、current_command / command_presets / command_buffers(logcat 命令预设,经 <code>LogcatSpec</code> 归一化,兼容早期仅有 buffers 的旧配置)、window(960..=3840 × 560..=2160)。</p>
+  <p><code>load_config</code> 不存在时返回默认;加载/保存都会 <code>normalized()</code>。配置目录按平台:Windows <code>%APPDATA%\LogFilter</code>、macOS <code>~/Library/Application Support/LogFilter</code>、Linux <code>$XDG_CONFIG_HOME/logfilter</code>(缺省 <code>~/.config/logfilter</code>),文件名 <code>config.toml</code>。</p>
+
+  <h3 id="sec-2-12"><span class="no">2.12</span>encoding</h3>
+  <p><code>TextEncoding::{Utf8, Local}</code>(配置值 <code>"UTF-8"</code> / <code>"Local"</code> / <code>"本地"</code>)。<code>resolve()</code> 产出 <code>ResolvedTextEncoding</code>:Local 在 Windows 用 <code>GetACP()</code> 映射代码页(936→GBK、950→BIG5、932→Shift_JIS、949→EUC-KR、1250-1258→windows-125x),Unix 读 <code>LC_ALL/LC_CTYPE/LANG</code>。<code>decode()</code> 返回 <code>Cow&lt;str&gt;</code>(UTF-8 用 lossy,其他经 encoding_rs)。<code>Session</code> 每次取行文本都过 <code>encoding.decode</code>。</p>
+</section>
+
+<!-- ================================================================ 3 -->
+<section id="sec-3">
+  <h2><span class="no">3.</span>src-tauri 命令层</h2>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>文件</th><th>职责</th></tr></thead>
+      <tbody>
+        <tr><td><code>src/state.rs</code></td><td>全局 <code>AppState</code>:会话锁 + 五个代号计数器 + 流运行时</td></tr>
+        <tr><td><code>src/commands.rs</code></td><td>23 个 Tauri 命令 + 后台任务编排(索引/过滤/搜索/流式/导出/切分)</td></tr>
+        <tr><td><code>src/dto.rs</code></td><td>序列化边界:camelCase DTO 与 logcore 类型互转(配置转换会走 <code>normalized()</code>)</td></tr>
+        <tr><td><code>src/lib.rs</code></td><td>Tauri Builder:注册插件(opener/dialog)、<code>manage(AppState)</code>、命令表</td></tr>
+        <tr><td><code>src/main.rs</code></td><td>入口,调 <code>lib::run()</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>关键常量(<code>commands.rs</code>):</p>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>常量</th><th>值</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>INDEX_BUDGET</code></td><td>8 MiB</td><td>每步索引预算(步间释放锁)</td></tr>
+        <tr><td><code>SCAN_CHUNK_LINES</code></td><td>4096</td><td>过滤/搜索分块扫描的块大小</td></tr>
+        <tr><td><code>SEARCH_PROGRESS_STRIDE</code></td><td>65 536</td><td>搜索进度事件节流(约 16 块)</td></tr>
+        <tr><td><code>EXPORT_CHUNK_LINES</code></td><td>4096</td><td>导出每批行数</td></tr>
+        <tr><td><code>EXPORT_PROGRESS_STRIDE</code></td><td>65 536</td><td>导出进度事件节流</td></tr>
+        <tr><td><code>STREAM_READ_BUF</code></td><td>64 KiB</td><td>流式 stdout 读块</td></tr>
+        <tr><td><code>MAX_ROWS</code></td><td>512</td><td><code>get_rows</code> 行数硬上限</td></tr>
+        <tr><td><code>STREAM_SESSION_KEEP</code></td><td>10</td><td>流式会话文件保留份数</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>阻塞线程池:<code>list_devices</code>、<code>start_logcat</code>、<code>resume_logcat</code>、<code>export_logs</code>、<code>split_log_file</code> 是 async 命令,内部 <code>spawn_blocking</code>——它们要么等 adb(最长 5s 超时)、要么 join 线程、要么处理 10GB 级 IO,不能占住命令处理线程。其余命令是同步短临界区。</p>
+</section>
+
+<!-- ================================================================ 4 -->
+<section id="sec-4">
+  <h2><span class="no">4.</span>并发模型(重点)</h2>
+
+  <div class="inv-card" id="sec-4-1">
+    <h3><span class="tag">不变量</span><span class="no">4.1</span>单会话互斥锁</h3>
+    <p>全局只有一个会话:<code>AppState.session: Arc&lt;Mutex&lt;Option&lt;Session&gt;&gt;&gt;</code>。所有读写(get_rows、索引步进、扫描块、导出拷贝)都在这把锁下短暂持有。<code>lock_session()</code> 对 poisoned 锁做 <code>into_inner()</code> 恢复(有测试),后台线程 panic 不会永久毒化会话。</p>
+  </div>
+
+  <div class="inv-card" id="sec-4-2">
+    <h3><span class="tag">不变量</span><span class="no">4.2</span>会话代号与写侧不变量</h3>
+    <p><code>AppState.generation: Arc&lt;AtomicU64&gt;</code> 是<strong>会话代号</strong>。写侧不变量(三处替换会话的地方都遵守:<code>open_file</code>、<code>start_logcat_blocking</code>、<code>reset_stream_session_file</code>):</p>
+    <div class="inv-quote">先 <code>generation.fetch_add(1)</code> 领取新代号,再把新 Session 放进锁里。</div>
+    <p>读侧配套的 <code>lock_session_if_current(g)</code>:先拿锁、<strong>持锁状态下</strong>再比对代号。由于写侧"先递增、后替换",持锁后代号仍匹配 ⇒ guard 里的会话一定是该代号对应的那个。所有后台任务(索引线程、过滤/搜索扫描块、流式 reader、导出各阶段)每次持锁都经它校验,代号失效即自行退出。</p>
+  </div>
+
+  <div class="inv-card" id="sec-4-3">
+    <h3><span class="tag">不变量</span><span class="no">4.3</span>任务代号(取消机制)</h3>
+    <p>除会话代号外,有四个独立的任务代号计数器,语义都是"领新号 = 作废旧任务":</p>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th>计数器</th><th>领号</th><th>校验</th><th>谁递增使其失效</th></tr></thead>
+        <tbody>
+          <tr><td><code>filter_task_generation</code></td><td><code>next_filter_task_generation</code></td><td><code>is_current_filter_task</code></td><td>新 <code>set_filter</code>、换会话、索引完成重扫、<code>set_config</code></td></tr>
+          <tr><td><code>search_task_generation</code></td><td><code>next_search_task_generation</code></td><td><code>is_current_search_task</code></td><td>新 <code>search</code>、换会话、同上</td></tr>
+          <tr><td><code>export_task_generation</code></td><td><code>next_export_generation</code></td><td><code>is_current_export</code></td><td>新 <code>export_logs</code>(起始即领号)、<code>cancel_export</code></td></tr>
+          <tr><td><code>stream_generation</code></td><td><code>next_stream_generation</code></td><td><code>is_current_stream_task</code></td><td>任何 <code>take_stream_task</code>(pause/stop/forget)与新流启动</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>没有线程句柄级的强制中断:任务在每个分块 / 每批 / 每个读块的边界自查代号,发现失效就放弃(过滤/搜索直接丢弃部分结果;导出删除半成品文件)。</p>
+  </div>
+
+  <div class="inv-card" id="sec-4-4">
+    <h3><span class="tag">生命周期</span><span class="no">4.4</span>流式 reader 线程生命周期</h3>
+    <ul>
+      <li><strong>启动</strong>(<code>spawn_logcat_stream</code>):列设备 → 选设备 → 构造命令 → spawn adb 子进程(stdout piped)→ 领 stream 代号 → spawn reader 线程。reader 先阻塞在 <code>start_rx.recv()</code> 上,等主流程把 <code>StreamTask { generation, child, handle, serial }</code> 注册进 <code>StreamRuntime</code> 后再发信号放行——保证 reader 干活时任务记录一定已就位。</li>
+      <li><strong>运行</strong>:见 <a href="#sec-5-2">§5.2</a>。</li>
+      <li><strong>停止</strong>(<code>stop_stream_task(mode)</code>):<code>take_stream_task</code> 先领新 stream 代号(作废 reader),按 <code>StreamStop::{Pause, Stop, Forget}</code> 设置 <code>paused</code> 标记、决定 <code>last_request</code> 去留(Pause/Stop 保留供 resume/clear 复用,Forget 丢弃),取出任务;然后 <strong>kill child → join reader 线程</strong>。kill 会让 reader 阻塞中的 <code>read</code> 返回,join 保证线程完全退出后才继续(所以 start/resume 放阻塞线程池)。</li>
+      <li><strong>reader 自身退出路径</strong>:EOF / 读错 / 写盘失败 / 会话代号失效 / stream 代号失效 / 会话为 None / remap 失败。无论哪条路径,退出前都 kill + wait 子进程,并在 <code>StreamRuntime.task</code> 仍是自己代号时清掉它(避免误删后继任务)。</li>
+    </ul>
+  </div>
+
+  <div class="inv-card warn" id="sec-4-5">
+    <h3><span class="tag">窄竞态</span><span class="no">4.5</span>已知可接受的窄竞态(均有源码注释)</h3>
+    <ol>
+      <li><strong>mmap 截断 SIGBUS</strong>(<code>mmap_source.rs</code>):两次 remap 之间外部进程截断文件,访问已消失页可能 SIGBUS。收缩重建路径已把窗口压到最小;Windows 上带活动映射的文件无法被外部截断(OS 报 1224),天然免疫,该场景仅 Unix 存在。</li>
+      <li><strong>导出取消删除文件的 TOCTOU</strong>(<code>commands.rs</code> Phase C 注释,评审定级 Low):同路径快速连开两次导出时,旧任务的 <code>remove_file</code> 理论上可能落在新任务 <code>File::create</code> 之后。实际新任务需走完 Phase A/B 才建文件,时序几乎不可能交叉,且 create 会截断重建。</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ================================================================ 5 -->
+<section id="sec-5">
+  <h2><span class="no">5.</span>关键流程</h2>
+
+  <h3 id="sec-5-1"><span class="no">5.1</span>打开文件(<code>open_file</code>)</h3>
+  <div class="diagram-wrap">
+    <svg class="diagram" viewBox="0 0 1000 620" role="img" aria-label="打开文件流程时序图">
+      <rect class="lane-box" x="40" y="12" width="140" height="36" rx="7"></rect>
+      <text class="lane-title" x="110" y="35">前端</text>
+      <rect class="lane-box" x="300" y="12" width="200" height="36" rx="7"></rect>
+      <text class="lane-title" x="400" y="35">命令层 open_file</text>
+      <rect class="lane-box" x="605" y="12" width="170" height="36" rx="7"></rect>
+      <text class="lane-title" x="690" y="35">后台索引线程</text>
+      <rect class="lane-box" x="810" y="12" width="180" height="36" rx="7"></rect>
+      <text class="lane-title" x="900" y="35">Session(logcore)</text>
+      <line class="lifeline" x1="110" y1="48" x2="110" y2="600"></line>
+      <line class="lifeline" x1="400" y1="48" x2="400" y2="600"></line>
+      <line class="lifeline" x1="690" y1="48" x2="690" y2="600"></line>
+      <line class="lifeline" x1="900" y1="48" x2="900" y2="600"></line>
+
+      <g class="seq-step">
+        <text class="seq-label" x="255" y="76">invoke open_file(path)</text>
+        <line class="seq-line" x1="110" y1="88" x2="396" y2="88"></line>
+      </g>
+      <g class="seq-step seq-note">
+        <rect x="240" y="106" width="320" height="32"></rect>
+        <text x="400" y="127">stop_stream_task(Forget):切换会话前遗弃旧流</text>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="650" y="146">读配置;Session::open_with_encoding</text>
+        <text class="seq-label" x="650" y="162">(加载书签侧车,不建索引)</text>
+        <line class="seq-line" x1="400" y1="176" x2="896" y2="176"></line>
+      </g>
+      <g class="seq-step seq-note">
+        <rect x="215" y="196" width="370" height="48"></rect>
+        <text x="400" y="216">先 generation.fetch_add 领新会话代号,</text>
+        <text x="400" y="234">作废过滤/搜索任务代号,后替换锁内会话</text>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="255" y="270">同步返回初始 Status</text>
+        <line class="seq-line ret" x1="400" y1="282" x2="114" y2="282"></line>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="545" y="306">spawn 后台索引线程</text>
+        <line class="seq-line" x1="400" y1="318" x2="686" y2="318"></line>
+      </g>
+      <rect class="loop-frame" x="330" y="344" width="650" height="190"></rect>
+      <text class="loop-label" x="344" y="364">loop 直到索引完成;代号失效 / 会话被清空即退出</text>
+      <g class="seq-step">
+        <text class="seq-label" x="795" y="386">lock_session_if_current(g) →</text>
+        <text class="seq-label" x="795" y="402">index_step(8MB,顺带增量扫错误行)</text>
+        <line class="seq-line" x1="690" y1="414" x2="896" y2="414"></line>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="400" y="460">释放锁 → emit("index:progress", Status)</text>
+        <text class="seq-label" x="400" y="476">→ yield_now(减少与 get_rows 的锁争用)</text>
+        <line class="seq-line ret" x1="690" y1="490" x2="114" y2="490"></line>
+      </g>
+      <g class="seq-step seq-note">
+        <rect x="430" y="552" width="520" height="48"></rect>
+        <text x="690" y="572">索引完成:rerun_scans_after_index_done —— 若有活跃 filter/search</text>
+        <text x="690" y="590">spec,各领新任务代号 spawn 完整重扫(部分结果被完整结果替换)</text>
+      </g>
+    </svg>
+  </div>
+  <ol>
+    <li><code>stop_stream_task(Forget)</code>——切换会话前遗弃旧流。</li>
+    <li>读配置,<code>Session::open_with_encoding</code>(加载书签侧车,不建索引)。</li>
+    <li><strong>先</strong> <code>generation.fetch_add</code> 领新会话代号,作废过滤/搜索任务代号,<strong>后</strong>替换锁内会话;同步返回初始 <code>Status</code>。</li>
+    <li>spawn 后台索引线程,循环:<code>lock_session_if_current(my_gen)</code> → <code>index_step(8MB)</code>(内部顺带增量扫错误行)→ 释放锁 → <code>emit("index:progress", Status)</code> → <code>yield_now()</code>(减少与 get_rows 的锁争用)。代号失效或会话被清空即退出。</li>
+    <li>索引完成时 <code>rerun_scans_after_index_done</code>:若有活跃 filter/search spec,各领新任务代号,spawn 完整重扫(索引边进行边看到的部分结果被完整结果替换)。</li>
+  </ol>
+
+  <h3 id="sec-5-2"><span class="no">5.2</span>流式抓取(<code>start_logcat</code> → reader 线程)</h3>
+  <div class="diagram-wrap">
+    <svg class="diagram" viewBox="0 0 1040 740" role="img" aria-label="流式抓取时序图">
+      <rect class="lane-box" x="15" y="12" width="200" height="36" rx="7"></rect>
+      <text class="lane-title" x="115" y="35">命令层 start_logcat</text>
+      <rect class="lane-box" x="280" y="12" width="130" height="36" rx="7"></rect>
+      <text class="lane-title" x="345" y="35">adb 子进程</text>
+      <rect class="lane-box" x="490" y="12" width="130" height="36" rx="7"></rect>
+      <text class="lane-title" x="555" y="35">reader 线程</text>
+      <rect class="lane-box" x="680" y="12" width="170" height="36" rx="7"></rect>
+      <text class="lane-title" x="765" y="35">Session + 会话文件</text>
+      <rect class="lane-box" x="905" y="12" width="110" height="36" rx="7"></rect>
+      <text class="lane-title" x="960" y="35">前端</text>
+      <line class="lifeline" x1="115" y1="48" x2="115" y2="728"></line>
+      <line class="lifeline" x1="345" y1="48" x2="345" y2="728"></line>
+      <line class="lifeline" x1="555" y1="48" x2="555" y2="728"></line>
+      <line class="lifeline" x1="765" y1="48" x2="765" y2="728"></line>
+      <line class="lifeline" x1="960" y1="48" x2="960" y2="728"></line>
+
+      <g class="seq-step seq-note">
+        <rect x="25" y="64" width="400" height="66"></rect>
+        <text x="225" y="84">stop_stream_task(Forget);</text>
+        <text x="225" y="100">创建空会话文件 &lt;storage_dir&gt;/logcat-&lt;millis&gt;.log</text>
+        <text x="225" y="116">按文件名清理旧会话(保留最新 10 份,连同书签侧车)</text>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="440" y="170">对空文件建 Session,按写侧不变量换会话;</text>
+        <text class="seq-label" x="440" y="186">构造 StreamRequestState(含 since_timestamp)</text>
+        <line class="seq-line" x1="115" y1="200" x2="761" y2="200"></line>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="230" y="224">spawn adb 子进程(stdout piped)</text>
+        <line class="seq-line" x1="115" y1="236" x2="341" y2="236"></line>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="335" y="260">领 stream 代号,spawn reader 线程(先阻塞在 start_rx.recv(),</text>
+        <text class="seq-label" x="335" y="276">StreamTask 注册进 StreamRuntime 后发信号放行)</text>
+        <line class="seq-line" x1="115" y1="290" x2="551" y2="290"></line>
+      </g>
+      <rect class="loop-frame" x="270" y="316" width="755" height="312"></rect>
+      <text class="loop-label" x="284" y="336">loop 每个 64KB 读块</text>
+      <g class="seq-step">
+        <text class="seq-label" x="450" y="360">read 最多 64KB stdout</text>
+        <line class="seq-line" x1="345" y1="372" x2="551" y2="372"></line>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="660" y="396">以 append 模式写会话文件 + flush</text>
+        <line class="seq-line" x1="555" y1="408" x2="761" y2="408"></line>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="660" y="432">持锁校验(会话代号 + stream 代号)→ remap_and_index_step(8MB)</text>
+        <text class="seq-label" x="660" y="448">(增长门控:文件没长不重映射;收缩重建 reset=true)</text>
+        <line class="seq-line" x1="555" y1="460" x2="761" y2="460"></line>
+      </g>
+      <g class="seq-step seq-note">
+        <rect x="330" y="478" width="450" height="64"></rect>
+        <text x="555" y="497">增量追加扫描:scan_start = reset ? 0 : previous_total</text>
+        <text x="555" y="513">对 [scan_start, total_lines) 跑 append_filter/search_for_range</text>
+        <text x="555" y="529">(append 结果 sort+dedup;截断重建后从 0 重扫,避免漏扫)</text>
+      </g>
+      <g class="seq-step">
+        <text class="seq-label" x="755" y="566">锁外 emit:搜索活跃时发 search:progress(done=true,计数已含新命中),</text>
+        <text class="seq-label" x="755" y="582">再发 stream:append(本块字节数 + 完整 Status)</text>
+        <line class="seq-line ret" x1="555" y1="594" x2="956" y2="594"></line>
+      </g>
+      <g class="seq-step seq-note">
+        <rect x="855" y="602" width="170" height="20" rx="5"></rect>
+        <text x="940" y="616">前端 75ms 合并批处理</text>
+      </g>
+      <g class="seq-step seq-note">
+        <rect x="230" y="648" width="650" height="66"></rect>
+        <text x="555" y="667">reader 退出路径:EOF / 读错 / 写盘失败 / 会话代号失效 / stream 代号失效 /</text>
+        <text x="555" y="683">会话为 None / remap 失败;任一路径退出前都 kill + wait 子进程,</text>
+        <text x="555" y="699">并在任务记录仍是自己代号时清掉它(避免误删后继任务)</text>
+      </g>
+    </svg>
+  </div>
+  <ol>
+    <li><code>stop_stream_task(Forget)</code>;会话文件为 <code>&lt;storage_dir&gt;/logcat-&lt;millis&gt;.log</code>(storage_dir 缺省为配置目录下 <code>sessions/</code>),创建空文件并按文件名清理旧会话(只认 <code>logcat-&lt;纯数字&gt;.log</code>,保留最新 10 份,连同书签侧车删除,尽力而为)。</li>
+    <li>对该文件建 Session(空文件),按写侧不变量换会话;构造 <code>StreamRequestState</code>(adb 路径、serial、buffers、会话路径、会话代号、since_timestamp)。</li>
+    <li><code>spawn_logcat_stream</code> 拉起 adb 子进程与 reader 线程(见 <a href="#sec-4-4">§4.4</a>)。</li>
+    <li>reader 主循环,每个 64KB 读块:
+      <ul>
+        <li><code>read</code> → 以 append 模式<strong>写入会话文件</strong> + flush(引擎侧随后 remap 读到);</li>
+        <li>持锁校验(会话代号 + stream 代号)→ <code>remap_and_index_step(8MB)</code>:remap 有<strong>增长门控</strong>(文件没长就不重映射)与<strong>收缩重建</strong>(reset=true);</li>
+        <li>增量追加扫描:<code>scan_start = reset ? 0 : previous_total</code>,对 <code>[scan_start, total_lines)</code> 跑 <code>append_filter_for_range</code> / <code>append_search_for_range</code>(append 结果 sort+dedup,截断重建后从 0 重扫,避免漏扫);</li>
+        <li>锁外 emit:搜索活跃时发一条 <code>search:progress</code>(done=true,计数已含新命中),再发 <code>stream:append</code>(本块字节数 + 完整 Status)。</li>
+      </ul>
+      前端对 <code>stream:append</code> 做 75ms 批处理(<a href="#sec-7-4">§7.4</a>),后端不再额外节流。</li>
+    <li><strong>pause / resume</strong>:pause 杀流保留 <code>last_request</code>;resume 读会话文件尾部 64KB,<code>last_log_timestamp</code> 提取最后时间戳,带 <code>-T &lt;time&gt;</code> 重启流续抓(尾部无可解析时间戳则全量重放)。<strong>stop</strong> 停流保留 last_request;<strong>clear</strong> 停流后 <code>reset_stream_session_file</code>:<strong>先置锁内会话为 None(释放 mmap)再截断文件</strong>(顺序不可变:Windows 截断带活动映射的文件报 ERROR_USER_MAPPED_FILE,Unix 并发读旧 mmap 会 SIGBUS),删书签侧车,重建 Session 换代号,回填 last_request 的会话代号。</li>
+  </ol>
+
+  <h3 id="sec-5-3"><span class="no">5.3</span>过滤 / 搜索(<code>set_filter</code> / <code>search</code> + 分块扫描)</h3>
+  <ol>
+    <li>命令入口:领<strong>任务代号</strong>,读当前<strong>会话代号</strong>;短临界区内 <code>set_filter_pending</code> / <code>set_search_pending</code>(校验正则、存 spec)。过滤非激活(全选级别、无条件)或搜索空查询走<strong>立即路径</strong>:同步清空结果、直接 emit 终态事件返回,不起后台任务。</li>
+    <li>否则 spawn 扫描线程,核心是 <code>run_chunked_scan</code>:
+      <ul>
+        <li>先持锁取 total_lines 快照;</li>
+        <li>按 4096 行一块循环:<strong>每块持锁</strong>校验会话代号 + 任务代号,失效即返回 None(放弃);锁内跑 <code>filter_indexed_range</code> / <code>search_indexed_range</code>;锁外 <code>on_chunk</code> 回调 + <code>yield_now</code>。</li>
+      </ul>
+    </li>
+    <li>收尾(再次持锁校验后):<code>apply_*_results</code> 写回;若扫描期间 total_lines 又长了(流式追加),对 <code>[快照总数, 当前总数)</code> 补扫一段 <code>append_*_results</code>;emit 终态事件(<code>filter:done</code> / <code>search:progress{done:true}</code>)。</li>
+    <li>搜索的进度事件节流:约每 65 536 行或<strong>首命中出现</strong>时发一条 done=false(首命中可提前上报是因为命中随前向扫描升序累积,<code>matches.first()</code> 即最终首命中);最终 done=true 不受节流影响。</li>
+  </ol>
+
+  <h3 id="sec-5-4"><span class="no">5.4</span>分段导出(<code>export_logs</code> → <code>run_chunked_export</code>)</h3>
+  <p><code>export_logs</code> 起始即领导出代号(顺带作废还在跑的旧导出),入阻塞线程池。<code>run_chunked_export</code> 不依赖 Tauri(进度经注入的回调发事件),可直接单测。四个阶段:</p>
+  <div class="diagram-wrap">
+    <svg class="diagram" viewBox="0 0 940 680" role="img" aria-label="分段导出四阶段流程图">
+      <g class="flow-step">
+        <rect class="fbox" x="90" y="16" width="760" height="64"></rect>
+        <text class="f-title" x="470" y="40">export_logs(入阻塞线程池)—— 起始即领导出代号,作废还在跑的旧导出</text>
+        <text class="f-line" x="470" y="62">run_chunked_export 不依赖 Tauri:进度经注入的回调发事件,可直接单测</text>
+      </g>
+      <line class="flow-arrow" x1="470" y1="80" x2="470" y2="98"></line>
+      <g class="flow-step">
+        <rect class="fbox" x="90" y="100" width="760" height="62"></rect>
+        <text class="f-title" x="470" y="124">Phase 0 · 校验</text>
+        <text class="f-line" x="470" y="146">持锁 validate_export_target(目标 ≠ 源文件、确保父目录存在);range 模式校验 1-based 升序</text>
+      </g>
+      <line class="flow-arrow" x1="470" y1="162" x2="470" y2="180"></line>
+      <g class="flow-step">
+        <rect class="fbox" x="90" y="182" width="760" height="62"></rect>
+        <text class="f-title" x="470" y="206">Phase A · 补索引</text>
+        <text class="f-line" x="470" y="228">循环 index_step(8MB) 直到索引完成;每轮锁外让出、检查导出代号(输出文件尚未创建,取消无半成品可删)</text>
+      </g>
+      <line class="flow-arrow" x1="470" y1="244" x2="470" y2="262"></line>
+      <g class="flow-step">
+        <rect class="fbox" x="90" y="264" width="760" height="168"></rect>
+        <text class="f-title" x="470" y="288">Phase B · 确定导出对象 ExportSource</text>
+        <rect class="fsub" x="100" y="304" width="232" height="112"></rect>
+        <text class="f-title" x="216" y="328" style="font-size:12px">range 模式</text>
+        <text class="f-line" x="216" y="350">Range { first, len }</text>
+        <text class="f-line" x="216" y="368">钳到总行数</text>
+        <text class="f-line" x="216" y="386">不动过滤状态</text>
+        <rect class="fsub" x="354" y="304" width="232" height="112"></rect>
+        <text class="f-title" x="470" y="328" style="font-size:12px">Filtered 且过滤激活</text>
+        <text class="f-line" x="470" y="350">当前 spec 经 run_chunked_scan</text>
+        <text class="f-line" x="470" y="368">重算出局部命中数组</text>
+        <text class="f-line" x="470" y="386">(不写回 session,不打扰 UI 状态)</text>
+        <rect class="fsub" x="608" y="304" width="232" height="112"></rect>
+        <text class="f-title" x="724" y="328" style="font-size:12px">其余视图</text>
+        <text class="f-line" x="724" y="350">All / Bookmarks / Errors,</text>
+        <text class="f-line" x="724" y="368">或 Filtered 未激活退化为 All</text>
+        <text class="f-line" x="724" y="386">持锁一次 export_plan_snapshot</text>
+      </g>
+      <line class="flow-arrow" x1="470" y1="432" x2="470" y2="450"></line>
+      <g class="flow-step">
+        <rect class="fbox" x="90" y="452" width="760" height="118"></rect>
+        <text class="f-title" x="470" y="476">Phase C · 分批写盘(锁外 File::create;每批 4096 行)</text>
+        <text class="f-line" x="470" y="498">批前查导出代号(失效 ⇒ drop writer、删半成品文件、返回 cancelled summary)</text>
+        <text class="f-line" x="470" y="516">→ 持锁用 append_line_range_bytes / append_sorted_lines_bytes 把该批原始字节拷进缓冲</text>
+        <text class="f-line" x="470" y="534">→ 释放锁 → write_all 落盘 → 进度回调(首批必发,其后每 65 536 行发一次)→ yield_now</text>
+      </g>
+      <line class="flow-arrow" x1="470" y1="570" x2="470" y2="588"></line>
+      <g class="flow-step">
+        <rect class="fbox" x="90" y="590" width="760" height="74"></rect>
+        <text class="f-title" x="470" y="614">收尾</text>
+        <text class="f-line" x="470" y="634">结束 flush 并发 done=true 事件(带输出路径,供前端 toast「打开所在目录」)</text>
+        <text class="f-line" x="470" y="652">取消路径由外层补发 cancelled: true 终态事件</text>
+      </g>
+    </svg>
+  </div>
+  <ul>
+    <li><strong>Phase 0(校验)</strong>:持锁 <code>validate_export_target</code>(目标 ≠ 源文件、建父目录);range 模式校验 1-based 升序。</li>
+    <li><strong>Phase A(补索引)</strong>:循环 <code>index_step(8MB)</code> 直到索引完成;每轮锁外让出、检查导出代号(此阶段输出文件尚未创建,取消无半成品可删)。</li>
+    <li><strong>Phase B(确定导出对象 <code>ExportSource</code>)</strong>:
+      <ul>
+        <li>range 模式 → <code>Range { first, len }</code>(钳到总行数,不动过滤状态);</li>
+        <li>Filtered 且过滤激活 → 用当前 spec 经 <code>run_chunked_scan</code> <strong>重算出局部命中数组</strong>(不写回 session,不打扰 UI 状态);</li>
+        <li>其余(All/Bookmarks/Errors、或 Filtered 未激活退化为 All)→ 持锁一次 <code>export_plan_snapshot</code>。</li>
+      </ul>
+    </li>
+    <li><strong>Phase C(分批写盘)</strong>:锁外 <code>File::create</code>;每批 4096 行:批前查导出代号(<strong>失效 ⇒ drop writer、删半成品文件、返回 cancelled summary</strong>)→ 持锁用 <code>append_line_range_bytes</code> / <code>append_sorted_lines_bytes</code> 把该批原始字节拷进缓冲 → 释放锁 → <code>write_all</code> 落盘 → 进度回调(首批必发,其后每 65 536 行发一次)→ <code>yield_now</code>。结束 flush 并发 done=true 事件(带输出路径,供前端 toast「打开所在目录」);取消路径由外层补发 <code>cancelled: true</code> 终态事件。</li>
+  </ul>
+
+  <h3 id="sec-5-5"><span class="no">5.5</span>切分(<code>split_log_file</code>)</h3>
+  <p>入阻塞线程池,直接调 <code>logcore::split::split_file_with_progress</code>(不经 Session,与当前会话无关);每完成一个分片(已 flush)emit <code>split:progress { parts, bytesProcessed }</code>。返回 <code>SplitSummaryDto { parts: Vec&lt;String&gt;, totalBytes }</code>。</p>
+</section>
+
+<!-- ================================================================ 6 -->
+<section id="sec-6">
+  <h2><span class="no">6.</span>IPC 契约</h2>
+  <div class="ipc-filter-bar">
+    <input type="search" id="ipcFilter" placeholder="按命令 / 事件名称即时过滤,如 export、logcat、progress …" aria-label="按名称过滤 IPC 契约表">
+    <span class="ipc-filter-count" id="ipcFilterCount"></span>
+  </div>
+
+  <h3 id="sec-6-1"><span class="no">6.1</span>命令(23 个,<code>src-tauri/src/lib.rs</code> 注册)</h3>
+  <div class="table-wrap">
+    <table class="tbl" id="cmdTable">
+      <thead><tr><th>命令</th><th>入参 → 返回</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>open_file</code></td><td><code>path</code> → <code>Status</code></td><td>打开文件,起后台索引</td></tr>
+        <tr><td><code>list_devices</code></td><td>— → <code>DeviceListDto</code></td><td><code>adb devices -l</code>,5s 超时,阻塞池</td></tr>
+        <tr><td><code>start_logcat</code></td><td><code>StartLogcatRequest{deviceSerial?, command?, buffers[]}</code> → <code>StreamControlDto</code></td><td>起流,阻塞池</td></tr>
+        <tr><td><code>pause_logcat</code></td><td>— → <code>StreamControlDto</code></td><td>停流,保留请求,paused=true</td></tr>
+        <tr><td><code>resume_logcat</code></td><td>— → <code>StreamControlDto</code></td><td>尾部时间戳 <code>-T</code> 续抓,阻塞池</td></tr>
+        <tr><td><code>stop_logcat</code></td><td>— → <code>StreamControlDto</code></td><td>停流</td></tr>
+        <tr><td><code>clear_logcat</code></td><td>— → <code>StreamControlDto</code></td><td>停流 + 截断会话文件重建</td></tr>
+        <tr><td><code>get_status</code></td><td>— → <code>Status</code></td><td>状态快照</td></tr>
+        <tr><td><code>get_rows</code></td><td><code>view, start, count</code> → <code>Vec&lt;Row&gt;</code></td><td><strong>count 硬上限 512</strong>;view ∈ all/filtered/bookmarks/errors;未知 view / 无会话返回空</td></tr>
+        <tr><td><code>set_filter</code></td><td><code>FilterSpecDto</code> → <code>usize</code></td><td>立即路径同步返回;否则起后台任务,结果走 <code>filter:done</code></td></tr>
+        <tr><td><code>get_filtered_count</code></td><td>— → <code>usize</code></td><td>当前结果行数</td></tr>
+        <tr><td><code>search</code></td><td><code>SearchSpecDto</code> → <code>SearchResult</code></td><td>空查询立即清空;否则起任务,结果走 <code>search:progress</code></td></tr>
+        <tr><td><code>search_next</code></td><td><code>fromLineNo, direction</code> → <code>Option&lt;u64&gt;</code></td><td>环绕导航(1-based 行号)</td></tr>
+        <tr><td><code>toggle_bookmark</code></td><td><code>lineNo</code> → <code>bool</code></td><td>切换并立即写侧车</td></tr>
+        <tr><td><code>list_bookmarks</code></td><td>— → <code>Vec&lt;u64&gt;</code></td><td>升序 1-based</td></tr>
+        <tr><td><code>next_bookmark</code></td><td><code>fromLineNo, direction</code> → <code>Option&lt;NavigationTargetDto&gt;</code></td><td>在<strong>当前结果序</strong>内导航(带 resultIndex)</td></tr>
+        <tr><td><code>line_to_result_index</code></td><td><code>lineNo</code> → <code>Option&lt;NavigationTargetDto&gt;</code></td><td>行号 → 当前结果下标(跳转用)</td></tr>
+        <tr><td><code>get_minimap</code></td><td><code>buckets</code> → <code>MinimapDto</code></td><td>书签桶 + 错误密度桶</td></tr>
+        <tr><td><code>export_logs</code></td><td><code>ExportRequest{mode: "view"|"range", view?, startLine?, endLine?, path}</code> → <code>ExportSummaryDto</code></td><td>分段导出,阻塞池,进度走事件</td></tr>
+        <tr><td><code>cancel_export</code></td><td>— → <code>()</code></td><td>递增导出代号</td></tr>
+        <tr><td><code>split_log_file</code></td><td><code>SplitRequest{path, outDir, mode: "bytes"|"lines", value}</code> → <code>SplitSummaryDto</code></td><td>切分,阻塞池</td></tr>
+        <tr><td><code>get_config</code></td><td>— → <code>AppConfigDto</code></td><td>读 config.toml(带 configPath)</td></tr>
+        <tr><td><code>set_config</code></td><td><code>AppConfigDto</code> → <code>AppConfigDto</code></td><td>归一化保存;更新会话编码并重扫过滤/搜索</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>所有 DTO 字段 camelCase(serde rename_all)。<code>Status</code> 结构:<code>totalLines / filteredLines / bookmarkLines / errorLines / indexedBytes / totalBytes / indexing / generation</code>——<strong>generation 随事件下发</strong>,前端据此丢弃旧会话的迟到事件。</p>
+
+  <h3 id="sec-6-2"><span class="no">6.2</span>事件</h3>
+  <div class="table-wrap">
+    <table class="tbl" id="evtTable">
+      <thead><tr><th>事件</th><th>载荷</th><th>发送时机</th></tr></thead>
+      <tbody>
+        <tr><td><code>index:progress</code></td><td><code>Status</code></td><td>后台索引每步(8MB)一次;done 由 <code>indexing=false</code> 表达</td></tr>
+        <tr><td><code>filter:done</code></td><td><code>{filteredLines, generation}</code></td><td>过滤立即路径或后台任务收尾</td></tr>
+        <tr><td><code>search:progress</code></td><td><code>{scanned, matches, firstLine?, done, generation}</code></td><td>节流的中间进度(done=false)+ 终态(done=true);流式追加也会发 done=true 的增量汇总</td></tr>
+        <tr><td><code>stream:append</code></td><td><code>{appendedBytes, status, deviceSerial}</code></td><td>流式 reader 每个 64KB 读块处理完</td></tr>
+        <tr><td><code>split:progress</code></td><td><code>{parts, bytesProcessed}</code></td><td>每关闭一个分片(已 flush)</td></tr>
+        <tr><td><code>export:progress</code></td><td><code>{writtenLines, writtenBytes, done, path?, cancelled}</code></td><td>首批 + 每 65 536 行 + 终态(成功带 path,取消带 cancelled=true)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================================================================ 7 -->
+<section id="sec-7">
+  <h2><span class="no">7.</span>前端要点(<code>src/</code>)</h2>
+
+  <h3 id="sec-7-1"><span class="no">7.1</span>zustand store(<code>store/session.ts</code>)</h3>
+  <p>单一 <code>useSession</code> store,职责:</p>
+  <ul>
+    <li><strong>会话身份</strong>:<code>status</code>(含 generation)、<code>sessionId</code>(每 <code>beginSession</code> 自增,表格据此清缓存滚回顶部)、<code>sourcePath</code> / <code>sourceMode</code>("file" | "adb")。</li>
+    <li><strong>事件守卫</strong>:<code>setStatus</code> 只接受 <code>generation &gt;=</code> 当前值的状态(丢旧会话迟到事件);<code>beginSession</code> 重置视图/搜索/选中/书签等派生状态。</li>
+    <li><strong>过滤</strong>:<code>filter</code>(FilterSpec)+ <code>filterRevision</code>(用户每次改条件自增,驱动 App 的 220ms 防抖下发)+ <code>filterResultRevision</code>(结果集变化自增,驱动表格换纪元重拉)。<code>setFilteredLines(count, {invalidateRows})</code> 可选择只更新计数不作废行缓存(同一条件的重复 <code>filter:done</code> 不闪烁)。</li>
+    <li><strong>搜索/导航</strong>:<code>search</code> spec、<code>searchCount</code>、<code>currentSearchLine</code>、<code>selectedLine</code> / <code>selectedResultIndex</code>、<code>viewportResultIndex</code>(minimap 视口指示)、<code>scrollRequest {index, align, reason, nonce}</code>(nonce 防重放的一次性滚动请求)。</li>
+    <li><strong>尾随状态机</strong>(仅 adb 模式生效):<code>tailFollowing</code> 默认 true;<code>pauseTailFollowing(reason)</code>(点行/搜索/书签跳转/minimap/跳行/向上滚)关闭;<code>setTailFollowingFromViewport(isAtBottom, source)</code> 只在 <code>source==="user"</code> 时按"是否贴底"回写(程序化滚动不算);<code>requestTailFollow(index)</code> 发 align:"end" 的滚动请求;改过滤条件也会暂停尾随。</li>
+    <li><strong>配置</strong>:<code>appConfig</code> / <code>theme</code>;设备列表与 logcat 命令选择状态。</li>
+  </ul>
+
+  <h3 id="sec-7-2"><span class="no">7.2</span>RowBlockCache(<code>lib/rowCache.ts</code>)</h3>
+  <p>以 200 行(<code>WINDOW</code>)为块的行缓存,<strong>64 块 LRU</strong> 上限(约 12 800 行常驻)。用 Map 插入序表达最近使用(命中/写入时 delete 再 set,超限逐出最旧)。<strong>纪元(epoch)防闪烁</strong>:换过滤条件时只递增纪元、<strong>不清缓存</strong>——<code>get</code> 仍返回旧行避免白屏,<code>isFresh</code> 因纪元不匹配返回 false 触发重拉,新数据到位后整块替换。<code>updateRows</code> 供书签切换时原位更新驻留行。只有换会话(sessionId)才真正 <code>clear()</code>。</p>
+
+  <h3 id="sec-7-3"><span class="no">7.3</span>虚拟列表分块拉取(<code>components/LogTable.tsx</code>)</h3>
+  <ul>
+    <li>TanStack Virtual(<code>useVirtualizer</code>,overscan 24,行高来自配置)驱动;行数 = <code>status.filteredLines</code>。</li>
+    <li><strong>统一请求 <code>filtered</code> 视图</strong>(引擎在过滤未激活时自动退化为 All),块大小 200 = <code>get_rows("filtered", blockStart, 200)</code>,远低于 512 上限。</li>
+    <li><code>ensureBlock</code>:块未 fresh 才拉;in-flight Map 去重并发请求;响应回来先校验纪元再写缓存。可见区间只保证首、尾两块(200 行块 + 24 overscan 下最多跨两块)。</li>
+    <li>缓存未命中的行渲染 "..." 占位,数据到位后 <code>force</code> 重渲。</li>
+    <li>滚动语义:程序化滚动(搜索定位/书签跳转/尾随)前 <code>markProgrammaticScroll</code>(160ms 窗口),scroll 事件里据此区分用户/程序,只有用户滚动影响尾随开关;滚轮向上立即暂停尾随;尾随的滚动请求(reason:"tail")先 <code>ensureBlock</code> 末块再滚到底。</li>
+    <li>其他:列宽拖拽/列显隐(持久化进配置)、按选区复制(按可见列拼 tab 文本)、双击切书签、右键范围标记菜单、搜索命中与关键词高亮(<code>lib/highlight.ts</code> 分词,search 命中优先于 highlight 规则)。</li>
+  </ul>
+
+  <h3 id="sec-7-4"><span class="no">7.4</span>事件接线与节流(<code>App.tsx</code> + <code>lib/streamAppend.ts</code>)</h3>
+  <ul>
+    <li><code>index:progress</code> → <code>setStatus</code>(store 内 generation 守卫)。</li>
+    <li><code>filter:done</code> → 比对 generation;用 dispatched/applied 两个请求序号判断"是否新条件的结果",决定 <code>invalidateRows</code>。</li>
+    <li><code>search:progress</code> → 只消费 done=true(中间进度目前仅供将来 UI 用)。</li>
+    <li><code>stream:append</code> → <code>createStreamAppendBatcher</code> <strong>75ms 合并</strong>(累加 appendedBytes,保最后一个 status)后:generation 守卫 → <code>setStatus</code>;若尾随开启则 <code>requestTailFollow(filteredLines - 1)</code>。</li>
+    <li><code>export:progress</code> → done 时全局 toast(成功带「打开所在目录」,取消提示已取消);导出对话框自身另行监听做内联进度。</li>
+    <li>过滤条件 → <strong>220ms 防抖</strong>调 <code>set_filter</code>;<code>lastFilter</code> 600ms 防抖持久化;窗口尺寸 500ms 防抖持久化。快捷键:Ctrl/Cmd+O/F/G,F2/F3 书签导航。</li>
+  </ul>
+
+  <h3 id="sec-7-5"><span class="no">7.5</span>Minimap(<code>components/Minimap.tsx</code> + <code>lib/minimap.ts</code>)</h3>
+  <ul>
+    <li>固定 180 桶(<code>MINIMAP_BUCKETS</code>);对 <code>get_minimap</code> 的调用做 <strong>250ms 节流</strong>(status/书签/过滤结果变化都可能触发)。</li>
+    <li>书签桶合并成连续区段渲染;错误刻度<strong>密度渲染</strong>:透明度 ∝ <code>count / 每桶行数</code>(<code>errorTickStyle</code>,0.16 基础透明度起步)。markedOnly 过滤时书签退化为整条连续带。</li>
+    <li>视口指示条位置由 <code>viewportResultIndex / (resultCount - 1)</code> 计算;拖拽经 requestAnimationFrame 合帧,换算回结果下标后 <code>navigateToResultIndex</code>(reason:"minimap",同时暂停尾随)。</li>
+  </ul>
+
+  <h3 id="sec-7-6"><span class="no">7.6</span>其他 lib</h3>
+  <p><code>lib/ipc.ts</code> 是唯一的 invoke/listen 封装层(命令名与事件名只出现在这里);<code>lib/table.ts</code> 列定义与剪贴板格式;<code>lib/logcatCommand.ts</code> 与引擎 <code>LogcatSpec</code> 同规则的前端预校验;<code>lib/recent.ts</code> 最近文件;<code>lib/sourceDisplay.ts</code> 路径缩略显示。</p>
+</section>
+
+<!-- ================================================================ 8 -->
+<section id="sec-8">
+  <h2><span class="no">8.</span>性能基线与回归</h2>
+  <p>基准工具:<code>crates/logcore/examples/bench.rs</code>。回归跑法:</p>
+  <pre><code>cargo run --release -p logcore --example bench -- [GB] [文件路径]
+# 文件存在且大小匹配时直接复用,不重新生成语料</code></pre>
+  <p>10 GiB / 71,158,201 行实测(macOS Apple Silicon,release,单线程;完整报告:<a href="superpowers/2026-07-06-benchmark-10gb.md"><code>docs/superpowers/2026-07-06-benchmark-10gb.md</code></a>):</p>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>指标</th><th>数值</th></tr></thead>
+      <tbody>
+        <tr><td>索引耗时 / 吞吐</td><td>20.6s / 498 MB/s(3.46M 行/s)</td></tr>
+        <tr><td>索引单步锁停顿(8MB 步进)</td><td>avg 16.1ms / <strong>max 36.9ms</strong></td></tr>
+        <tr><td>过滤(明文:级别/tag/关键词)</td><td>5.3–5.8 M行/s</td></tr>
+        <tr><td>过滤(正则多值)</td><td>3.7 M行/s</td></tr>
+        <tr><td>窗口读 get_rows(200 行)</td><td>All p99 <strong>1.56ms</strong> / Filtered p99 1.24ms</td></tr>
+        <tr><td>搜索(明文不敏感)</td><td>4.4 M行/s</td></tr>
+        <tr><td>导出 All(10GiB)</td><td><strong>576 MB/s</strong>(17.8s)</td></tr>
+        <tr><td>导出 Filtered(3.56M 行/506MiB)</td><td>36 MB/s</td></tr>
+        <tr><td>私有内存峰值</td><td>≈1.37 GiB(含全部命中数组;max RSS 11.1 GiB 系 mmap 干净页,可随时被系统回收)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="lesson-card">
+    <strong>历史教训</strong>:导出曾按行独立 <code>line_span</code>(每行从检查点回退平均多扫 ~512 行),吞吐仅 27/8 MB/s;改为 <code>for_each_line_span</code> 单次前向扫描的批量原语后提升 21×/4.5×。新增行级读取路径时<strong>务必复用批量原语</strong>,不要逐行回退检查点。
+  </div>
+</section>
+
+<!-- ================================================================ 9 -->
+<section id="sec-9">
+  <h2><span class="no">9.</span>测试地图</h2>
+  <p>本地全套验证(dev 分支日常依赖本地验证,不跑 CI):</p>
+  <pre><code>cargo test -p logcore &amp;&amp; cargo test -p log-filter &amp;&amp; \
+cargo clippy --workspace --all-targets &amp;&amp; cargo fmt --all -- --check &amp;&amp; \
+pnpm typecheck &amp;&amp; pnpm lint &amp;&amp; pnpm test</code></pre>
+
+  <h3 id="sec-9-1"><span class="no">9.1</span>logcore 单测(与实现同文件,<code>#[cfg(test)]</code>,约 100 个)</h3>
+  <div class="table-wrap">
+    <table class="tbl">
+      <thead><tr><th>模块</th><th>覆盖面示例</th></tr></thead>
+      <tbody>
+        <tr><td><code>indexer</code></td><td>行 span 正确性、分块步进 = 一次性步进、尾行追加、检查点不逐行存、跨检查点区间扫描</td></tr>
+        <tr><td><code>parser</code></td><td>两种格式解析、无冒号 tag、定宽填充 tag trim、多字节不 panic、借用式 = owned 等价、<code>level_byte_of_line</code> 语料等价</td></tr>
+        <tr><td><code>filter</code></td><td>级别掩码(全选保留 raw 行/空掩码)、markedOnly、pid/tid/tag 合取、include+exclude、<code>|</code> 多值正则、非法正则报错</td></tr>
+        <tr><td><code>search</code></td><td>子串/正则/大小写折叠、元字符字面量化、Unicode、环绕导航</td></tr>
+        <tr><td><code>session</code>(31 个)</td><td>视图取行与行号、过滤不物化默认结果、前沿行不吞未索引区、截断重建 + 重扫(Unix only)、增量追加过滤、书签持久化/导航、minimap 桶与密度、导出原语等价预言(批量 = 逐行拼接)、导出计划快照、目标校验、合成 10 万行吞吐/延迟阈值</td></tr>
+        <tr><td><code>adb</code></td><td>devices 解析、设备选择、命令构造(含 <code>-T</code>)、spec 拒绝 shell 注入、尾部时间戳提取、预设归一化</td></tr>
+        <tr><td><code>bookmarks</code> / <code>config</code> / <code>split</code> / <code>encoding</code> / <code>export</code> / <code>mmap_source</code></td><td>各自的往返/归一化/边界(切分行对齐、超长行独占分片、进度回调;配置钳制与兼容迁移;编码映射)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="sec-9-2"><span class="no">9.2</span>src-tauri 单测(<code>cargo test -p log-filter</code>,20 个)</h3>
+  <ul>
+    <li><code>commands.rs</code>:view 字符串解析、512 钳制、buffers 解析、流式会话清理(prune)、<strong><code>run_chunked_export</code> 等价性 ×3</strong>(Filtered/All/Range 输出字节与旧 <code>export_view</code>/<code>export_range</code> oracle 完全一致,9000 行跨批)、导出期间换会话中止、<strong>取消导出删除半成品</strong>、<code>reset_stream_session_file</code> 先释放 mmap 再截断。</li>
+    <li><code>state.rs</code>:毒化锁恢复、四类任务代号作废语义、<code>lock_session_if_current</code> 拒绝旧代号。</li>
+    <li><code>dto.rs</code>:事件 camelCase 序列化快照、配置 DTO 归一化与预设往返。</li>
+  </ul>
+
+  <h3 id="sec-9-3"><span class="no">9.3</span>前端 vitest(<code>pnpm test</code>,纯 lib/store 测试,不起 Tauri)</h3>
+  <p><code>lib/highlight</code>、<code>lib/logcatCommand</code>、<code>lib/minimap</code>、<code>lib/recent</code>、<code>lib/rowCache</code>(LRU/纪元语义)、<code>lib/sourceDisplay</code>、<code>lib/streamAppend</code>(75ms 合并批)、<code>lib/table</code>,以及 <code>store/session.test.ts</code>(尾随状态机、beginSession 重置、setFilteredLines 失效语义等)。</p>
+</section>
+
+<!-- ================================================================ 10 -->
+<section id="sec-10">
+  <h2><span class="no">10.</span>分支与 CI(工程约定)</h2>
+  <ul>
+    <li><strong>分支</strong>:<code>main</code> 为主干;<code>dev</code> 为长期缓冲分支——日常工作 rebase 合入 dev(不跑 CI,依赖 <a href="#sec-9">§9</a> 的本地全套验证),攒一批后开 dev→main 批量 PR;合并方式一律 rebase;合并后 dev 执行 <code>reset --hard main</code> 并 <code>--force-with-lease</code> 推送对齐。</li>
+    <li><strong>CI</strong>(<code>.github/workflows/ci.yml</code>):仅 dev→main 的 pull_request 触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容为 <code>pnpm typecheck/lint/test</code>、<code>cargo fmt --all -- --check</code>、<code>cargo test -p logcore</code>、<code>cargo test -p log-filter</code>、<code>cargo clippy --workspace --all-targets -- -D warnings</code>。纯文档改动(<code>docs/**</code>、<code>**.md</code>)不触发;main push 不触发(rebase 合并绿 PR 后内容与已测树一致);<code>workflow_dispatch</code> 兜底。</li>
+    <li><strong>打包</strong>(<code>.github/workflows/desktop-build.yml</code>,"Desktop Build"):仅 <code>workflow_dispatch</code> 或 <code>v*</code> tag 触发,tauri-action 三平台产出 msi/nsis/dmg/deb;workspace 布局下产物在仓库根 <code>target/release/bundle/</code>(<strong>不在</strong> <code>src-tauri/target/</code>),artifact 上传设 <code>if-no-files-found: error</code>。</li>
+  </ul>
+</section>
+
+<footer>
+  本页由 <code>docs/architecture.md</code> 转写生成,内容与其保持同步;若与源码不一致,以源码为准并请同时更新两者。
+</footer>
+
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- 主题切换(localStorage 记忆) ---------- */
+  var themeBtn = document.getElementById('themeBtn');
+  function applyThemeLabel() {
+    var cur = document.documentElement.getAttribute('data-theme');
+    themeBtn.textContent = cur === 'dark' ? '切换浅色' : '切换深色';
+  }
+  themeBtn.addEventListener('click', function () {
+    var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('lf-theme', next); } catch (e) {}
+    applyThemeLabel();
+  });
+  applyThemeLabel();
+
+  /* ---------- 移动端目录开关 ---------- */
+  var sidebar = document.getElementById('sidebar');
+  var menuBtn = document.getElementById('menuBtn');
+  var backdrop = document.getElementById('backdrop');
+  function closeSidebar() { sidebar.classList.remove('open'); backdrop.classList.remove('show'); }
+  menuBtn.addEventListener('click', function () {
+    sidebar.classList.toggle('open');
+    backdrop.classList.toggle('show', sidebar.classList.contains('open'));
+  });
+  backdrop.addEventListener('click', closeSidebar);
+
+  /* ---------- 目录 scrollspy ---------- */
+  var tocLinks = Array.prototype.slice.call(document.querySelectorAll('#toc a'));
+  var spyItems = tocLinks.map(function (a) {
+    var id = a.getAttribute('href').slice(1);
+    return { a: a, el: document.getElementById(id) };
+  }).filter(function (x) { return !!x.el; });
+  var activeLink = null;
+  function onSpy() {
+    var cur = null;
+    for (var i = 0; i < spyItems.length; i++) {
+      var top = spyItems[i].el.getBoundingClientRect().top;
+      if (top <= 96) { cur = spyItems[i]; } else { break; }
+    }
+    if (!cur) { cur = spyItems[0]; }
+    if (cur && cur.a !== activeLink) {
+      if (activeLink) { activeLink.classList.remove('active'); }
+      activeLink = cur.a;
+      activeLink.classList.add('active');
+      var linkTop = activeLink.offsetTop;
+      if (linkTop < sidebar.scrollTop + 60 || linkTop > sidebar.scrollTop + sidebar.clientHeight - 90) {
+        sidebar.scrollTop = linkTop - sidebar.clientHeight / 2;
+      }
+    }
+  }
+  var spyPending = false;
+  window.addEventListener('scroll', function () {
+    if (spyPending) { return; }
+    spyPending = true;
+    requestAnimationFrame(function () { spyPending = false; onSpy(); });
+  }, { passive: true });
+  window.addEventListener('resize', onSpy);
+  tocLinks.forEach(function (a) { a.addEventListener('click', closeSidebar); });
+  onSpy();
+
+  /* ---------- 架构图:悬停显示职责、点击跳章节 ---------- */
+  var archTip = document.getElementById('archTip');
+  var archTipDefault = archTip.textContent;
+  Array.prototype.forEach.call(document.querySelectorAll('.arch-mod'), function (g) {
+    g.addEventListener('mouseenter', function () {
+      archTip.textContent = '';
+      var b = document.createElement('strong');
+      b.textContent = g.getAttribute('data-name');
+      archTip.appendChild(b);
+      archTip.appendChild(document.createTextNode(' — ' + g.getAttribute('data-tip')));
+      archTip.classList.add('on');
+    });
+    g.addEventListener('mouseleave', function () {
+      archTip.textContent = archTipDefault;
+      archTip.classList.remove('on');
+    });
+    g.addEventListener('click', function () {
+      var t = g.getAttribute('data-target');
+      if (t) { location.hash = '#' + t; }
+    });
+  });
+
+  /* ---------- IPC 契约表:按名称即时过滤 ---------- */
+  var ipcInput = document.getElementById('ipcFilter');
+  var ipcCount = document.getElementById('ipcFilterCount');
+  var ipcTables = [document.getElementById('cmdTable'), document.getElementById('evtTable')];
+  function ipcRows(t) { return Array.prototype.slice.call(t.tBodies[0].rows); }
+  function applyIpcFilter() {
+    var q = ipcInput.value.trim().toLowerCase();
+    var shown = 0, total = 0;
+    ipcTables.forEach(function (t) {
+      ipcRows(t).forEach(function (row) {
+        total += 1;
+        var name = row.cells[0].textContent.toLowerCase();
+        var hit = !q || name.indexOf(q) !== -1;
+        row.classList.toggle('ipc-hidden', !hit);
+        if (hit) { shown += 1; }
+      });
+    });
+    ipcCount.textContent = q ? ('匹配 ' + shown + ' / ' + total + ' 项(命令 + 事件)') : ('共 ' + total + ' 项(命令 23 + 事件 6)');
+  }
+  ipcInput.addEventListener('input', applyIpcFilter);
+  applyIpcFilter();
+})();
+</script>
+</body>
+</html>
