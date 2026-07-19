@@ -301,7 +301,7 @@ footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px
 
 <nav class="sidebar" id="sidebar">
   <ul class="toc" id="toc">
-    <li><a href="#sec-1">1. 分层总览与架构铁律</a></li>
+    <li><a href="#sec-1">1. 分层总览与核心架构不变量</a></li>
     <li><a href="#sec-2">2. logcore 模块地图</a>
       <ul class="toc sub">
         <li><a href="#sec-2-1">2.1 model</a></li>
@@ -370,12 +370,12 @@ footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px
 <div class="page-head">
   <h1>LogFilter 架构文档</h1>
   <div class="intro-note">
-    面向新接手的开发者 / AI 助手。本文描述<strong>现状代码</strong>的分层、模块职责、并发模型与关键流程;设计动机与需求背景见规范文档
+    面向维护者与贡献者。本文描述<strong>现状代码</strong>的分层、模块职责、并发模型与关键流程;设计动机与需求背景见规范文档
     <a href="superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md"><code>docs/superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md</code></a>。
     本文中的行为描述均以源码为准;若与本文不一致,以源码为准并请更新本文。
   </div>
   <ul class="meta-list">
-    <li>仓库:<code>github.com/rxmt007/log-filter</code>(私有)</li>
+    <li>仓库:<code>github.com/rxmt007/log-filter</code></li>
     <li>技术栈:Rust 引擎(<code>logcore</code>,mmap + 检查点索引)+ Tauri v2 + React 19 / TypeScript + zustand + TanStack Virtual + Tailwind v4(CSS-first)</li>
     <li>目标:跨平台桌面 logcat 查看器,支持 10GB+ 超大日志文件</li>
   </ul>
@@ -383,7 +383,7 @@ footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px
 
 <!-- ================================================================ 1 -->
 <section id="sec-1">
-  <h2><span class="no">1.</span>分层总览与架构铁律</h2>
+  <h2><span class="no">1.</span>分层总览与核心架构不变量</h2>
 
   <div class="diagram-wrap">
     <svg class="diagram" viewBox="0 0 980 640" role="img" aria-label="前端 / 命令层 / logcore 分层架构图">
@@ -528,7 +528,7 @@ footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px
   </div>
   <div class="diagram-tip" id="archTip">悬停模块查看职责一句话;点击模块跳转到对应章节。</div>
 
-  <p>四条<strong>架构铁律</strong>(不可违背):</p>
+  <p>以下四项是所有实现必须保持的<strong>核心架构不变量</strong>:</p>
   <div class="rule-cards">
     <div class="rule-card">
       <div class="rc-title">1. 只传可见窗口</div>
@@ -1175,8 +1175,8 @@ pnpm typecheck &amp;&amp; pnpm lint &amp;&amp; pnpm test</code></pre>
 <section id="sec-10">
   <h2><span class="no">10.</span>分支与 CI(工程约定)</h2>
   <ul>
-    <li><strong>分支</strong>:<code>main</code> 为主干;<code>dev</code> 为长期缓冲分支——日常工作 rebase 合入 dev(不跑 CI,依赖 <a href="#sec-9">§9</a> 的本地全套验证),攒一批后开 dev→main 批量 PR;合并方式一律 rebase;合并后 dev 执行 <code>reset --hard main</code> 并 <code>--force-with-lease</code> 推送对齐。</li>
-    <li><strong>CI</strong>(<code>.github/workflows/ci.yml</code>):仅 dev→main 的 pull_request 触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容为 <code>pnpm typecheck/lint/test</code>、<code>cargo fmt --all -- --check</code>、<code>cargo test -p logcore</code>、<code>cargo test -p log-filter</code>、<code>cargo clippy --workspace --all-targets -- -D warnings</code>。纯文档改动(<code>docs/**</code>、<code>**.md</code>)不触发;main push 不触发(rebase 合并绿 PR 后内容与已测树一致);<code>workflow_dispatch</code> 兜底。</li>
+    <li><strong>分支</strong>:<code>main</code> 为主干;<code>dev</code> 为维护者使用的长期缓冲分支——维护者的日常工作可 rebase 合入 dev(不跑 CI,依赖 <a href="#sec-9">§9</a> 的本地全套验证),并按批次提交 dev→main PR。外部贡献请直接向 main 提交 PR;合并方式一律 rebase。main 合并后,维护者将 dev 执行 <code>reset --hard main</code> 并通过 <code>--force-with-lease</code> 推送对齐。</li>
+    <li><strong>CI</strong>(<code>.github/workflows/ci.yml</code>):任何目标为 main 的 pull_request 都会触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容为 <code>pnpm typecheck/lint/test</code>、<code>cargo fmt --all -- --check</code>、<code>cargo test -p logcore</code>、<code>cargo test -p log-filter</code>、<code>cargo clippy --workspace --all-targets -- -D warnings</code>。纯文档改动(<code>docs/**</code>、<code>**.md</code>)不触发;main push 不触发;也可通过 <code>workflow_dispatch</code> 手动触发。</li>
     <li><strong>打包</strong>(<code>.github/workflows/desktop-build.yml</code>,"Desktop Build"):仅 <code>workflow_dispatch</code> 或 <code>v*</code> tag 触发,tauri-action 三平台产出 msi/nsis/dmg/deb;workspace 布局下产物在仓库根 <code>target/release/bundle/</code>(<strong>不在</strong> <code>src-tauri/target/</code>),artifact 上传设 <code>if-no-files-found: error</code>。</li>
   </ul>
 </section>

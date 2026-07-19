@@ -1,5 +1,5 @@
 # 三系统打包(tauri-action):手动触发或推 v* 标签时运行,产物上传为 artifact。
-# 测试/静态检查门禁在 ci.yml(仅 dev→main 批量 PR 触发),这里只负责出包。
+# 测试/静态检查门禁在 ci.yml(目标为 main 的 PR 或手动触发),这里只负责出包。
 name: Desktop Build
 
 on:

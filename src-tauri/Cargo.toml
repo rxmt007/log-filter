@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Cross-platform Android logcat viewer built with Tauri v2 and Rust"
 authors = ["rxmt007"]
 edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/rxmt007/log-filter"
+homepage = "https://github.com/rxmt007/log-filter"
+readme = "../README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -27,4 +31,3 @@ logcore = { path = "../crates/logcore" }
 
 [dev-dependencies]
 tempfile = "3"
-

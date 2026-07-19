@@ -1,6 +1,6 @@
-# 三系统 CI 门禁:dev 为日常缓冲分支(不跑 CI,依赖本地全套验证);
-# 只有 dev→main 的批量 PR 触发完整三系统矩阵(含 macOS,与贡献者开发机无关);
-# rebase 合并绿 PR 后内容与已测树一致,故 main push 不再重复跑;手动触发兜底。
+# 三系统 CI 门禁:任何目标为 main 的 PR 都运行完整验证矩阵;
+# 仅修改 docs/** 或 **.md 的 PR 除外,也可通过 workflow_dispatch 手动触发。
+# main push 不重复运行;维护者的 dev 缓冲分支依赖本地全套验证。
 name: CI
 
 on:

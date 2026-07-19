@@ -1,13 +1,13 @@
 # AGENTS.md — LogFilter 跨平台复刻
 
-> 面向 AI 助手与协作者的工程指南。**权威设计以规范文档为准**,先读它:
+> 面向维护者与贡献者的工程指南。**权威设计以规范文档为准**,先读它:
 > [`docs/superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md`](docs/superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md)
 
 ## 项目简介
 
-把 2013 年的 Java Swing 工具 **LogFilter v1.8**(Android logcat 查看器)从零复刻为**跨平台桌面客户端**(Windows 主打,兼顾 macOS / Linux)。相较原版的核心增强:**支持 10GB+ 超大日志文件**——此为内部工程目标(本文件面向工程,不约束对外描述),已有 10GiB 实测佐证,见 [`docs/superpowers/2026-07-06-benchmark-10gb.md`](docs/superpowers/2026-07-06-benchmark-10gb.md)。
+把 2013 年的 Java Swing 工具 **LogFilter v1.8**(Android logcat 查看器)从零复刻为**跨平台桌面客户端**(Windows 主打,兼顾 macOS / Linux)。相较原版的核心增强:**支持 10GB+ 超大日志文件**——这是工程目标,已有 10GiB 实测佐证,见 [`docs/superpowers/2026-07-06-benchmark-10gb.md`](docs/superpowers/2026-07-06-benchmark-10gb.md)。
 
-仓库:`github.com/rxmt007/log-filter`(私有)。
+仓库:`github.com/rxmt007/log-filter`。
 
 ## 技术栈
 
@@ -17,7 +17,7 @@
 - **表格虚拟化**:TanStack **Virtual**(自研虚拟列表;**不用** shadcn Data Table)
 - **前端状态**:zustand　**配置**:TOML
 
-## 架构铁律(不可违背)
+## 核心架构不变量
 
 1. **只传可见窗口**:前端永不整体接收文件,一律经 `get_rows(view, start, count)` 取可见窗口,`count` 有上限(≤512 硬上限)。任何"把整文件 / 整过滤结果发给前端"的做法都禁止。
 2. **引擎与 UI 解耦**:`logcore` 不依赖 Tauri / UI,解析 / 索引 / 过滤 / 搜索 / 切分全部可脱离界面单测。
@@ -27,8 +27,8 @@
 
 ## UI 设计稿(实现基准)
 
-- **设计稿**:[`docs/design/LogFilter.dc.html`](docs/design/LogFilter.dc.html)(主界面 · 实现目标)、[`docs/design/LogWindow.dc.html`](docs/design/LogWindow.dc.html)(交互窗口稿)、`docs/design/support.js`(Claude Design 画布渲染器,离线查看用)。源:claude.ai/design 项目 `redacted-design-project-id`。
-- **实现规则(用户指定)**:后续迭代实现功能时,**若用户无其他要求,则严格按 UI 设计稿实现**;**当功能与 UI 设计冲突时,以功能为准,并明确告知用户**。
+- **设计稿**:[`docs/design/LogFilter.dc.html`](docs/design/LogFilter.dc.html)(主界面 · 实现目标)、[`docs/design/LogWindow.dc.html`](docs/design/LogWindow.dc.html)(交互窗口稿)、`docs/design/support.js`(设计稿离线渲染脚本)。
+- **实现规则**:后续迭代实现功能时,**若需求无其他说明,则严格按 UI 设计稿实现**;**当功能与 UI 设计冲突时,以功能为准,并在变更说明中明确记录差异**。
 
 ## 目录结构
 
@@ -62,19 +62,19 @@ LogFilter/          原 Java 工程(只读参考,已忽略,将删除)
 
 ## 分支与 CI 策略
 
-- **main** 为主干;**dev** 为长期缓冲分支:日常工作 **rebase 合入 dev**,dev 上不跑 CI,依赖本地验证全集。
-- 攒一批改动后开 **dev→main 批量 PR**;合并方式**一律 rebase**。
-- 合并后 dev 对齐 main:`reset --hard main` 并 `push --force-with-lease` 推送对齐。
-- **CI(`.github/workflows/ci.yml`,已生效)**:仅 **dev→main 的 `pull_request`** 触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容与本地验证全集一致:pnpm typecheck / lint / test、`cargo fmt --all -- --check`、`cargo test -p logcore`、`cargo test -p log-filter`、`cargo clippy --workspace --all-targets -- -D warnings`。
-  - 纯文档改动(`docs/**`、`**.md`)不触发;**main push 不触发**(rebase 合并绿 PR 后,main 内容与已测树一致);`workflow_dispatch` 兜底。
+- **main** 为主干;**dev** 为维护者使用的长期缓冲分支:维护者的日常工作可 **rebase 合入 dev**,dev 上不跑 CI,依赖本地验证全集。
+- 维护者可按批次开 **dev→main PR**;外部贡献请直接向 **main** 提交 PR;合并方式**一律 rebase**。
+- main 合并后,维护者将 dev 对齐 main:`reset --hard main` 并 `push --force-with-lease` 推送对齐。
+- **CI(`.github/workflows/ci.yml`)**:任何目标为 **main** 的 `pull_request` 都会触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容与本地验证全集一致:pnpm typecheck / lint / test、`cargo fmt --all -- --check`、`cargo test -p logcore`、`cargo test -p log-filter`、`cargo clippy --workspace --all-targets -- -D warnings`。
+  - 仅修改 `docs/**` 或 `**.md` 的 PR 不触发;**main push 不触发**;也可通过 `workflow_dispatch` 手动触发。
 - **打包(`.github/workflows/desktop-build.yml` "Desktop Build")**:仅 `workflow_dispatch` 或 `v*` tag 触发;`tauri-action` 三平台产出 msi / nsis / dmg / deb;artifact 上传设 `if-no-files-found: error`(防产物路径漂移静默漏传)。
 
-## 协作流程与约束(AI 接手必读)
+## 贡献流程与约束
 
-工具无关,适用于任何后续接手的模型 / 协作者:
+以下约定适用于所有维护者与贡献者:
 
 1. **验证**:任何改动前后必须跑「开发与命令」中的本地验证全集,全绿才可宣称完成。
-2. **TDD 与评审**:纯函数(解析 / 过滤 / 搜索等)先写测试再写实现;**实现与评审分离**,重要改动需独立审查(另起会话或他人评审),不得自评即合。
+2. **TDD 与评审**:纯函数(解析 / 过滤 / 搜索等)先写测试再写实现;**实现与评审分离**,重要改动需由另一位贡献者或维护者独立审查,不得未经审查直接合并。
 3. **大任务流程**:先写实施计划到 `docs/superpowers/plans/`(现有计划文档即模板),按任务拆分 → 逐任务实现 + 评审 → 最后整体终审。
 4. **性能改动**:必须用 bench 例子跑回归,并把前后数字写进 `docs/superpowers/` 下的报告(参照 `2026-07-06-benchmark-10gb.md`)。
 5. **隐私红线(写入仓库的任何内容)**:

@@ -27,6 +27,15 @@
     "active": true,
     "targets": ["msi", "nsis", "dmg", "deb"],
     "publisher": "rxmt007",
+    "homepage": "https://github.com/rxmt007/log-filter",
+    "license": "GPL-3.0-or-later",
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../COPYRIGHT": "COPYRIGHT",
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../third-party-licenses/Geist-OFL-1.1.txt": "third-party-licenses/Geist-OFL-1.1.txt"
+    },
     "shortDescription": "Cross-platform Android logcat viewer",
     "longDescription": "LogFilter is a cross-platform desktop Android logcat viewer with mmap-backed indexing, filtering, search, live adb capture, export, and log splitting.",
     "icon": [

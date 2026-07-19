@@ -1,17 +1,17 @@
 # LogFilter 架构文档
 
-> 面向新接手的开发者 / AI 助手。本文描述**现状代码**的分层、模块职责、并发模型与关键流程;
+> 面向维护者与贡献者。本文描述**现状代码**的分层、模块职责、并发模型与关键流程;
 > 设计动机与需求背景见规范文档
 > [`docs/superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md`](superpowers/specs/2026-07-01-logfilter-cross-platform-rewrite-design.md)。
 > 本文中的行为描述均以源码为准;若与本文不一致,以源码为准并请更新本文。
 
-- 仓库:`github.com/rxmt007/log-filter`(私有)
+- 仓库:`github.com/rxmt007/log-filter`
 - 技术栈:Rust 引擎(`logcore`,mmap + 检查点索引)+ Tauri v2 + React 19 / TypeScript + zustand + TanStack Virtual + Tailwind v4(CSS-first)
 - 目标:跨平台桌面 logcat 查看器,支持 10GB+ 超大日志文件
 
 ---
 
-## 1. 分层总览与架构铁律
+## 1. 分层总览与核心架构不变量
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -33,7 +33,7 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-四条**架构铁律**(不可违背):
+以下四项是所有实现必须保持的**核心架构不变量**:
 
 1. **只传可见窗口**:前端永不整体接收文件。一律经 `get_rows(view, start, count)` 取窗口,
    `count` 有硬上限(`MAX_ROWS = 512`,见 `src-tauri/src/commands.rs`)。任何"把整文件 /
@@ -612,14 +612,15 @@ pnpm typecheck && pnpm lint && pnpm test
 
 ## 10. 分支与 CI(工程约定)
 
-- **分支**:`main` 为主干;`dev` 为长期缓冲分支——日常工作 rebase 合入 dev(不跑 CI,
-  依赖 §9 的本地全套验证),攒一批后开 dev→main 批量 PR;合并方式一律 rebase;合并后
-  dev 执行 `reset --hard main` 并 `--force-with-lease` 推送对齐。
-- **CI**(`.github/workflows/ci.yml`):仅 dev→main 的 pull_request 触发完整三系统矩阵
+- **分支**:`main` 为主干;`dev` 为维护者使用的长期缓冲分支——维护者的日常工作可
+  rebase 合入 dev(不跑 CI,依赖 §9 的本地全套验证),并按批次提交 dev→main PR。
+  外部贡献请直接向 main 提交 PR;合并方式一律 rebase。main 合并后,维护者将 dev
+  执行 `reset --hard main` 并通过 `--force-with-lease` 推送对齐。
+- **CI**(`.github/workflows/ci.yml`):任何目标为 main 的 pull_request 都会触发完整三系统矩阵
   (ubuntu-latest / macos-latest / windows-latest),内容为 `pnpm typecheck/lint/test`、
   `cargo fmt --all -- --check`、`cargo test -p logcore`、`cargo test -p log-filter`、
   `cargo clippy --workspace --all-targets -- -D warnings`。纯文档改动(`docs/**`、`**.md`)
-  不触发;main push 不触发(rebase 合并绿 PR 后内容与已测树一致);`workflow_dispatch` 兜底。
+  不触发;main push 不触发;也可通过 `workflow_dispatch` 手动触发。
 - **打包**(`.github/workflows/desktop-build.yml`,"Desktop Build"):仅 `workflow_dispatch`
   或 `v*` tag 触发,tauri-action 三平台产出 msi/nsis/dmg/deb;workspace 布局下产物在
   仓库根 `target/release/bundle/`(**不在** `src-tauri/target/`),artifact 上传设
