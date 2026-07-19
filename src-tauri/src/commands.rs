@@ -1250,6 +1250,9 @@ fn run_chunked_export(
     let mut first_batch = true;
     while cursor < total_len {
         // 每批开工前校验导出代号:失效即取消 —— 丢弃 writer、删半成品文件、返回 cancelled。
+        // 已知窄 TOCTOU(评审定级 Low,接受):同路径快速连开两次导出时,旧任务此处的删除
+        // 理论上可能落在新任务 File::create 之后;实际上旧任务下一批即检测到失效并删除,
+        // 而新任务需走完 Phase A/B 才创建文件,时序上几乎不可能交叉,且新任务 create 会截断重建。
         if !app_state.is_current_export(export_generation) {
             drop(writer);
             let _ = fs::remove_file(&output);
