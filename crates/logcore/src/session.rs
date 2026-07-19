@@ -427,6 +427,7 @@ impl Session {
     /// 把一批**升序**源行号的原始字节(含行尾换行)追加进 out,返回 (追加的行数, 追加的字节数)。
     /// 单次前向扫描 [首行, 末行] 区间,复杂度 O(区间行数),不做每行独立的检查点回退。
     /// 不可用的行(未索引/越界)跳过。indices 为空返回 (0, 0)。
+    /// 相邻重复索引会被**折叠**(只拷贝一次);现有调用方(过滤/错误/书签命中数组)均严格升序无重复。
     pub fn append_sorted_lines_bytes(&self, indices: &[u32], out: &mut Vec<u8>) -> (usize, u64) {
         debug_assert!(
             indices.windows(2).all(|w| w[0] <= w[1]),
