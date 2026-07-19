@@ -453,8 +453,8 @@ impl Session {
         let mut lines = 0usize;
         let mut written = 0u64;
         let mut cursor = 0usize; // indices 中下一个待拷贝行号(升序)
-        // 单次前向扫描 [first, last+1),不物化 span Vec;命中行(== indices[cursor])才拷字节。
-        // 越界行(≥ total_lines)不会被 for_each_line_span 产出,cursor 到达末尾后自然停。
+                                 // 单次前向扫描 [first, last+1),不物化 span Vec;命中行(== indices[cursor])才拷字节。
+                                 // 越界行(≥ total_lines)不会被 for_each_line_span 产出,cursor 到达末尾后自然停。
         self.indexer.for_each_line_span(
             bytes,
             first,
@@ -554,7 +554,9 @@ impl Session {
             end,
             frontier,
         )) {
-            let text = self.encoding.decode(&self.source.bytes()[span_start..span_end]);
+            let text = self
+                .encoding
+                .decode(&self.source.bytes()[span_start..span_end]);
             let entry = parse_line_ref(&text);
             let marked = matcher.requires_mark() && self.is_bookmarked(idx as u64 + 1);
             if matcher.is_match_with_mark(&entry, marked) {
@@ -640,7 +642,9 @@ impl Session {
             end,
             frontier,
         )) {
-            let text = self.encoding.decode(&self.source.bytes()[span_start..span_end]);
+            let text = self
+                .encoding
+                .decode(&self.source.bytes()[span_start..span_end]);
             let entry = parse_line_ref(&text);
             if matcher.is_entry_match(&entry) {
                 push_hit(&mut matches, idx);
@@ -737,7 +741,9 @@ impl Session {
     }
 
     fn parse_source_row(&self, source_idx: usize, frontier: usize) -> Option<(u64, LogEntry)> {
-        let (start, end) = self.indexer.line_span(self.source.bytes(), source_idx, frontier)?;
+        let (start, end) = self
+            .indexer
+            .line_span(self.source.bytes(), source_idx, frontier)?;
         Some((source_idx as u64 + 1, self.parse_source_span(start, end)))
     }
 
@@ -747,7 +753,9 @@ impl Session {
     }
 
     fn source_line_bytes(&self, source_idx: usize, frontier: usize) -> Option<&[u8]> {
-        let (start, end) = self.indexer.line_span(self.source.bytes(), source_idx, frontier)?;
+        let (start, end) = self
+            .indexer
+            .line_span(self.source.bytes(), source_idx, frontier)?;
         Some(&self.source.bytes()[start..end])
     }
 
@@ -1041,10 +1049,22 @@ mod tests {
         assert_eq!(
             map.errors,
             vec![
-                MinimapBucket { bucket: 0, count: 1 },
-                MinimapBucket { bucket: 1, count: 1 },
-                MinimapBucket { bucket: 2, count: 1 },
-                MinimapBucket { bucket: 3, count: 1 },
+                MinimapBucket {
+                    bucket: 0,
+                    count: 1
+                },
+                MinimapBucket {
+                    bucket: 1,
+                    count: 1
+                },
+                MinimapBucket {
+                    bucket: 2,
+                    count: 1
+                },
+                MinimapBucket {
+                    bucket: 3,
+                    count: 1
+                },
             ]
         );
     }
@@ -1062,7 +1082,13 @@ mod tests {
         s.index_all();
 
         let map = s.minimap(4);
-        assert_eq!(map.errors, vec![MinimapBucket { bucket: 0, count: 2 }]);
+        assert_eq!(
+            map.errors,
+            vec![MinimapBucket {
+                bucket: 0,
+                count: 2
+            }]
+        );
     }
 
     #[test]
@@ -1169,7 +1195,13 @@ mod tests {
 
         let map = s.minimap(4);
         assert_eq!(map.bookmarks, vec![1]);
-        assert_eq!(map.errors, vec![MinimapBucket { bucket: 3, count: 1 }]);
+        assert_eq!(
+            map.errors,
+            vec![MinimapBucket {
+                bucket: 3,
+                count: 1
+            }]
+        );
     }
 
     #[test]
@@ -1191,7 +1223,13 @@ mod tests {
 
         let map = s.minimap(4);
         assert_eq!(map.bookmarks, vec![0]);
-        assert_eq!(map.errors, vec![MinimapBucket { bucket: 2, count: 1 }]);
+        assert_eq!(
+            map.errors,
+            vec![MinimapBucket {
+                bucket: 2,
+                count: 1
+            }]
+        );
     }
 
     #[test]
@@ -1324,7 +1362,9 @@ mod tests {
         s.index_all();
         assert!(s.validate_export_target(f.path()).is_err());
         let dir = tempfile::tempdir().unwrap();
-        assert!(s.validate_export_target(&dir.path().join("sub/out.log")).is_ok());
+        assert!(s
+            .validate_export_target(&dir.path().join("sub/out.log"))
+            .is_ok());
         assert!(dir.path().join("sub").exists()); // 父目录已创建
     }
 

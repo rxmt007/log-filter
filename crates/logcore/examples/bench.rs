@@ -73,12 +73,32 @@ const TAGS: &[&str] = &[
 
 /// 消息模板碎片,拼接出可被 word 过滤/搜索/正则命中的语料。
 const VERBS: &[&str] = &[
-    "starting", "stopping", "binding", "unbinding", "scheduling", "dispatching", "handling",
-    "flushing", "committing", "aborting", "retrying", "resuming",
+    "starting",
+    "stopping",
+    "binding",
+    "unbinding",
+    "scheduling",
+    "dispatching",
+    "handling",
+    "flushing",
+    "committing",
+    "aborting",
+    "retrying",
+    "resuming",
 ];
 const NOUNS: &[&str] = &[
-    "connection", "transaction", "activity", "service", "broadcast", "socket", "buffer",
-    "surface", "session", "request", "packet", "frame",
+    "connection",
+    "transaction",
+    "activity",
+    "service",
+    "broadcast",
+    "socket",
+    "buffer",
+    "surface",
+    "session",
+    "request",
+    "packet",
+    "frame",
 ];
 /// 含 "conn" 前缀 + "timeout"/"reset" 尾巴,专供正则 `conn.*(timeout|reset)` 命中。
 const CONN_EVENTS: &[&str] = &[
@@ -139,7 +159,10 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let size_gb: f64 = args
         .next()
-        .map(|s| s.parse().unwrap_or_else(|_| fail("size_gb 必须是数字,例如 2.0")))
+        .map(|s| {
+            s.parse()
+                .unwrap_or_else(|_| fail("size_gb 必须是数字,例如 2.0"))
+        })
         .unwrap_or(2.0);
     let path = args
         .next()
@@ -161,7 +184,10 @@ fn main() {
 
     // Phase G:生成(可复用则跳过)。
     let actual_bytes = ensure_corpus(&path, target_bytes, &mut metrics);
-    metrics.push("文件字节数", format!("{actual_bytes} ({:.2} GiB)", actual_bytes as f64 / GIB));
+    metrics.push(
+        "文件字节数",
+        format!("{actual_bytes} ({:.2} GiB)", actual_bytes as f64 / GIB),
+    );
 
     // Phase 1:索引。
     let mut session = Session::open(&path).unwrap_or_else(|e| fail(&format!("打开失败: {e}")));
@@ -202,9 +228,7 @@ fn ensure_corpus(path: &Path, target_bytes: u64, metrics: &mut Metrics) -> u64 {
             metrics.push("生成", "复用(跳过)".to_string());
             return existing;
         }
-        println!(
-            "已存在文件 {existing} bytes 超出目标 ±5%,重新生成。",
-        );
+        println!("已存在文件 {existing} bytes 超出目标 ±5%,重新生成。",);
     }
     generate(path, target_bytes, metrics)
 }
@@ -280,7 +304,10 @@ fn generate(path: &Path, target_bytes: u64, metrics: &mut Metrics) -> u64 {
 
     if result.is_err() || writer.flush().is_err() {
         // 磁盘写入失败(如 ENOSPC)明确报错中止。
-        let msg = result.err().map(|e| e.to_string()).unwrap_or_else(|| "flush 失败".to_string());
+        let msg = result
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "flush 失败".to_string());
         fail(&format!(
             "写盘失败(可能磁盘空间不足 ENOSPC): {msg}。已写 {written} bytes,请清理磁盘或换用更小的 size_gb。"
         ));
@@ -406,7 +433,8 @@ fn run_filter(
     label: &str,
     metrics: &mut Metrics,
 ) -> Vec<u32> {
-    let matcher = FilterMatcher::new(spec).unwrap_or_else(|e| fail(&format!("过滤器编译失败: {e:?}")));
+    let matcher =
+        FilterMatcher::new(spec).unwrap_or_else(|e| fail(&format!("过滤器编译失败: {e:?}")));
     let t0 = Instant::now();
     let mut matches = Vec::new();
     let mut start = 0;
@@ -445,7 +473,13 @@ fn phase_filters(session: &Session, total_lines: usize, metrics: &mut Metrics) -
         tag_include: FilterField::plain(true, "NetPolicy|WifiService"),
         ..Default::default()
     };
-    let matches_b = run_filter(session, &spec_b, total_lines, "b tag NetPolicy|WifiService", metrics);
+    let matches_b = run_filter(
+        session,
+        &spec_b,
+        total_lines,
+        "b tag NetPolicy|WifiService",
+        metrics,
+    );
 
     // c) 关键词 明文单词,中等命中率。"connection" 出现在部分消息里。
     let spec_c = FilterSpec {
@@ -462,7 +496,13 @@ fn phase_filters(session: &Session, total_lines: usize, metrics: &mut Metrics) -
         word_include: FilterField::regex(true, "conn.*timeout|conn.*reset"),
         ..Default::default()
     };
-    run_filter(session, &spec_d, total_lines, "d regex conn.*timeout|conn.*reset", metrics);
+    run_filter(
+        session,
+        &spec_d,
+        total_lines,
+        "d regex conn.*timeout|conn.*reset",
+        metrics,
+    );
 
     matches_b
 }
@@ -498,7 +538,10 @@ fn phase_window_reads(
     }
     let (min, med, p99, max) = latency_stats(all_samples);
     println!("  All      : min {min}µs  median {med}µs  p99 {p99}µs  max {max}µs");
-    metrics.push("窗口 All (µs)", format!("min {min} / med {med} / p99 {p99} / max {max}"));
+    metrics.push(
+        "窗口 All (µs)",
+        format!("min {min} / med {med} / p99 {p99} / max {max}"),
+    );
 
     // 应用 Phase-2b 过滤后测 Filtered 视图。
     let spec_b = FilterSpec {
@@ -519,7 +562,10 @@ fn phase_window_reads(
     println!(
         "  Filtered : min {min}µs  median {med}µs  p99 {p99}µs  max {max}µs (视图 {filtered_len} 行)"
     );
-    metrics.push("窗口 Filtered (µs)", format!("min {min} / med {med} / p99 {p99} / max {max}"));
+    metrics.push(
+        "窗口 Filtered (µs)",
+        format!("min {min} / med {med} / p99 {p99} / max {max}"),
+    );
 }
 
 /// Phase 4:明文大小写不敏感搜索,分块 search_indexed_range。
@@ -530,7 +576,8 @@ fn phase_search(session: &Session, total_lines: usize, metrics: &mut Metrics) {
         regex: false,
         case_sensitive: false,
     };
-    let matcher = SearchMatcher::new(&spec).unwrap_or_else(|e| fail(&format!("搜索器编译失败: {e:?}")));
+    let matcher =
+        SearchMatcher::new(&spec).unwrap_or_else(|e| fail(&format!("搜索器编译失败: {e:?}")));
     let t0 = Instant::now();
     let mut matches = Vec::new();
     let mut start = 0;
@@ -546,7 +593,10 @@ fn phase_search(session: &Session, total_lines: usize, metrics: &mut Metrics) {
         matches.len(),
         elapsed.as_secs_f64()
     );
-    metrics.push("搜索 (M行/s)", format!("{mlines_s:.1} (命中 {})", matches.len()));
+    metrics.push(
+        "搜索 (M行/s)",
+        format!("{mlines_s:.1} (命中 {})", matches.len()),
+    );
 }
 
 /// Phase 5:导出 Filtered(2b 过滤)与 All,报告 MB/s,结束后删除输出文件。
@@ -568,7 +618,10 @@ fn phase_export(session: &mut Session, source: &Path, metrics: &mut Metrics) {
         summary.written_bytes as f64 / MIB,
         elapsed.as_secs_f64()
     );
-    metrics.push("导出 Filtered (MB/s)", format!("{mb_s:.0} ({} 行)", summary.written_lines));
+    metrics.push(
+        "导出 Filtered (MB/s)",
+        format!("{mb_s:.0} ({} 行)", summary.written_lines),
+    );
     let _ = fs::remove_file(&filtered_out);
 
     // All 导出。
@@ -585,7 +638,10 @@ fn phase_export(session: &mut Session, source: &Path, metrics: &mut Metrics) {
         summary.written_bytes as f64 / GIB,
         elapsed.as_secs_f64()
     );
-    metrics.push("导出 All (MB/s)", format!("{mb_s:.0} ({} 行)", summary.written_lines));
+    metrics.push(
+        "导出 All (MB/s)",
+        format!("{mb_s:.0} ({} 行)", summary.written_lines),
+    );
     let _ = fs::remove_file(&all_out);
 }
 

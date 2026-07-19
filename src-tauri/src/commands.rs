@@ -150,7 +150,9 @@ fn prune_stream_sessions(dir: &std::path::Path, keep: usize) {
                 .and_then(|name| name.to_str())
                 .and_then(|name| name.strip_prefix("logcat-"))
                 .and_then(|rest| rest.strip_suffix(".log"))
-                .is_some_and(|millis| !millis.is_empty() && millis.bytes().all(|b| b.is_ascii_digit()))
+                .is_some_and(|millis| {
+                    !millis.is_empty() && millis.bytes().all(|b| b.is_ascii_digit())
+                })
         })
         .collect();
     sessions.sort();
@@ -571,7 +573,8 @@ fn read_session_tail(path: &std::path::Path, max_bytes: u64) -> Option<String> {
     use std::io::{Seek, SeekFrom};
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(len.saturating_sub(max_bytes))).ok()?;
+    file.seek(SeekFrom::Start(len.saturating_sub(max_bytes)))
+        .ok()?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).ok()?;
     Some(String::from_utf8_lossy(&buf).into_owned())
@@ -1472,10 +1475,11 @@ mod tests {
             path: out_path.to_string_lossy().to_string(),
         };
         let mut progress_calls = Vec::new();
-        let summary = run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
-            progress_calls.push((lines, bytes, done));
-        })
-        .unwrap();
+        let summary =
+            run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
+                progress_calls.push((lines, bytes, done));
+            })
+            .unwrap();
 
         let expected = std::fs::read(&expected_path).unwrap();
         let actual = std::fs::read(&out_path).unwrap();
@@ -1516,10 +1520,11 @@ mod tests {
             path: out_path.to_string_lossy().to_string(),
         };
         let mut progress_calls = Vec::new();
-        let summary = run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
-            progress_calls.push((lines, bytes, done));
-        })
-        .unwrap();
+        let summary =
+            run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
+                progress_calls.push((lines, bytes, done));
+            })
+            .unwrap();
 
         // 9000 行 / 4096 每批 = 3 个写批次;输出必须与 oracle 完全一致
         assert_eq!(
@@ -1554,8 +1559,7 @@ mod tests {
             end_line: Some(3),
             path: out_path.to_string_lossy().to_string(),
         };
-        let summary =
-            run_chunked_export(&state, generation, &request, &mut |_, _, _| {}).unwrap();
+        let summary = run_chunked_export(&state, generation, &request, &mut |_, _, _| {}).unwrap();
         assert_eq!(
             std::fs::read(&out_path).unwrap(),
             std::fs::read(&expected_path).unwrap()

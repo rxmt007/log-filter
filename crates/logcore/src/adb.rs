@@ -248,10 +248,7 @@ pub fn list_devices(adb_path: &Path) -> io::Result<Vec<AdbDevice>> {
 
 /// adb server 冷启动或 USB 抖动时 `adb devices` 可能长时间挂起;超时后杀掉子进程返回错误,
 /// 避免上层轮询堆积。
-pub fn list_devices_with_timeout(
-    adb_path: &Path,
-    timeout: Duration,
-) -> io::Result<Vec<AdbDevice>> {
+pub fn list_devices_with_timeout(adb_path: &Path, timeout: Duration) -> io::Result<Vec<AdbDevice>> {
     let mut child = adb_command(adb_path)
         .arg("devices")
         .arg("-l")
@@ -278,7 +275,10 @@ pub fn list_devices_with_timeout(
             None if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(io::Error::new(io::ErrorKind::TimedOut, "adb devices timed out"));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "adb devices timed out",
+                ));
             }
             None => std::thread::sleep(Duration::from_millis(50)),
         }
@@ -295,7 +295,10 @@ pub fn last_log_timestamp(tail_text: &str) -> Option<String> {
         let time = parsed.time;
         let date_ok = date.len() == 5
             && date.as_bytes()[2] == b'-'
-            && date.bytes().enumerate().all(|(i, b)| i == 2 || b.is_ascii_digit());
+            && date
+                .bytes()
+                .enumerate()
+                .all(|(i, b)| i == 2 || b.is_ascii_digit());
         let time_ok = time.len() == 12
             && time.as_bytes()[2] == b':'
             && time.as_bytes()[5] == b':'
@@ -490,7 +493,17 @@ emulator-5554 unauthorized
         );
         assert_eq!(
             command.args,
-            vec!["-s", "usb", "logcat", "-v", "threadtime", "-b", "main", "-T", "04-20 12:06:03.900"]
+            vec![
+                "-s",
+                "usb",
+                "logcat",
+                "-v",
+                "threadtime",
+                "-b",
+                "main",
+                "-T",
+                "04-20 12:06:03.900"
+            ]
         );
     }
 

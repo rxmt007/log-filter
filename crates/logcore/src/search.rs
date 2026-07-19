@@ -117,7 +117,11 @@ pub fn search_entries(entries: &[LogEntry], spec: &SearchSpec) -> Result<Vec<u64
     Ok(entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, entry)| matcher.is_entry_match(&entry.as_parsed()).then_some(idx as u64))
+        .filter_map(|(idx, entry)| {
+            matcher
+                .is_entry_match(&entry.as_parsed())
+                .then_some(idx as u64)
+        })
         .collect())
 }
 
