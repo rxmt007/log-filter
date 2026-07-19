@@ -271,7 +271,7 @@ pub struct ExportRequest {
     pub path: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSummaryDto {
     pub written_lines: usize,
@@ -285,6 +285,14 @@ impl From<logcore::export::ExportSummary> for ExportSummaryDto {
             written_bytes: value.written_bytes,
         }
     }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportProgressDto {
+    pub written_lines: usize,
+    pub written_bytes: u64,
+    pub done: bool,
 }
 
 #[derive(Deserialize, Clone)]

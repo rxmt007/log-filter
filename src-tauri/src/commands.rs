@@ -1,8 +1,8 @@
 use crate::dto::{
-    AppConfigDto, DeviceListDto, ExportRequest, ExportSummaryDto, FilterDoneDto, FilterSpecDto,
-    MinimapDto, NavigationTargetDto, Row, SearchProgressDto, SearchResult, SearchSpecDto,
-    SplitProgressDto, SplitRequest, SplitSummaryDto, StartLogcatRequest, Status, StreamAppendDto,
-    StreamControlDto,
+    AppConfigDto, DeviceListDto, ExportProgressDto, ExportRequest, ExportSummaryDto, FilterDoneDto,
+    FilterSpecDto, MinimapDto, NavigationTargetDto, Row, SearchProgressDto, SearchResult,
+    SearchSpecDto, SplitProgressDto, SplitRequest, SplitSummaryDto, StartLogcatRequest, Status,
+    StreamAppendDto, StreamControlDto,
 };
 use crate::state::AppState;
 use crate::state::{StreamRequestState, StreamTask};
@@ -22,6 +22,8 @@ use tauri::{AppHandle, Emitter, State};
 const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
 const SCAN_CHUNK_LINES: usize = 4096;
 const SEARCH_PROGRESS_STRIDE: usize = 65_536; // 搜索进度事件节流阈值(约 16 个扫描块)
+const EXPORT_CHUNK_LINES: usize = 4096;
+const EXPORT_PROGRESS_STRIDE: usize = 65_536; // 与 SEARCH_PROGRESS_STRIDE 同数量级
 const STREAM_READ_BUF: usize = 64 * 1024;
 const MAX_ROWS: usize = 512;
 const STREAM_SESSION_KEEP: usize = 10; // 流式会话文件最多保留的份数
@@ -1039,9 +1041,10 @@ pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
 pub async fn export_logs(
     request: ExportRequest,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<ExportSummaryDto, String> {
     let app_state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || export_logs_blocking(&app_state, request))
+    tauri::async_runtime::spawn_blocking(move || export_logs_blocking(&app_state, request, app))
         .await
         .map_err(|err| err.to_string())?
 }
@@ -1049,33 +1052,232 @@ pub async fn export_logs(
 fn export_logs_blocking(
     app_state: &AppState,
     request: ExportRequest,
+    app: AppHandle,
+) -> Result<ExportSummaryDto, String> {
+    // 导出全程用同一 generation 快照;发现代号失效即中止(见 run_chunked_export)。
+    let session_generation = app_state.generation.load(Ordering::SeqCst);
+    let mut on_progress = |written_lines: usize, written_bytes: u64, done: bool| {
+        let _ = app.emit(
+            "export:progress",
+            ExportProgressDto {
+                written_lines,
+                written_bytes,
+                done,
+            },
+        );
+    };
+    run_chunked_export(app_state, session_generation, &request, &mut on_progress)
+}
+
+/// 分段导出编排。进度回调 on_progress(written_lines, written_bytes, done) 在锁外调用;
+/// 事件发送由 export_logs_blocking 注入闭包完成,本函数不依赖 Tauri,可直接单测。
+fn run_chunked_export(
+    app_state: &AppState,
+    session_generation: u64,
+    request: &ExportRequest,
+    on_progress: &mut dyn FnMut(usize, u64, bool),
 ) -> Result<ExportSummaryDto, String> {
     if request.path.trim().is_empty() {
         return Err("export path is required".to_string());
     }
     let output = PathBuf::from(&request.path);
-    let mut guard = app_state.lock_session();
-    let Some(session) = guard.as_mut() else {
-        return Err("open a log file before exporting".to_string());
-    };
+    let is_range = request.mode == "range";
 
-    let summary = if request.mode == "range" {
+    // Phase 0:首次持锁——校验导出目标 + range 参数(沿用 export_range 文案)。
+    let range = if is_range {
         let start = request
             .start_line
             .ok_or_else(|| "range start line is required".to_string())?;
         let end = request
             .end_line
             .ok_or_else(|| "range end line is required".to_string())?;
-        session.export_range(start, end, &output)
+        Some((start, end))
     } else {
-        let view = request.view.as_deref().unwrap_or("all");
-        let view =
-            rows_view_from_str(view).ok_or_else(|| format!("unknown export view: {view}"))?;
-        session.export_view(view, &output)
+        None
+    };
+    {
+        let Some(guard) = app_state.lock_session_if_current(session_generation) else {
+            return Err("session changed during export".to_string());
+        };
+        let Some(session) = guard.as_ref() else {
+            return Err("open a log file before exporting".to_string());
+        };
+        session
+            .validate_export_target(&output)
+            .map_err(|err| err.to_string())?;
+        if let Some((start, end)) = range {
+            if start == 0 || end < start {
+                return Err("export range must be 1-based and ascending".to_string());
+            }
+        }
     }
-    .map_err(|err| err.to_string())?;
 
-    Ok(summary.into())
+    // Phase A:分块驱动索引补完;每轮锁外让出,避免饿死 get_rows/get_status。
+    loop {
+        let done = {
+            let Some(mut guard) = app_state.lock_session_if_current(session_generation) else {
+                return Err("session changed during export".to_string());
+            };
+            let Some(session) = guard.as_mut() else {
+                return Err("open a log file before exporting".to_string());
+            };
+            session.index_step(INDEX_BUDGET)
+        };
+        std::thread::yield_now();
+        if done {
+            break;
+        }
+    }
+
+    // Phase B:确定导出对象(0-based 源行号来源)。
+    let plan = if let Some((start_line, end_line)) = range {
+        // range 模式:不重建过滤,输出行号区间 [start-1, end)。
+        let Some(guard) = app_state.lock_session_if_current(session_generation) else {
+            return Err("session changed during export".to_string());
+        };
+        let Some(session) = guard.as_ref() else {
+            return Err("open a log file before exporting".to_string());
+        };
+        let total = session.total_lines() as u64;
+        let start = start_line.min(total + 1);
+        let end = end_line.min(total);
+        // 空区间输出 0 行;转 0-based AllLines 风格区间(下面统一切片)。
+        let count = end.saturating_sub(start.saturating_sub(1));
+        ExportSource::Range {
+            first: start.saturating_sub(1) as usize,
+            len: count as usize,
+        }
+    } else {
+        let view_str = request.view.as_deref().unwrap_or("all");
+        let view = rows_view_from_str(view_str)
+            .ok_or_else(|| format!("unknown export view: {view_str}"))?;
+        let active_spec = {
+            let Some(guard) = app_state.lock_session_if_current(session_generation) else {
+                return Err("session changed during export".to_string());
+            };
+            let Some(session) = guard.as_ref() else {
+                return Err("open a log file before exporting".to_string());
+            };
+            session.active_filter_spec()
+        };
+        if view == logcore::session::RowsView::Filtered {
+            if let Some(spec) = active_spec {
+                // Filtered 激活:按当前 spec 分块重算出**局部**命中数组(不写回 session)。
+                let matcher = FilterMatcher::new(&spec).map_err(|err| err.message)?;
+                let Some(indices) = run_chunked_scan(
+                    app_state,
+                    session_generation,
+                    || true,
+                    |session, start, end| session.filter_indexed_range(&matcher, start, end),
+                    |_, _| {},
+                ) else {
+                    return Err("session changed during export".to_string());
+                };
+                ExportSource::Indices(indices)
+            } else {
+                // 过滤未激活:退化为 All(与 export_view 一致)。
+                ExportSource::from_plan(plan_snapshot(app_state, session_generation, view)?)
+            }
+        } else {
+            ExportSource::from_plan(plan_snapshot(app_state, session_generation, view)?)
+        }
+    };
+
+    // Phase C:锁外建文件,分批"锁内拷字节、锁外写盘"。
+    let file = File::create(&output).map_err(|err| err.to_string())?;
+    let mut writer = std::io::BufWriter::new(file);
+    let mut buf: Vec<u8> = Vec::new();
+    let mut written_lines = 0usize;
+    let mut written_bytes = 0u64;
+    let mut last_emitted = 0usize;
+
+    let total_len = plan.len();
+    let mut cursor = 0usize;
+    while cursor < total_len {
+        let batch_end = cursor.saturating_add(EXPORT_CHUNK_LINES).min(total_len);
+        buf.clear();
+        let mut batch_lines = 0usize;
+        {
+            let Some(guard) = app_state.lock_session_if_current(session_generation) else {
+                return Err("session changed during export".to_string());
+            };
+            let Some(session) = guard.as_ref() else {
+                return Err("open a log file before exporting".to_string());
+            };
+            for view_idx in cursor..batch_end {
+                let source_idx = plan.source_idx(view_idx);
+                let appended = session.append_line_bytes(source_idx, &mut buf);
+                if appended > 0 {
+                    batch_lines += 1;
+                    written_bytes += appended;
+                }
+            }
+        }
+        writer.write_all(&buf).map_err(|err| err.to_string())?;
+        written_lines += batch_lines;
+        if written_lines - last_emitted >= EXPORT_PROGRESS_STRIDE {
+            last_emitted = written_lines;
+            on_progress(written_lines, written_bytes, false);
+        }
+        cursor = batch_end;
+        std::thread::yield_now();
+    }
+
+    writer.flush().map_err(|err| err.to_string())?;
+    on_progress(written_lines, written_bytes, true);
+    Ok(ExportSummaryDto {
+        written_lines,
+        written_bytes,
+    })
+}
+
+/// 导出对象:统一成"按 view_idx 取 0-based 源行号"的迭代抽象。
+enum ExportSource {
+    /// 连续区间 [first, first+len)(All / Range 复用)。
+    Range { first: usize, len: usize },
+    /// 离散 0-based 源行号数组(Filtered / Bookmarks / Errors)。
+    Indices(Vec<u32>),
+}
+
+impl ExportSource {
+    fn from_plan(plan: logcore::session::ExportPlan) -> Self {
+        match plan {
+            logcore::session::ExportPlan::AllLines { total } => ExportSource::Range {
+                first: 0,
+                len: total,
+            },
+            logcore::session::ExportPlan::Indices(indices) => ExportSource::Indices(indices),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            ExportSource::Range { len, .. } => *len,
+            ExportSource::Indices(indices) => indices.len(),
+        }
+    }
+
+    fn source_idx(&self, view_idx: usize) -> usize {
+        match self {
+            ExportSource::Range { first, .. } => first + view_idx,
+            ExportSource::Indices(indices) => indices[view_idx] as usize,
+        }
+    }
+}
+
+/// 持锁取一次 export_plan_snapshot(非 Filtered 或过滤未激活分支)。
+fn plan_snapshot(
+    app_state: &AppState,
+    session_generation: u64,
+    view: logcore::session::RowsView,
+) -> Result<logcore::session::ExportPlan, String> {
+    let Some(guard) = app_state.lock_session_if_current(session_generation) else {
+        return Err("session changed during export".to_string());
+    };
+    let Some(session) = guard.as_ref() else {
+        return Err("open a log file before exporting".to_string());
+    };
+    Ok(session.export_plan_snapshot(view))
 }
 
 // 切分同样可能处理超大文件,放到阻塞线程池;分片进度经 split:progress 事件回传。
@@ -1212,6 +1414,122 @@ mod tests {
         assert!(dir.path().join("logcat-3.log").exists());
         assert!(dir.path().join("logcat-4.log").exists());
         assert!(dir.path().join("user-notes.log").exists());
+    }
+
+    fn export_state_with_session(path: &std::path::Path) -> (AppState, u64) {
+        let mut session = logcore::session::Session::open(path).unwrap();
+        session.index_all();
+        let state = AppState::new();
+        let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        *state.lock_session() = Some(session);
+        (state, generation)
+    }
+
+    #[test]
+    fn chunked_export_matches_export_view_output_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.log");
+        let mut content = String::new();
+        for i in 0..9000 {
+            let level = if i % 7 == 0 { "E" } else { "I" };
+            content.push_str(&format!(
+                "04-20 12:06:02.{:03}   200   220 {level} Net: msg {i}\n",
+                i % 1000
+            ));
+        }
+        std::fs::write(&src, &content).unwrap();
+
+        // 期望输出:独立会话跑旧路径 export_view(Filtered)
+        let expected_path = dir.path().join("expected.log");
+        let spec = logcore::filter::FilterSpec {
+            levels: logcore::filter::LevelMask::from_levels(&["E", "F"]),
+            ..Default::default()
+        };
+        {
+            let mut oracle = logcore::session::Session::open(&src).unwrap();
+            oracle.index_all();
+            oracle.set_filter(&spec).unwrap();
+            oracle
+                .export_view(logcore::session::RowsView::Filtered, &expected_path)
+                .unwrap();
+        }
+
+        // 实际输出:分段导出(9000 行 > EXPORT_CHUNK_LINES,保证跨批)
+        let (state, generation) = export_state_with_session(&src);
+        {
+            let mut guard = state.lock_session();
+            guard.as_mut().unwrap().set_filter(&spec).unwrap();
+        }
+        let out_path = dir.path().join("chunked.log");
+        let request = ExportRequest {
+            mode: "view".to_string(),
+            view: Some("filtered".to_string()),
+            start_line: None,
+            end_line: None,
+            path: out_path.to_string_lossy().to_string(),
+        };
+        let mut progress_calls = Vec::new();
+        let summary = run_chunked_export(&state, generation, &request, &mut |lines, bytes, done| {
+            progress_calls.push((lines, bytes, done));
+        })
+        .unwrap();
+
+        let expected = std::fs::read(&expected_path).unwrap();
+        let actual = std::fs::read(&out_path).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(summary.written_bytes as usize, actual.len());
+        assert_eq!(progress_calls.last().map(|c| c.2), Some(true)); // 最终 done 事件
+    }
+
+    #[test]
+    fn chunked_export_range_matches_export_range_output_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.log");
+        std::fs::write(
+            &src,
+            "04-20 12:06:02.125   146   179 D A: one\n04-20 12:06:02.225   200   220 I B: two\n04-20 12:06:02.325   200   221 W C: three\n",
+        )
+        .unwrap();
+        let expected_path = dir.path().join("expected.log");
+        {
+            let mut oracle = logcore::session::Session::open(&src).unwrap();
+            oracle.index_all();
+            oracle.export_range(2, 3, &expected_path).unwrap();
+        }
+        let (state, generation) = export_state_with_session(&src);
+        let out_path = dir.path().join("chunked.log");
+        let request = ExportRequest {
+            mode: "range".to_string(),
+            view: None,
+            start_line: Some(2),
+            end_line: Some(3),
+            path: out_path.to_string_lossy().to_string(),
+        };
+        let summary =
+            run_chunked_export(&state, generation, &request, &mut |_, _, _| {}).unwrap();
+        assert_eq!(
+            std::fs::read(&out_path).unwrap(),
+            std::fs::read(&expected_path).unwrap()
+        );
+        assert_eq!(summary.written_lines, 2);
+    }
+
+    #[test]
+    fn chunked_export_aborts_when_session_generation_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.log");
+        std::fs::write(&src, "04-20 12:06:02.125   146   179 D A: one\n").unwrap();
+        let (state, generation) = export_state_with_session(&src);
+        state.generation.fetch_add(1, Ordering::SeqCst); // 模拟导出期间 open 了新文件
+        let request = ExportRequest {
+            mode: "view".to_string(),
+            view: Some("all".to_string()),
+            start_line: None,
+            end_line: None,
+            path: dir.path().join("out.log").to_string_lossy().to_string(),
+        };
+        let err = run_chunked_export(&state, generation, &request, &mut |_, _, _| {}).unwrap_err();
+        assert!(err.contains("session changed"), "{err}");
     }
 
     #[test]
