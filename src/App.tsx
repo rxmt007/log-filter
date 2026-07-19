@@ -1,12 +1,15 @@
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Toolbar } from "@/components/Toolbar";
 import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
 import { Minimap } from "@/components/Minimap";
+import { Toast, type ToastState } from "@/components/Toast";
 import {
   getConfig,
   nextBookmark,
+  onExportProgress,
   onFilterDone,
   onIndexProgress,
   onSearchProgress,
@@ -19,6 +22,9 @@ import { useSession } from "@/store/session";
 
 export default function App() {
   const [configReady, setConfigReady] = useState(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastSeqRef = useRef(0);
+  const dismissToast = useCallback(() => setToast(null), []);
   const setStatus = useSession((s) => s.setStatus);
   const filter = useSession((s) => s.filter);
   const setFilterState = useSession((s) => s.setFilter);
@@ -91,6 +97,37 @@ export default function App() {
       un.then((f) => f());
     };
   }, [setSearchResult]);
+
+  // 导出完成/取消的全局提示:即使导出对话框已关闭也能收到(对话框自身仍监听进度做内联显示)。
+  useEffect(() => {
+    const un = onExportProgress((progress) => {
+      if (!progress.done) return;
+      toastSeqRef.current += 1;
+      if (progress.cancelled) {
+        setToast({ id: toastSeqRef.current, message: "导出已取消", tone: "info" });
+        return;
+      }
+      const path = progress.path;
+      setToast({
+        id: toastSeqRef.current,
+        message: `已导出 ${progress.writtenLines.toLocaleString()} 行`,
+        tone: "success",
+        action: path
+          ? {
+              label: "打开所在目录",
+              onClick: () => {
+                void revealItemInDir(path).catch((err) =>
+                  console.error("revealItemInDir failed", err),
+                );
+              },
+            }
+          : undefined,
+      });
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   useEffect(() => {
     const appendBatcher = createStreamAppendBatcher({
@@ -207,6 +244,7 @@ export default function App() {
         <LogTable />
       </div>
       <StatusBar />
+      <Toast toast={toast} onDismiss={dismissToast} />
     </div>
   );
 }

@@ -1701,6 +1701,77 @@
   color: #fff;
 }
 
+/* 应用级底部居中提示条:导出完成/取消的全局信号,层级高于模态框。 */
+.lf-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--lf-border-strong);
+  border-radius: 999px;
+  background: var(--lf-panel-2);
+  color: var(--lf-text);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
+  font-size: 12px;
+}
+
+.lf-toast[data-tone="success"] {
+  border-color: color-mix(in oklab, var(--lf-lv-i), var(--lf-border) 45%);
+  background: var(--lf-chip-i);
+  color: var(--lf-lv-i);
+}
+
+.lf-toast-message {
+  overflow-wrap: anywhere;
+}
+
+.lf-toast-action {
+  flex: none;
+  border: 1px solid var(--lf-accent);
+  border-radius: 999px;
+  background: var(--lf-accent-soft);
+  color: var(--lf-accent-strong);
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lf-toast-action:hover {
+  border-color: var(--lf-accent-strong);
+}
+
+.lf-toast-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.lf-toast-close:hover {
+  opacity: 1;
+  background: color-mix(in oklab, currentColor, transparent 85%);
+}
+
+.lf-toast-close svg {
+  width: 13px;
+  height: 13px;
+}
+
 .lf-table-row[data-selected="true"] {
   border-left-color: var(--lf-accent);
   background: var(--lf-accent-soft);

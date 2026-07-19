@@ -5,6 +5,7 @@ import { FolderOpen, Save, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/ui/dropdown";
 import {
+  cancelExport,
   exportLogs,
   onExportProgress,
   onSplitProgress,
@@ -92,16 +93,26 @@ export function ExportDialog({ onClose }: DialogProps) {
       const result = await exportLogs(
         mode === "range" ? { mode, startLine, endLine, path } : { mode, view: exportView, path },
       );
-      setTone("ok");
-      setMessage(
-        `已导出 ${result.writtenLines.toLocaleString()} 行 · ${result.writtenBytes.toLocaleString()} bytes`,
-      );
+      if (result.cancelled) {
+        setTone("ok");
+        setMessage("已取消");
+      } else {
+        setTone("ok");
+        setMessage(
+          `已导出 ${result.writtenLines.toLocaleString()} 行 · ${result.writtenBytes.toLocaleString()} bytes`,
+        );
+      }
     } catch (err) {
       setTone("error");
       setMessage(String(err));
     } finally {
       setBusy(false);
     }
+  };
+
+  // 保持 busy 直至 export 调用返回(它会带 cancelled:true),避免抢先解除按钮忙态。
+  const requestCancel = () => {
+    void cancelExport().catch((err) => console.error("cancel_export failed", err));
   };
 
   return (
@@ -165,6 +176,11 @@ export function ExportDialog({ onClose }: DialogProps) {
         <Button variant="ghost" onClick={onClose}>
           关闭
         </Button>
+        {busy ? (
+          <Button variant="ghost" onClick={requestCancel}>
+            取消
+          </Button>
+        ) : null}
         <Button className="lf-dialog-primary" disabled={disabled} onClick={runExport}>
           <Save />
           {busy
