@@ -1,8 +1,13 @@
 # Third-party notices
 
-LogFilter uses third-party libraries and assets. The project-level `GPL-3.0-or-later` license does not replace their copyright notices or licenses. Dependency versions are recorded in `Cargo.lock` and `pnpm-lock.yaml`; the effective dependency set should be reviewed for each release.
+LogFilter uses third-party libraries and assets. The project-level `GPL-3.0-or-later` license does not replace their copyright notices or licenses. Dependency versions are recorded in `Cargo.lock` and `pnpm-lock.yaml`; the effective dependency set must be reviewed for each release.
 
-This file currently records the separately bundled font asset; it is not a complete per-package license report for a binary distribution. Before publishing a formal installer, the release process must generate and bundle a license inventory from the locked Rust and pnpm dependency sets and review the actual platform artifact.
+Installers bundle the following generated inventories, including dependency versions, declared licenses, upstream links, and available license or notice texts:
+
+- [`third-party-licenses/Rust-dependencies.html`](third-party-licenses/Rust-dependencies.html), generated from the non-development Cargo dependency graph with `cargo-about`.
+- [`third-party-licenses/pnpm-production-dependencies.txt`](third-party-licenses/pnpm-production-dependencies.txt), generated from `pnpm licenses list --prod`.
+
+Maintainers regenerate both reports with `pnpm licenses:generate` after dependency-lock changes and before publishing installers. The Rust report uses `cargo-about` 0.9.1 (`cargo install --locked --version 0.9.1 --features cli cargo-about`) and [`about.toml`](about.toml). Both generators reject licenses outside their reviewed allowlists. The generated reports are conservative inventories; release verification must still confirm that they are present in each platform artifact.
 
 ## Geist Variable font
 
