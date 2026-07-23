@@ -6,7 +6,7 @@ LogFilter 是一款面向 Windows、macOS 与 Linux 的 Android logcat 桌面查
 
 > **平台状态**：当前仅在 macOS Apple Silicon 环境完成手动运行测试。macOS 构建尚未进行代码签名和 Apple 公证；macOS Intel、Windows 与 Linux 版本尚未完成手动验证。CI 构建通过不等同于安装包运行验证。
 >
-> 欢迎通过仓库的 Issues 反馈问题或建议、参与讨论，或提交 Pull Request 帮助改进功能、兼容性与文档。
+> 欢迎通过[公开 Issue](https://github.com/rxmt007/log-filter-desktop/issues)反馈问题或建议、参与讨论并补充平台验证结果。提交前请对日志、设备标识、路径、账号和网络地址等信息进行脱敏。
 
 本手册面向使用者，所有描述均以当前版本的实际行为为准。
 
@@ -14,7 +14,7 @@ LogFilter 是一款面向 Windows、macOS 与 Linux 的 Android logcat 桌面查
 
 ## 基本工作流
 
-1. **运行应用**：当前版本主要通过源码构建和运行，具体步骤见第 1 章。GitHub Actions 提供的安装包属于开发构建。
+1. **运行应用**：从[官方 Releases](https://github.com/rxmt007/log-filter-desktop/releases)获取与操作系统和架构匹配的安装包，具体步骤见第 1 章。若页面尚无可用版本，表示当前尚未发布面向用户的专有构建。
 2. **选择日志来源**：
    - **设备采集**：通过 USB 连接已启用调试功能的 Android 设备，在左上角设备列表中选择设备，然后点击工具栏的 ▶(Start)开始采集；
    - **文件浏览**：按 `Cmd/Ctrl+O` 或点击工具栏文件夹图标打开 logcat 日志文件。大型文件会在后台建立索引，索引期间仍可浏览已处理的内容。
@@ -26,39 +26,29 @@ LogFilter 是一款面向 Windows、macOS 与 Linux 的 Android logcat 桌面查
 
 ## 1. 安装与运行
 
-### 1.1 从源码构建
+### 1.1 获取官方安装包
 
-当前版本主要通过源码构建和运行。前置条件为 Rust stable 工具链、Node.js 22 与 pnpm；还需安装 Tauri v2 在对应操作系统上要求的系统依赖。
+面向用户的版本只通过[`rxmt007/log-filter-desktop` Releases](https://github.com/rxmt007/log-filter-desktop/releases)发布。公开发行仓库用于文档、下载和问题跟踪，不包含产品源代码。请根据文件名选择对应平台：
 
-```bash
-git clone <仓库地址>
-cd log-filter
-pnpm install --frozen-lockfile
-pnpm tauri dev        # 开发模式直接启动
-# 或
-pnpm tauri build      # 本机打安装包,产物在仓库根 target/release/bundle/
-```
-
-### 1.2 GitHub Actions 开发构建
-
-仓库的 **Desktop Build** 工作流可在手动触发或推送 `v*` 标签时生成三平台安装包。这些 artifact 用于开发测试，不是经过签名和完整平台验证的正式发行版，并会按照 GitHub 的保留策略过期。
-
-| Artifact 名称 | 平台 | 包含文件 | 手动验证状态 |
-| --- | --- | --- | --- |
-| `logfilter-windows-latest` | Windows | `.msi`(MSI 安装包)、`.exe`(NSIS 安装器) | 未测试 |
-| `logfilter-macos-latest` | macOS | `.dmg` | 仅 Apple Silicon 已测试；未签名、未公证 |
-| `logfilter-ubuntu-22.04` | Linux(Debian/Ubuntu) | `.deb` | 未测试 |
+| 平台 | 文件类型 | 手动验证状态 |
+| --- | --- | --- |
+| Windows x64 | `.msi` 或 `.exe` | 尚未完成手动验证 |
+| macOS Apple Silicon | `.dmg` | 已完成手动运行测试；未签名、未公证 |
+| Linux x64（Debian/Ubuntu） | `.deb` | 尚未完成手动验证 |
 
 macOS Intel 尚未完成手动测试。工作流成功表示构建过程完成，不代表对应安装包已在目标系统上通过运行验证。
 
-**获取开发构建：**
+下载后可使用同一 Release 附带的 `SHA256SUMS.txt` 核对文件完整性。不要从未经项目明确引用的镜像或第三方下载站获取安装包。
 
-1. 打开仓库的 **Actions** 页面，选择 **Desktop Build** 工作流；
-2. 进入已完成的运行记录，在 **Artifacts** 区域下载并解压对应平台的文件；若没有可用记录，请按第 1.1 节从源码构建；
-3. 按平台安装：
-   - **Windows**：运行 `.msi` 或 `.exe` 并按安装向导操作；
-   - **macOS**：打开 `.dmg` 并将应用拖入“应用程序”文件夹。由于构建未签名且未公证，系统可能阻止直接运行；
-   - **Linux**：运行 `sudo dpkg -i <文件名>.deb`，或使用系统的软件安装器打开。
+### 1.2 安装与安全提示
+
+按平台安装：
+
+- **Windows**：运行 `.msi` 或 `.exe` 并按安装向导操作；
+- **macOS**：打开 `.dmg` 并将应用拖入“应用程序”文件夹。由于构建未签名且未公证，系统可能阻止直接运行；
+- **Linux**：运行 `sudo dpkg -i <文件名>.deb`，或使用系统的软件安装器打开。
+
+如果操作系统显示发布者或安全警告，请先核对下载来源、版本说明和校验值；不确定时不要绕过系统保护。
 
 ---
 
