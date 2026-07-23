@@ -7,7 +7,7 @@
 
 把 2013 年的 Java Swing 工具 **LogFilter v1.8**(Android logcat 查看器)从零复刻为**跨平台桌面客户端**(Windows 主打,兼顾 macOS / Linux)。相较原版的核心增强:**支持 10GB+ 超大日志文件**——这是工程目标,已有 10GiB 实测佐证,见 [`docs/superpowers/2026-07-06-benchmark-10gb.md`](docs/superpowers/2026-07-06-benchmark-10gb.md)。
 
-仓库:`github.com/rxmt007/log-filter`。
+私有源码仓库:`github.com/rxmt007/log-filter`。公开文档、Issue 与发行入口:`github.com/rxmt007/log-filter-desktop`。
 
 ## 技术栈
 
@@ -63,7 +63,7 @@ LogFilter/          原 Java 工程(只读参考,已忽略,将删除)
 ## 分支与 CI 策略
 
 - **main** 为主干;**dev** 为维护者使用的长期缓冲分支:维护者的日常工作可 **rebase 合入 dev**,dev 上不跑 CI,依赖本地验证全集。
-- 维护者可按批次开 **dev→main PR**;外部贡献请直接向 **main** 提交 PR;合并方式**一律 rebase**。
+- 维护者可按批次开 **dev→main PR**;源码 PR 仅接受授权协作者提交;合并方式**一律 rebase**。面向用户的问题与建议统一提交到公开发行仓库。
 - main 合并后,维护者将 dev 对齐 main:`reset --hard main` 并 `push --force-with-lease` 推送对齐。
 - **CI(`.github/workflows/ci.yml`)**:任何目标为 **main** 的 `pull_request` 都会触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容与本地验证全集一致:pnpm typecheck / lint / test、`cargo fmt --all -- --check`、`cargo test -p logcore`、`cargo test -p log-filter`、`cargo clippy --workspace --all-targets -- -D warnings`。
   - 仅修改 `docs/**` 或 `**.md` 的 PR 不触发;**main push 不触发**;也可通过 `workflow_dispatch` 手动触发。

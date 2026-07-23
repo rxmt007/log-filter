@@ -266,7 +266,7 @@
       <p>项目已在 macOS Apple Silicon 环境完成 10 GiB 日志基准测试。该结果来自特定软硬件环境，不代表其他平台的运行表现，详见 <a href="superpowers/2026-07-06-benchmark-10gb.md">10 GiB 基准报告</a>。</p>
       <blockquote>
         <p><strong>平台状态</strong>：当前仅在 macOS Apple Silicon 环境完成手动运行测试。macOS 构建尚未进行代码签名和 Apple 公证；macOS Intel、Windows 与 Linux 版本尚未完成手动验证。CI 构建通过不等同于安装包运行验证。</p>
-        <p>欢迎通过仓库的 Issues 反馈问题或建议、参与讨论，或提交 Pull Request 帮助改进功能、兼容性与文档。</p>
+        <p>欢迎通过<a href="https://github.com/rxmt007/log-filter-desktop/issues">公开 Issue</a>反馈问题或建议、参与讨论并补充平台验证结果。提交前请对日志、设备标识、路径、账号和网络地址等信息进行脱敏。</p>
       </blockquote>
       <p>本手册面向使用者，所有描述均以当前版本的实际行为为准。</p>
     </div>
@@ -275,7 +275,7 @@
       <summary><h2>基本工作流</h2></summary>
       <div class="sec-body">
         <ol>
-          <li><strong>运行应用</strong>：当前版本主要通过源码构建和运行，具体步骤见第 1 章。GitHub Actions 提供的安装包属于开发构建。</li>
+          <li><strong>运行应用</strong>：从<a href="https://github.com/rxmt007/log-filter-desktop/releases">官方 Releases</a>获取与操作系统和架构匹配的安装包，具体步骤见第 1 章。若页面尚无可用版本，表示当前尚未发布面向用户的专有构建。</li>
           <li><strong>选择日志来源</strong>：
             <ul>
               <li><strong>设备采集</strong>：通过 USB 连接已启用调试功能的 Android 设备，在左上角设备列表中选择设备，然后点击工具栏的 ▶(Start)开始采集；</li>
@@ -292,39 +292,28 @@
     <details class="section" id="sec-1" open>
       <summary><h2>1. 安装与运行</h2></summary>
       <div class="sec-body">
-        <h3>1.1 从源码构建</h3>
-        <p>当前版本主要通过源码构建和运行。前置条件为 Rust stable 工具链、Node.js 22 与 pnpm；还需安装 Tauri v2 在对应操作系统上要求的系统依赖。</p>
-<pre><code>git clone &lt;仓库地址&gt;
-cd log-filter
-pnpm install --frozen-lockfile
-pnpm tauri dev        # 开发模式直接启动
-# 或
-pnpm tauri build      # 本机打安装包,产物在仓库根 target/release/bundle/</code></pre>
-        <h3>1.2 GitHub Actions 开发构建</h3>
-        <p>仓库的 <strong>Desktop Build</strong> 工作流可在手动触发或推送 <code>v*</code> 标签时生成三平台安装包。这些 artifact 用于开发测试，不是经过签名和完整平台验证的正式发行版，并会按照 GitHub 的保留策略过期。</p>
+        <h3>1.1 获取官方安装包</h3>
+        <p>面向用户的版本只通过 <a href="https://github.com/rxmt007/log-filter-desktop/releases"><code>rxmt007/log-filter-desktop</code> Releases</a> 发布。公开发行仓库用于文档、下载和问题跟踪，不包含产品源代码。请根据文件名选择对应平台：</p>
         <div class="tbl-wrap">
           <table>
-            <thead><tr><th>Artifact 名称</th><th>平台</th><th>包含文件</th><th>手动验证状态</th></tr></thead>
+            <thead><tr><th>平台</th><th>文件类型</th><th>手动验证状态</th></tr></thead>
             <tbody>
-              <tr><td><code>logfilter-windows-latest</code></td><td>Windows</td><td><code>.msi</code>(MSI 安装包)、<code>.exe</code>(NSIS 安装器)</td><td>未测试</td></tr>
-              <tr><td><code>logfilter-macos-latest</code></td><td>macOS</td><td><code>.dmg</code></td><td>仅 Apple Silicon 已测试；未签名、未公证</td></tr>
-              <tr><td><code>logfilter-ubuntu-22.04</code></td><td>Linux(Debian/Ubuntu)</td><td><code>.deb</code></td><td>未测试</td></tr>
+              <tr><td>Windows x64</td><td><code>.msi</code> 或 <code>.exe</code></td><td>尚未完成手动验证</td></tr>
+              <tr><td>macOS Apple Silicon</td><td><code>.dmg</code></td><td>已完成手动运行测试；未签名、未公证</td></tr>
+              <tr><td>Linux x64（Debian/Ubuntu）</td><td><code>.deb</code></td><td>尚未完成手动验证</td></tr>
             </tbody>
           </table>
         </div>
         <p>macOS Intel 尚未完成手动测试。工作流成功表示构建过程完成，不代表对应安装包已在目标系统上通过运行验证。</p>
-        <p><strong>获取开发构建：</strong></p>
-        <ol>
-          <li>打开仓库的 <strong>Actions</strong> 页面，选择 <strong>Desktop Build</strong> 工作流；</li>
-          <li>进入已完成的运行记录，在 <strong>Artifacts</strong> 区域下载并解压对应平台的文件；若没有可用记录，请按第 1.1 节从源码构建；</li>
-          <li>按平台安装：
-            <ul>
-              <li><strong>Windows</strong>：运行 <code>.msi</code> 或 <code>.exe</code> 并按安装向导操作；</li>
-              <li><strong>macOS</strong>：打开 <code>.dmg</code> 并将应用拖入“应用程序”文件夹。由于构建未签名且未公证，系统可能阻止直接运行；</li>
-              <li><strong>Linux</strong>：运行 <code>sudo dpkg -i &lt;文件名&gt;.deb</code>，或使用系统的软件安装器打开。</li>
-            </ul>
-          </li>
-        </ol>
+        <p>下载后可使用同一 Release 附带的 <code>SHA256SUMS.txt</code> 核对文件完整性。不要从未经项目明确引用的镜像或第三方下载站获取安装包。</p>
+        <h3>1.2 安装与安全提示</h3>
+        <p>按平台安装：</p>
+        <ul>
+          <li><strong>Windows</strong>：运行 <code>.msi</code> 或 <code>.exe</code> 并按安装向导操作；</li>
+          <li><strong>macOS</strong>：打开 <code>.dmg</code> 并将应用拖入“应用程序”文件夹。由于构建未签名且未公证，系统可能阻止直接运行；</li>
+          <li><strong>Linux</strong>：运行 <code>sudo dpkg -i &lt;文件名&gt;.deb</code>，或使用系统的软件安装器打开。</li>
+        </ul>
+        <p>如果操作系统显示发布者或安全警告，请先核对下载来源、版本说明和校验值；不确定时不要绕过系统保护。</p>
       </div>
     </details>
 

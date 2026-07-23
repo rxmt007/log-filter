@@ -3,8 +3,8 @@ name = "logcore"
 version = "0.1.0"
 description = "Core indexing, filtering, and search engine for LogFilter"
 edition = "2021"
-license = "GPL-3.0-or-later"
-repository = "https://github.com/rxmt007/log-filter"
+publish = false
+homepage = "https://github.com/rxmt007/log-filter-desktop"
 
 [dependencies]
 encoding_rs = "0.8"

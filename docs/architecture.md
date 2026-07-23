@@ -614,7 +614,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 - **分支**:`main` 为主干;`dev` 为维护者使用的长期缓冲分支——维护者的日常工作可
   rebase 合入 dev(不跑 CI,依赖 §9 的本地全套验证),并按批次提交 dev→main PR。
-  外部贡献请直接向 main 提交 PR;合并方式一律 rebase。main 合并后,维护者将 dev
+  源码 PR 仅接受授权协作者提交;合并方式一律 rebase。main 合并后,维护者将 dev
   执行 `reset --hard main` 并通过 `--force-with-lease` 推送对齐。
 - **CI**(`.github/workflows/ci.yml`):任何目标为 main 的 pull_request 都会触发完整三系统矩阵
   (ubuntu-latest / macos-latest / windows-latest),内容为 `pnpm typecheck/lint/test`、

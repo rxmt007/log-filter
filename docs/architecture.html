@@ -1175,7 +1175,7 @@ pnpm typecheck &amp;&amp; pnpm lint &amp;&amp; pnpm test</code></pre>
 <section id="sec-10">
   <h2><span class="no">10.</span>分支与 CI(工程约定)</h2>
   <ul>
-    <li><strong>分支</strong>:<code>main</code> 为主干;<code>dev</code> 为维护者使用的长期缓冲分支——维护者的日常工作可 rebase 合入 dev(不跑 CI,依赖 <a href="#sec-9">§9</a> 的本地全套验证),并按批次提交 dev→main PR。外部贡献请直接向 main 提交 PR;合并方式一律 rebase。main 合并后,维护者将 dev 执行 <code>reset --hard main</code> 并通过 <code>--force-with-lease</code> 推送对齐。</li>
+    <li><strong>分支</strong>:<code>main</code> 为主干;<code>dev</code> 为维护者使用的长期缓冲分支——维护者的日常工作可 rebase 合入 dev(不跑 CI,依赖 <a href="#sec-9">§9</a> 的本地全套验证),并按批次提交 dev→main PR。源码 PR 仅接受授权协作者提交;合并方式一律 rebase。main 合并后,维护者将 dev 执行 <code>reset --hard main</code> 并通过 <code>--force-with-lease</code> 推送对齐。</li>
     <li><strong>CI</strong>(<code>.github/workflows/ci.yml</code>):任何目标为 main 的 pull_request 都会触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容为 <code>pnpm typecheck/lint/test</code>、<code>cargo fmt --all -- --check</code>、<code>cargo test -p logcore</code>、<code>cargo test -p log-filter</code>、<code>cargo clippy --workspace --all-targets -- -D warnings</code>。纯文档改动(<code>docs/**</code>、<code>**.md</code>)不触发;main push 不触发;也可通过 <code>workflow_dispatch</code> 手动触发。</li>
     <li><strong>打包</strong>(<code>.github/workflows/desktop-build.yml</code>,"Desktop Build"):仅 <code>workflow_dispatch</code> 或 <code>v*</code> tag 触发,tauri-action 三平台产出 msi/nsis/dmg/deb;workspace 布局下产物在仓库根 <code>target/release/bundle/</code>(<strong>不在</strong> <code>src-tauri/target/</code>),artifact 上传设 <code>if-no-files-found: error</code>。</li>
   </ul>
