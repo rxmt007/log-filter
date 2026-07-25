@@ -3,10 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "description": "Cross-platform desktop Android logcat viewer built with Rust, Tauri, and React",
-  "license": "UNLICENSED",
-  "homepage": "https://github.com/rxmt007/log-filter-desktop",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/rxmt007/log-filter",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rxmt007/log-filter.git"
+  },
   "bugs": {
-    "url": "https://github.com/rxmt007/log-filter-desktop/issues"
+    "url": "https://github.com/rxmt007/log-filter/issues"
   },
   "type": "module",
   "scripts": {

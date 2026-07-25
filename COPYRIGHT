@@ -1,13 +1,13 @@
-Copyright (c) 2026 rxmt007. All rights reserved.
+Copyright (C) 2026 LogFilter contributors
 
-Unless otherwise noted, LogFilter and its first-party source code,
-documentation, artwork, and binary distributions are proprietary.
-Unauthorized copying, modification, distribution, sublicensing, publication,
-or disclosure is prohibited.
+Unless otherwise noted, LogFilter is free software: you can redistribute it
+and/or modify it under the terms of the GNU General Public License as published
+by the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version.
 
-Third-party components remain subject to their respective licenses and
-notices. See THIRD_PARTY_NOTICES.md and the bundled third-party license
-inventories for details.
+LogFilter is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-Previously released versions remain governed by the terms supplied with those
-versions.
+The complete license text is available in LICENSE. Third-party components
+remain subject to their respective licenses; see THIRD_PARTY_NOTICES.md.
