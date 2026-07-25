@@ -1,6 +1,6 @@
 # Third-party notices
 
-LogFilter uses third-party libraries and assets. The project's proprietary license does not replace their copyright notices or licenses. Dependency versions are recorded in `Cargo.lock` and `pnpm-lock.yaml`; the effective dependency set must be reviewed for each release.
+LogFilter uses third-party libraries and assets. The project-level `GPL-3.0-or-later` license does not replace their copyright notices or licenses. Dependency versions are recorded in `Cargo.lock` and `pnpm-lock.yaml`; the effective dependency set must be reviewed for each release.
 
 Installers bundle the following generated inventories, including dependency versions, declared licenses, upstream links, and available license or notice texts:
 
@@ -18,4 +18,4 @@ The application bundles the Geist Variable font through `@fontsource-variable/ge
 - License text: [`third-party-licenses/Geist-OFL-1.1.txt`](third-party-licenses/Geist-OFL-1.1.txt)
 - Upstream: [vercel/geist-font](https://github.com/vercel/geist-font)
 
-The font remains licensed under the OFL and is not relicensed under the project's proprietary terms. It is currently bundled without modification.
+The font remains licensed under the OFL and is not relicensed under the GPL. It is currently bundled without modification.

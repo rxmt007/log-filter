@@ -1,5 +1,6 @@
 # License policy and report configuration for cargo-about 0.9.1.
 accepted = [
+    "GPL-3.0-or-later",
     "Apache-2.0 WITH LLVM-exception",
     "Apache-2.0",
     "MIT",
@@ -15,7 +16,6 @@ accepted = [
 ]
 
 ignore-dev-dependencies = true
-private = { ignore = true }
 
 workarounds = [
     "ring",

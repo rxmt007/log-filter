@@ -4,8 +4,7 @@ LogFilter 是面向 Android `logcat` 的跨平台桌面查看器，支持本地�
 
 ## 项目状态
 
-项目仍处于早期开发阶段。源码仓库仅供授权协作者使用；面向用户的文档、问题反馈和后续正式安装包统一发布在
-[`rxmt007/log-filter-desktop`](https://github.com/rxmt007/log-filter-desktop)。平台状态如下：
+项目仍处于早期公开开发阶段，目前主要提供源码构建。平台状态如下：
 
 | 平台 | 当前状态 |
 | --- | --- |
@@ -14,7 +13,7 @@ LogFilter 是面向 Android `logcat` 的跨平台桌面查看器，支持本地�
 | Windows | 尚未完成手动验证 |
 | Linux | 尚未完成手动验证 |
 
-CI 会在 macOS、Windows 和 Linux 上执行编译、测试与静态检查，但通过 CI 不代表安装包已经在对应平台完成运行验证。欢迎相关平台用户通过[公开 Issue](https://github.com/rxmt007/log-filter-desktop/issues)报告构建和运行结果。
+CI 会在 macOS、Windows 和 Linux 上执行编译、测试与静态检查，但通过 CI 不代表安装包已经在对应平台完成运行验证。欢迎相关平台用户报告构建和运行结果。
 
 LogFilter 面向大文件场景设计，并已在 macOS Apple Silicon 上完成 10 GiB、约 7,115 万行日志的基准验证。测试环境、方法与结果见[性能基准报告](docs/superpowers/2026-07-06-benchmark-10gb.md)；实际性能取决于硬件、操作系统和日志内容。
 
@@ -28,9 +27,9 @@ LogFilter 面向大文件场景设计，并已在 macOS Apple Silicon 上完成 
 - 导出与切分：按范围导出日志，并切分大型日志文件
 - 多编码与主题：支持常见文本编码及浅色、深色主题
 
-## 内部开发与构建
+## 从源码构建
 
-授权协作者的开发环境需要 Rust stable、Node.js 22、pnpm 11，以及目标平台所需的 Tauri v2 系统依赖。
+开发环境需要 Rust stable、Node.js 22、pnpm 11，以及目标平台所需的 Tauri v2 系统依赖。
 
 ```bash
 pnpm install --frozen-lockfile
@@ -60,12 +59,13 @@ cargo test -p logcore && cargo test -p log-filter \
 
 - [用户手册](docs/user-manual.md)
 - [架构说明](docs/architecture.md)
+- [开源许可与重写风险审查](docs/superpowers/2026-07-21-open-source-license-review.md)
 
 仓库保留了用户手册和架构说明的 HTML 副本，供克隆或下载仓库后在本地浏览器中打开。GitHub 文件页会显示其源代码，因此 README 不直接链接这些 HTML 文件。
 
-## 问题反馈
+## 参与项目
 
-欢迎试用项目、参与讨论、报告问题并补充平台验证结果。面向用户的问题与建议请提交到[公开 Issue](https://github.com/rxmt007/log-filter-desktop/issues)；源码变更仅接受授权协作者提交，并遵循[内部贡献指南](CONTRIBUTING.md)。
+欢迎试用项目、参与讨论、报告问题、补充平台验证结果并提交改进。开始贡献前请阅读[贡献指南](CONTRIBUTING.md)，其中说明了开发环境、架构约束、验证要求和提交约定。
 
 ## 致谢与来源关系
 
@@ -73,6 +73,6 @@ cargo test -p logcore && cargo test -p log-filter \
 
 当前项目依据所需功能和使用流程，使用 Rust、Tauri v2 与 React 独立重新实现。据当前仓库核查，未发现引入原项目源代码或资源；本项目也不代表原项目的官方延续或关联项目。
 
-## 许可
+## 许可证
 
-本仓库中的第一方源码、文档和其他材料采用[专有许可](LICENSE)，未经明确授权不得复制、修改、分发或披露。先前单独发布的版本仍遵循其发布时附带的许可条款。第三方组件继续适用各自的许可证，相关说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+LogFilter 以 [`GPL-3.0-or-later`](LICENSE) 许可发布。分发修改版或二进制时，请遵守 GPL 对完整对应源代码和许可声明的要求。第三方组件仍适用各自的许可证，相关说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
