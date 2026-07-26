@@ -59,6 +59,12 @@ const tableStatus: Status = {
   totalBytes: 20_000,
   indexing: true,
   generation: 7,
+  analysisGeneration: 2,
+  filterInputRevision: 3,
+  appliedFilterInputRevision: 3,
+  filterResultRevision: 5,
+  decodeRevision: 3,
+  sourceDataRevision: 11,
 };
 
 describe("table scope datasets", () => {

@@ -20,6 +20,12 @@ export interface Status {
   totalBytes: number;
   indexing: boolean;
   generation: number;
+  analysisGeneration: number;
+  filterInputRevision: number;
+  appliedFilterInputRevision: number;
+  filterResultRevision: number;
+  decodeRevision: number;
+  sourceDataRevision: number;
 }
 
 export interface AdbDevice {
@@ -49,10 +55,21 @@ export interface StreamAppend {
   deviceSerial: string;
 }
 
+export type StreamLifecycle =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "pausing"
+  | "paused"
+  | "finishing"
+  | "control-error";
+
 export interface StreamControl {
   status: Status;
+  lifecycle: StreamLifecycle;
   running: boolean;
   paused: boolean;
+  error: string | null;
   deviceSerial: string | null;
   sessionPath: string | null;
 }
@@ -92,11 +109,14 @@ export interface SearchSpec {
 export interface SearchResult {
   count: number;
   firstLine: number | null;
+  requestId: number;
 }
 
 export interface FilterDone {
   filteredLines: number;
   generation: number;
+  filterInputRevision: number;
+  filterResultRevision: number;
 }
 
 export interface SearchProgress {
@@ -105,6 +125,7 @@ export interface SearchProgress {
   firstLine: number | null;
   done: boolean;
   generation: number;
+  requestId: number;
 }
 
 export interface ScrollRequest {
@@ -143,6 +164,7 @@ export interface ProblemStats {
   observedOccurrenceCount: number;
   storedOccurrenceCount: number;
   droppedOccurrenceCount: number;
+  provisionalOccurrenceCount: number;
   storedGroupCount: number;
   ungroupedDroppedOccurrenceCount: number;
   droppedRecentObservationCount: number;
@@ -151,23 +173,67 @@ export interface ProblemStats {
   correlationLimited: boolean;
 }
 
+export type CaptureOrigin = "static-file" | "adb-live";
+
+export type RangeCompleteness = "unknown" | "bounded" | "start-truncated" | "end-truncated";
+
+export type ProblemInputBuffer = "main" | "system" | "events" | "crash" | "radio" | "kernel";
+
+export interface InputCoverage {
+  origin: CaptureOrigin;
+  requestedBuffers: ProblemInputBuffer[] | null;
+  rangeCompleteness: RangeCompleteness;
+}
+
 export interface ProblemsStatus {
   analysisToken: AnalysisToken;
   scannedLines: number;
   stableLines: number;
   scanning: boolean;
   finished: boolean;
+  coverage: InputCoverage;
   stats: ProblemStats;
+}
+
+export interface ProblemsProgress {
+  scannedLines: number;
+  stableLines: number;
+  coverage: InputCoverage;
+  observedOccurrenceCount: number;
+  storedOccurrenceCount: number;
+  droppedOccurrenceCount: number;
+  provisionalOccurrenceCount: number;
+  storedGroupCount: number;
+  ungroupedDroppedOccurrenceCount: number;
+  droppedRecentObservationCount: number;
+  correlationLimited: boolean;
+  revision: number;
+  done: boolean;
+  limited: boolean;
+  sessionGeneration: number;
+  analysisGeneration: number;
 }
 
 export interface ProblemGroup {
   id: number;
   kind: ProblemKind;
+  fingerprintVersion: number;
+  signatureQuality: string;
+  identityQuality: string;
+  processSummary: string;
+  processSummaryTruncated: boolean;
+  signatureSummary: string;
+  signatureSummaryTruncated: boolean;
+  fingerprint: string;
   observedOccurrenceCount: number;
   storedOccurrenceCount: number;
   droppedOccurrenceCount: number;
   firstLine: number;
+  firstTimestamp: string | null;
   lastLine: number;
+  lastTimestamp: string | null;
+  firstEventId: number | null;
+  lastEventId: number | null;
   representativeEventId: number | null;
 }
 
@@ -175,16 +241,19 @@ export interface ProblemOccurrence extends ProblemOccurrenceRef {
   kind: ProblemKind;
   pid: number | null;
   timestamp: string | null;
+  processInstanceId: number;
+  evidenceFlags: string[];
   outcomeFlags: string[];
   boundaryFlags: string[];
 }
 
 export interface ProblemPage<T> {
-  querySnapshotId: number;
+  analysisToken: AnalysisToken;
+  snapshotHandle: string;
   revision: number;
   total: number;
   items: T[];
-  nextOffset: number | null;
+  nextCursor: string | null;
 }
 
 export type ProblemFactCode =
@@ -215,6 +284,9 @@ export interface ProblemFact {
   code: ProblemFactCode;
   sourceLine: number;
   ruleId: string;
+  role: string;
+  evidenceFormat: string;
+  provenance: string;
 }
 
 export interface ProblemDetail {
@@ -222,8 +294,114 @@ export interface ProblemDetail {
   revision: number;
   occurrence: ProblemOccurrence;
   facts: ProblemFact[];
+  factsTruncated: boolean;
   observationTotal: number;
 }
+
+export type ProblemGroupQueryRequest =
+  | {
+      expectedAnalysisToken: AnalysisToken;
+      cursor: null;
+      kind: ProblemKind | null;
+      sort: "last-seen-desc" | "count-desc";
+      limit?: number;
+    }
+  | {
+      expectedAnalysisToken: AnalysisToken;
+      cursor: string;
+      kind?: ProblemKind | null;
+      sort?: "last-seen-desc" | "count-desc";
+      limit?: number;
+    };
+
+export type ProblemOccurrenceQueryRequest =
+  | {
+      expectedAnalysisToken: AnalysisToken;
+      cursor: null;
+      groupId: number;
+      limit?: number;
+    }
+  | {
+      expectedAnalysisToken: AnalysisToken;
+      cursor: string;
+      groupId?: number;
+      limit?: number;
+    };
+
+export interface ProblemDetailRequest {
+  eventId: number;
+  expectedAnalysisToken: AnalysisToken;
+}
+
+export interface ProblemReleaseSnapshotRequest {
+  snapshotHandle: string;
+  expectedAnalysisToken: AnalysisToken;
+}
+
+export interface ProblemExportRequest {
+  eventId: number;
+  expectedAnalysisToken: AnalysisToken;
+  mode: "event-range" | "context";
+  radius?: number;
+  path: string;
+}
+
+interface CheckedRowsRequestBase {
+  start: number;
+  count: number;
+  expectedAnalysisToken: AnalysisToken;
+  requestNonce: number;
+}
+
+export type CheckedRowsRequest =
+  | (CheckedRowsRequestBase & {
+      view: "filtered";
+      expectedFilterResultRevision: number;
+    })
+  | (CheckedRowsRequestBase & {
+      view: Exclude<RowsView, "filtered">;
+      expectedFilterResultRevision?: number | null;
+    });
+
+export type CheckedRowsResponse =
+  | {
+      status: "ok";
+      analysisToken: AnalysisToken;
+      requestNonce: number;
+      decodeRevision: number;
+      sourceDataRevision: number;
+      filterResultRevision: number;
+      rows: Row[];
+    }
+  | {
+      status: "stale-filter-result";
+      analysisToken: AnalysisToken;
+      requestNonce: number;
+      actualFilterResultRevision: number;
+    };
+
+export type LineMappingBias = "exact" | "nearest";
+
+export interface LineMappingRequest {
+  lineNo: number;
+  bias: LineMappingBias;
+  expectedAnalysisToken: AnalysisToken;
+  expectedFilterResultRevision: number;
+  requestNonce: number;
+}
+
+export type LineMappingResponse =
+  | {
+      status: "ok";
+      analysisToken: AnalysisToken;
+      filterResultRevision: number;
+      target: NavigationTarget | null;
+    }
+  | {
+      status: "stale-filter-result";
+      analysisToken: AnalysisToken;
+      actualFilterResultRevision: number;
+    };
 
 export interface LineRange {
   startLine: number;

@@ -11,11 +11,13 @@ import type {
 } from "@/types";
 
 type ProblemsSort = "last-seen-desc" | "count-desc";
-type SnapshotError = "snapshot-expired" | "snapshot-error" | null;
+type ProblemsLoadError = string | null;
 
 interface ProblemsState {
   analysisToken: AnalysisToken | null;
   status: ProblemsStatus | null;
+  statusLoading: boolean;
+  statusError: ProblemsLoadError;
   panelOpen: boolean;
   panelHeight: number;
   kindFilters: ProblemKind[];
@@ -25,9 +27,14 @@ interface ProblemsState {
   groupPage: ProblemPage<ProblemGroup> | null;
   occurrencePage: ProblemPage<ProblemOccurrence> | null;
   detail: ProblemDetail | null;
-  groupPageError: SnapshotError;
-  occurrencePageError: SnapshotError;
+  groupLoading: boolean;
+  occurrenceLoading: boolean;
+  detailLoading: boolean;
+  groupPageError: ProblemsLoadError;
+  occurrencePageError: ProblemsLoadError;
+  detailError: ProblemsLoadError;
   hasNewResults: boolean;
+  clearAnalysis: () => void;
   resetForAnalysis: (token: AnalysisToken) => void;
   acceptStatus: (status: ProblemsStatus) => void;
   setPanelOpen: (open: boolean) => void;
@@ -62,27 +69,59 @@ const initialUi = {
   groupPage: null,
   occurrencePage: null,
   detail: null,
+  groupLoading: false,
+  occurrenceLoading: false,
+  detailLoading: false,
   groupPageError: null,
   occurrencePageError: null,
+  detailError: null,
   hasNewResults: false,
 };
 
 export const useProblems = create<ProblemsState>()((set) => ({
   analysisToken: null,
   status: null,
+  statusLoading: false,
+  statusError: null,
   ...initialUi,
+  clearAnalysis: () =>
+    set((state) => ({
+      analysisToken: null,
+      status: null,
+      statusLoading: false,
+      statusError: null,
+      ...initialUi,
+      panelOpen: state.panelOpen,
+      panelHeight: state.panelHeight,
+      kindFilters: state.kindFilters,
+      sort: state.sort,
+    })),
   resetForAnalysis: (analysisToken) =>
-    set({
+    set((state) => ({
       analysisToken,
       status: null,
+      statusLoading: false,
+      statusError: null,
       ...initialUi,
-      kindFilters: [],
-    }),
+      panelOpen: state.panelOpen,
+      panelHeight: state.panelHeight,
+      kindFilters: state.kindFilters,
+      sort: state.sort,
+    })),
   acceptStatus: (status) =>
     set((state) => {
       if (!sameToken(state.analysisToken, status.analysisToken)) return {};
+      if (
+        state.status &&
+        (status.scannedLines < state.status.scannedLines ||
+          status.stats.revision < state.status.stats.revision)
+      ) {
+        return {};
+      }
       return {
         status,
+        statusLoading: false,
+        statusError: null,
         hasNewResults:
           state.hasNewResults ||
           (state.groupPage != null && status.stats.revision > state.groupPage.revision),
@@ -98,8 +137,12 @@ export const useProblems = create<ProblemsState>()((set) => ({
       groupPage: null,
       occurrencePage: null,
       detail: null,
+      groupLoading: false,
+      occurrenceLoading: false,
+      detailLoading: false,
       groupPageError: null,
       occurrencePageError: null,
+      detailError: null,
     }),
   setSort: (sort) =>
     set({
@@ -109,8 +152,12 @@ export const useProblems = create<ProblemsState>()((set) => ({
       groupPage: null,
       occurrencePage: null,
       detail: null,
+      groupLoading: false,
+      occurrenceLoading: false,
+      detailLoading: false,
       groupPageError: null,
       occurrencePageError: null,
+      detailError: null,
     }),
   selectGroup: (selectedGroupId) =>
     set({
@@ -118,40 +165,74 @@ export const useProblems = create<ProblemsState>()((set) => ({
       selectedEventId: null,
       occurrencePage: null,
       detail: null,
+      occurrenceLoading: false,
+      detailLoading: false,
       occurrencePageError: null,
+      detailError: null,
     }),
-  selectEvent: (selectedEventId) => set({ selectedEventId, detail: null }),
-  replaceGroupPage: (groupPage) =>
+  selectEvent: (selectedEventId) =>
     set({
-      groupPage,
-      groupPageError: null,
-      hasNewResults: false,
+      selectedEventId,
+      detail: null,
+      detailLoading: false,
+      detailError: null,
     }),
+  replaceGroupPage: (groupPage) =>
+    set((state) =>
+      sameToken(state.analysisToken, groupPage.analysisToken)
+        ? {
+            groupPage,
+            groupLoading: false,
+            groupPageError: null,
+            hasNewResults: false,
+          }
+        : {},
+    ),
   appendGroupPage: (page) =>
-    set((state) => ({
-      groupPage: state.groupPage
-        ? appendSnapshotPage(state.groupPage, page, (item) => item.id)
-        : page,
-      groupPageError: null,
-    })),
+    set((state) =>
+      sameToken(state.analysisToken, page.analysisToken)
+        ? {
+            groupPage: state.groupPage
+              ? appendSnapshotPage(state.groupPage, page, (item) => item.id)
+              : page,
+            groupLoading: false,
+            groupPageError: null,
+          }
+        : {},
+    ),
   replaceOccurrencePage: (occurrencePage) =>
-    set({ occurrencePage, occurrencePageError: null }),
+    set((state) =>
+      sameToken(state.analysisToken, occurrencePage.analysisToken)
+        ? {
+            occurrencePage,
+            occurrenceLoading: false,
+            occurrencePageError: null,
+          }
+        : {},
+    ),
   appendOccurrencePage: (page) =>
-    set((state) => ({
-      occurrencePage: state.occurrencePage
-        ? appendSnapshotPage(state.occurrencePage, page, (item) => item.eventId)
-        : page,
-      occurrencePageError: null,
-    })),
+    set((state) =>
+      sameToken(state.analysisToken, page.analysisToken)
+        ? {
+            occurrencePage: state.occurrencePage
+              ? appendSnapshotPage(state.occurrencePage, page, (item) => item.eventId)
+              : page,
+            occurrenceLoading: false,
+            occurrencePageError: null,
+          }
+        : {},
+    ),
   setDetail: (detail) =>
     set((state) =>
-      detail && !sameToken(state.analysisToken, detail.analysisToken) ? {} : { detail },
+      detail && !sameToken(state.analysisToken, detail.analysisToken)
+        ? {}
+        : { detail, detailLoading: false, detailError: null },
     ),
   markSnapshotExpired: (kind) =>
     set(
       kind === "groups"
-        ? { groupPageError: "snapshot-expired" }
-        : { occurrencePageError: "snapshot-expired" },
+        ? { groupLoading: false, groupPageError: "snapshot-expired" }
+        : { occurrenceLoading: false, occurrencePageError: "snapshot-expired" },
     ),
   clearNewResults: () => set({ hasNewResults: false }),
 }));

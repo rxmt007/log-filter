@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Toolbar } from "@/components/Toolbar";
@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
 import { Minimap } from "@/components/Minimap";
 import { ProblemsDock } from "@/components/ProblemsDock";
+import { ProblemExportDialog } from "@/components/ProblemExportDialog";
 import { Toast, type ToastState } from "@/components/Toast";
 import {
   getConfig,
@@ -15,15 +16,28 @@ import {
   onIndexProgress,
   onSearchProgress,
   onStreamAppend,
+  onStreamControl,
+  onStreamError,
   saveAppConfig,
   setFilter as setFilterCommand,
 } from "@/lib/ipc";
+import { createSessionTableScopeController } from "@/lib/sessionTableScope";
 import { createStreamAppendBatcher } from "@/lib/streamAppend";
+import { useProblemsLive } from "@/hooks/useProblemsLive";
+import { useProblems } from "@/store/problems";
 import { useSession } from "@/store/session";
+import type { AnalysisToken, ProblemOccurrence } from "@/types";
+
+interface OpenProblemExport {
+  occurrence: ProblemOccurrence;
+  analysisToken: AnalysisToken;
+  returnFocus: HTMLElement | null;
+}
 
 export default function App() {
   const [configReady, setConfigReady] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [problemExport, setProblemExport] = useState<OpenProblemExport | null>(null);
   const toastSeqRef = useRef(0);
   const dismissToast = useCallback(() => setToast(null), []);
   const setStatus = useSession((s) => s.setStatus);
@@ -32,21 +46,26 @@ export default function App() {
   const filterRevision = useSession((s) => s.filterRevision);
   const sessionId = useSession((s) => s.sessionId);
   const hasFile = useSession((s) => s.status.totalBytes > 0);
-  const setFilteredLines = useSession((s) => s.setFilteredLines);
+  const applyFilterDone = useSession((s) => s.applyFilterDone);
   const setSearchResult = useSession((s) => s.setSearchResult);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const selectedLine = useSession((s) => s.selectedLine);
-  const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
   const requestTailFollow = useSession((s) => s.requestTailFollow);
-  const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setLogcatBuffers = useSession((s) => s.setLogcatBuffers);
   const theme = useSession((s) => s.theme);
+  const problemsBindings = useProblemsLive();
   const bookmarkSensitiveRevision = filter.markedOnly ? bookmarkRevision : 0;
   const appConfigRef = useRef(appConfig);
-  const dispatchedFilterRequestRef = useRef(0);
-  const appliedFilterRequestRef = useRef(0);
+  const tableController = useMemo(
+    () =>
+      createSessionTableScopeController((error) => {
+        if (error instanceof Error && error.message === "filter-result-wait-cancelled") return;
+        console.error("table scope navigation failed", error);
+      }),
+    [],
+  );
 
   useEffect(() => {
     appConfigRef.current = appConfig;
@@ -76,22 +95,23 @@ export default function App() {
 
   useEffect(() => {
     const un = onFilterDone((done) => {
-      const state = useSession.getState();
-      if (done.generation !== state.status.generation) return;
-      const dispatchedRequest = dispatchedFilterRequestRef.current;
-      const invalidateRows = dispatchedRequest !== appliedFilterRequestRef.current;
-      setFilteredLines(done.filteredLines, { invalidateRows });
-      appliedFilterRequestRef.current = dispatchedRequest;
+      applyFilterDone(done);
     });
     return () => {
       un.then((f) => f());
     };
-  }, [setFilteredLines]);
+  }, [applyFilterDone]);
 
   useEffect(() => {
     const un = onSearchProgress((progress) => {
       const state = useSession.getState();
-      if (!progress.done || progress.generation !== state.status.generation) return;
+      if (
+        !progress.done ||
+        progress.generation !== state.status.generation ||
+        progress.requestId !== state.searchRevision
+      ) {
+        return;
+      }
       setSearchResult(progress.matches, progress.firstLine);
     });
     return () => {
@@ -151,10 +171,35 @@ export default function App() {
   }, [requestTailFollow, setStatus]);
 
   useEffect(() => {
+    const controlUnlisten = onStreamControl((control) => {
+      useSession.getState().setStreamControl(control);
+      if (control.error) {
+        toastSeqRef.current += 1;
+        setToast({
+          id: toastSeqRef.current,
+          message: `日志抓取状态异常：${control.error}`,
+          tone: "error",
+        });
+      }
+    });
+    const errorUnlisten = onStreamError((error) => {
+      toastSeqRef.current += 1;
+      setToast({
+        id: toastSeqRef.current,
+        message: `日志抓取失败：${error}`,
+        tone: "error",
+      });
+    });
+    return () => {
+      controlUnlisten.then((unlisten) => unlisten());
+      errorUnlisten.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  useEffect(() => {
     if (!hasFile) return;
     const timer = window.setTimeout(() => {
-      dispatchedFilterRequestRef.current += 1;
-      void setFilterCommand(filter).catch((err) => {
+      void setFilterCommand(filter, filterRevision).catch((err) => {
         console.error("set_filter failed", err);
       });
     }, 220);
@@ -219,18 +264,42 @@ export default function App() {
       const direction = event.key === "F2" ? "previous" : "next";
       nextBookmark(selectedLine ?? 1, direction).then((target) => {
         if (target) {
-          pauseTailFollowing("bookmark");
-          navigateToResultIndex(target.resultIndex, {
-            lineNo: target.lineNo,
-            align: "center",
-            reason: "bookmark",
-          });
+          void tableController.navigateToSourceLine(target.lineNo, "bookmark");
         }
       });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateToResultIndex, pauseTailFollowing, selectedLine]);
+  }, [selectedLine, tableController]);
+
+  const locateProblem = useCallback(
+    (occurrence: Parameters<typeof tableController.locateProblem>[0]) => {
+      void tableController.locateProblem(occurrence);
+    },
+    [tableController],
+  );
+
+  const locateFact = useCallback(
+    (lineNo: number) => {
+      const occurrence = useProblems.getState().detail?.occurrence;
+      if (occurrence) {
+        tableController.openProblemContext(occurrence);
+      }
+      void tableController.navigateToSourceLine(lineNo, "problem-anchor");
+    },
+    [tableController],
+  );
+
+  const exportProblem = useCallback((occurrence: ProblemOccurrence) => {
+    const analysisToken = useProblems.getState().analysisToken;
+    if (!analysisToken) return;
+    setProblemExport({
+      occurrence,
+      analysisToken,
+      returnFocus:
+        document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    });
+  }, []);
 
   const appStyle = {
     "--lf-font-size": `${appConfig.fontSize}px`,
@@ -239,16 +308,30 @@ export default function App() {
 
   return (
     <div className={`lf-app lf-theme-${theme}`} style={appStyle}>
-      <Toolbar />
+      <Toolbar tableController={tableController} />
       <div className="lf-workbench">
         <div className="lf-main">
           <Minimap />
-          <LogTable />
+          <LogTable onReturnToResults={() => void tableController.returnToResults()} />
         </div>
-        <ProblemsDock />
+        <ProblemsDock
+          {...problemsBindings}
+          onLocateFact={locateFact}
+          onLocateOccurrence={locateProblem}
+          onOpenContext={(occurrence) => tableController.openProblemContext(occurrence)}
+          onExportOccurrence={exportProblem}
+        />
       </div>
       <StatusBar />
       <Toast toast={toast} onDismiss={dismissToast} />
+      {problemExport ? (
+        <ProblemExportDialog
+          occurrence={problemExport.occurrence}
+          analysisToken={problemExport.analysisToken}
+          returnFocus={problemExport.returnFocus}
+          onClose={() => setProblemExport(null)}
+        />
+      ) : null}
     </div>
   );
 }

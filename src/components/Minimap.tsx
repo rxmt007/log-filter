@@ -21,6 +21,7 @@ import type { MinimapData } from "@/types";
 
 export function Minimap() {
   const status = useSession((s) => s.status);
+  const tableScope = useSession((s) => s.tableScope);
   const sessionId = useSession((s) => s.sessionId);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const filterResultRevision = useSession((s) => s.filterResultRevision);
@@ -81,6 +82,10 @@ export function Minimap() {
   }, []);
 
   useEffect(() => {
+    if (tableScope.kind !== "results") {
+      setData({ bookmarks: [], errors: [] });
+      return;
+    }
     if (!status.totalBytes) {
       setData({ bookmarks: [], errors: [] });
       return;
@@ -99,6 +104,7 @@ export function Minimap() {
     sessionId,
     bookmarkRevision,
     filterResultRevision,
+    tableScope.kind,
   ]);
 
   useEffect(
@@ -133,6 +139,8 @@ export function Minimap() {
   const contentHeightPercent = trackHeight
     ? Math.min(100, Math.max(0.7, ((resultCount * rowHeight) / trackHeight) * 100))
     : 100;
+
+  if (tableScope.kind !== "results") return null;
 
   return (
     <button

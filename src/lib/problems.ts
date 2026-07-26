@@ -1,11 +1,17 @@
-import type { ProblemFactCode, ProblemKind, ProblemPage } from "@/types";
+import type {
+  ProblemFactCode,
+  ProblemKind,
+  ProblemPage,
+  ProblemsProgress,
+  ProblemsStatus,
+} from "@/types";
 
 export function appendSnapshotPage<T>(
   current: ProblemPage<T>,
   incoming: ProblemPage<T>,
   keyOf: (item: T) => number,
 ): ProblemPage<T> {
-  if (current.querySnapshotId !== incoming.querySnapshotId) {
+  if (current.snapshotHandle !== incoming.snapshotHandle) {
     throw new Error("snapshot-mismatch");
   }
   if (current.revision !== incoming.revision) {
@@ -21,6 +27,32 @@ export function appendSnapshotPage<T>(
     items.push(item);
   }
   return { ...incoming, items };
+}
+
+export function problemsStatusFromProgress(progress: ProblemsProgress): ProblemsStatus {
+  return {
+    analysisToken: {
+      sessionGeneration: progress.sessionGeneration,
+      analysisGeneration: progress.analysisGeneration,
+    },
+    scannedLines: progress.scannedLines,
+    stableLines: progress.stableLines,
+    scanning: !progress.done && progress.scannedLines < progress.stableLines,
+    finished: progress.done,
+    coverage: progress.coverage,
+    stats: {
+      observedOccurrenceCount: progress.observedOccurrenceCount,
+      storedOccurrenceCount: progress.storedOccurrenceCount,
+      droppedOccurrenceCount: progress.droppedOccurrenceCount,
+      provisionalOccurrenceCount: progress.provisionalOccurrenceCount,
+      storedGroupCount: progress.storedGroupCount,
+      ungroupedDroppedOccurrenceCount: progress.ungroupedDroppedOccurrenceCount,
+      droppedRecentObservationCount: progress.droppedRecentObservationCount,
+      revision: progress.revision,
+      limited: progress.limited,
+      correlationLimited: progress.correlationLimited,
+    },
+  };
 }
 
 export const PROBLEM_FACT_CODES = [

@@ -8,13 +8,14 @@ import type {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Bookmark, ChevronsDown, Columns3 } from "lucide-react";
 import { splitHighlightTokens } from "@/lib/highlight";
-import { getRows, listBookmarks, saveAppConfig, toggleBookmark } from "@/lib/ipc";
+import { getRowsChecked, listBookmarks, saveAppConfig, toggleBookmark } from "@/lib/ipc";
 import { RowBlockCache } from "@/lib/rowCache";
 import {
   clamp,
   formatRowForClipboard,
   gridTemplateFor,
   normalizeColumns,
+  resolveTableDataset,
   TABLE_COLUMNS,
   toConfigColumns,
   type ColumnId,
@@ -133,12 +134,15 @@ function renderCell(
   }
 }
 
-export function LogTable() {
+interface LogTableProps {
+  onReturnToResults?: () => void;
+}
+
+export function LogTable({ onReturnToResults }: LogTableProps) {
   const status = useSession((s) => s.status);
-  const total = useSession((s) => s.status.filteredLines);
+  const tableScope = useSession((s) => s.tableScope);
   const sourceMode = useSession((s) => s.sourceMode);
   const filter = useSession((s) => s.filter);
-  const sessionId = useSession((s) => s.sessionId);
   const filterResultRevision = useSession((s) => s.filterResultRevision);
   const appConfig = useSession((s) => s.appConfig);
   const search = useSession((s) => s.search);
@@ -147,7 +151,7 @@ export function LogTable() {
   const selectedResultIndex = useSession((s) => s.selectedResultIndex);
   const scrollRequest = useSession((s) => s.scrollRequest);
   const selectRow = useSession((s) => s.selectRow);
-  const setViewportResultIndex = useSession((s) => s.setViewportResultIndex);
+  const setViewportPosition = useSession((s) => s.setViewportPosition);
   const setTailFollowingFromViewport = useSession((s) => s.setTailFollowingFromViewport);
   const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const streamRunning = useSession((s) => s.streamRunning);
@@ -162,13 +166,27 @@ export function LogTable() {
   const cache = useRef(new RowBlockCache(64));
   const inflight = useRef<Map<number, Promise<void>>>(new Map());
   const cacheEpoch = useRef(0);
+  const requestNonce = useRef(0);
   const appConfigRef = useRef(appConfig);
   const resizeRef = useRef<ResizeState | null>(null);
-  const [, force] = useState(0);
+  const [cacheRenderRevision, force] = useState(0);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [selectionRange, setSelectionRange] = useState<SelectionRange | null>(null);
   const [bookmarkMenu, setBookmarkMenu] = useState<BookmarkMenuState | null>(null);
   const rowHeight = appConfig.rowHeight;
+  const dataset = useMemo(
+    () =>
+      resolveTableDataset(
+        tableScope,
+        status,
+        status.generation,
+        status.decodeRevision,
+        filterResultRevision,
+        status.sourceDataRevision,
+      ),
+    [filterResultRevision, status, tableScope],
+  );
+  const total = dataset.rowCount;
   const defaultResultOrder =
     filter.levels === ALL_LEVELS &&
     !filter.markedOnly &&
@@ -405,20 +423,10 @@ export function LogTable() {
     cacheEpoch.current += 1;
     cache.current.clear();
     inflight.current.clear();
-    parentRef.current?.scrollTo({ top: 0 });
-    setBookmarkMenu(null);
-    setSelectionRange(null);
-    setViewportResultIndex(0);
-    force((x) => x + 1);
-  }, [sessionId, setViewportResultIndex]);
-
-  useEffect(() => {
-    cacheEpoch.current += 1;
-    inflight.current.clear();
     setBookmarkMenu(null);
     setSelectionRange(null);
     force((x) => x + 1);
-  }, [filterResultRevision]);
+  }, [dataset.cacheKey]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", refreshCopySelection);
@@ -439,26 +447,59 @@ export function LogTable() {
     };
   }, [bookmarkMenu]);
 
-  const ensureBlock = useCallback(async (block: number, totalNow: number) => {
-    const want = Math.min(WINDOW, totalNow - block);
-    if (want <= 0) return;
-    if (cache.current.isFresh(block, want, cacheEpoch.current)) return;
-    const existing = inflight.current.get(block);
-    if (existing) return existing;
-    const epoch = cacheEpoch.current;
-    const load = (async () => {
-      try {
-        const rows = await getRows("filtered", block, WINDOW);
-        if (cacheEpoch.current !== epoch) return;
-        cache.current.fill(block, rows, epoch);
-        force((x) => x + 1);
-      } finally {
-        inflight.current.delete(block);
-      }
-    })();
-    inflight.current.set(block, load);
-    return load;
-  }, []);
+  const ensureBlock = useCallback(
+    async (block: number, totalNow: number) => {
+      const want = Math.min(WINDOW, totalNow - block);
+      if (want <= 0) return;
+      if (cache.current.isFresh(block, want, cacheEpoch.current)) return;
+      const existing = inflight.current.get(block);
+      if (existing) return existing;
+      const epoch = cacheEpoch.current;
+      const nonce = ++requestNonce.current;
+      const analysisToken = {
+        sessionGeneration: status.generation,
+        analysisGeneration: status.analysisGeneration,
+      };
+      const load = (async () => {
+        try {
+          const response =
+            dataset.rowsView === "filtered"
+              ? await getRowsChecked({
+                  view: "filtered",
+                  start: block,
+                  count: want,
+                  expectedAnalysisToken: analysisToken,
+                  expectedFilterResultRevision: filterResultRevision,
+                  requestNonce: nonce,
+                })
+              : await getRowsChecked({
+                  view: dataset.rowsView,
+                  start: block,
+                  count: want,
+                  expectedAnalysisToken: analysisToken,
+                  requestNonce: nonce,
+                });
+          if (response.status !== "ok" || cacheEpoch.current !== epoch) return;
+          cache.current.fill(block, response.rows, epoch);
+          force((x) => x + 1);
+        } catch (error) {
+          if (cacheEpoch.current === epoch) {
+            console.error("get_rows_checked failed", error);
+          }
+        } finally {
+          inflight.current.delete(block);
+        }
+      })();
+      inflight.current.set(block, load);
+      return load;
+    },
+    [
+      dataset.rowsView,
+      filterResultRevision,
+      status.analysisGeneration,
+      status.generation,
+    ],
+  );
 
   const rv = useVirtualizer({
     count: total,
@@ -468,10 +509,10 @@ export function LogTable() {
   });
 
   useEffect(() => {
-    if (!currentSearchLine || !defaultResultOrder) return;
+    if (tableScope.kind !== "results" || !currentSearchLine || !defaultResultOrder) return;
     markProgrammaticScroll();
     rv.scrollToIndex(Math.max(0, currentSearchLine - 1), { align: "center" });
-  }, [currentSearchLine, defaultResultOrder, markProgrammaticScroll, rv]);
+  }, [currentSearchLine, defaultResultOrder, markProgrammaticScroll, rv, tableScope.kind]);
 
   useEffect(() => {
     if (!scrollRequest || !total) return;
@@ -499,21 +540,31 @@ export function LogTable() {
 
   useEffect(() => {
     if (firstVisibleIndex == null) return;
-    setViewportResultIndex(firstVisibleIndex);
-  }, [firstVisibleIndex, setViewportResultIndex]);
+    const row = cache.current.get(firstVisibleIndex, WINDOW);
+    setViewportPosition(
+      firstVisibleIndex,
+      row?.lineNo ?? (dataset.rowsView === "all" ? firstVisibleIndex + 1 : null),
+    );
+  }, [
+    cacheRenderRevision,
+    dataset.rowsView,
+    firstVisibleIndex,
+    setViewportPosition,
+  ]);
 
   useEffect(() => {
     if (items.length === 0) return;
     const first = items[0].index;
     const last = items[items.length - 1].index;
-    ensureBlock(Math.floor(first / WINDOW) * WINDOW, total);
-    ensureBlock(Math.floor(last / WINDOW) * WINDOW, total);
-  }, [filterResultRevision, items, ensureBlock, total]);
+    void ensureBlock(Math.floor(first / WINDOW) * WINDOW, total);
+    void ensureBlock(Math.floor(last / WINDOW) * WINDOW, total);
+  }, [dataset.cacheKey, items, ensureBlock, total]);
 
   const emptyText = useMemo(() => {
     if (!status.totalBytes) return "从设备抓取或打开 logcat 文件后开始浏览";
+    if (tableScope.kind === "problem-context") return "当前事件上下文没有可显示的稳定行";
     return "当前结果没有命中行";
-  }, [status.totalBytes]);
+  }, [status.totalBytes, tableScope.kind]);
 
   const resumeTailFollow = useCallback(() => {
     const count = useSession.getState().status.filteredLines;
@@ -574,7 +625,21 @@ export function LogTable() {
   );
 
   return (
-    <div className="lf-table-shell">
+    <div className="lf-table-shell" data-scope={tableScope.kind}>
+      {tableScope.kind === "problem-context" ? (
+        <div className="lf-context-banner" role="status">
+          <span>
+            临时上下文 · 事件第 {tableScope.eventRange.startLine.toLocaleString()}–
+            {tableScope.eventRange.endLine.toLocaleString()} 行 · 建议范围第{" "}
+            {tableScope.contextRange.startLine.toLocaleString()}–
+            {tableScope.contextRange.endLine.toLocaleString()} 行
+          </span>
+          <span>这里显示未经过当前筛选的原始日志窗口。</span>
+          <button type="button" onClick={onReturnToResults}>
+            返回筛选结果
+          </button>
+        </div>
+      ) : null}
       <div className="lf-table-header-wrap">
         <div className="lf-table-header" style={{ gridTemplateColumns }}>
           {visibleColumns.map((column) => (
@@ -662,6 +727,14 @@ export function LogTable() {
                 vi.index === selectedResultIndex ||
                 row?.lineNo === selectedLine ||
                 row?.lineNo === currentSearchLine;
+              const inProblemEvent =
+                tableScope.kind === "problem-context" &&
+                row != null &&
+                row.lineNo >= tableScope.eventRange.startLine &&
+                row.lineNo <= tableScope.eventRange.endLine;
+              const problemAnchor =
+                tableScope.kind === "problem-context" &&
+                row?.lineNo === tableScope.occurrence.anchorLine;
               return (
                 <div
                   className="lf-table-row"
@@ -674,6 +747,8 @@ export function LogTable() {
                   }
                   data-level={row?.level || ""}
                   data-marked={row?.marked || undefined}
+                  data-problem-anchor={problemAnchor || undefined}
+                  data-problem-event={inProblemEvent || undefined}
                   data-result-index={vi.index}
                   data-selected={selected || undefined}
                   key={vi.key}
@@ -709,7 +784,11 @@ export function LogTable() {
           </div>
         )}
       </div>
-      {sourceMode === "adb" && streamRunning && !tailFollowing && total > 0 && (
+      {tableScope.kind === "results" &&
+        sourceMode === "adb" &&
+        streamRunning &&
+        !tailFollowing &&
+        total > 0 && (
         <button
           aria-label="Follow latest"
           className="lf-follow-tail"
@@ -719,7 +798,7 @@ export function LogTable() {
         >
           <ChevronsDown />
         </button>
-      )}
+        )}
       {bookmarkMenu && (
         <div
           className="lf-table-context-menu"

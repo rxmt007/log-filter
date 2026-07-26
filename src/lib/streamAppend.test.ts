@@ -12,6 +12,12 @@ const status = {
   totalBytes: 0,
   indexing: false,
   generation: 1,
+  analysisGeneration: 1,
+  filterInputRevision: 0,
+  appliedFilterInputRevision: 0,
+  filterResultRevision: 0,
+  decodeRevision: 0,
+  sourceDataRevision: 0,
 };
 
 function append(filteredLines: number, appendedBytes: number): StreamAppend {

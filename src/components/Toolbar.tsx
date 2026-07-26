@@ -22,7 +22,6 @@ import { ExportDialog, SettingsDialog, SplitDialog } from "@/components/ToolDial
 import {
   clearLogcat,
   listDevices,
-  lineToResultIndex,
   openFile,
   pauseLogcat,
   resumeLogcat,
@@ -38,6 +37,7 @@ import {
   normalizeCommandPresets,
   parseLogcatCommand,
 } from "@/lib/logcatCommand";
+import type { TableScopeController } from "@/lib/tableScopeController";
 import { ALL_LEVELS, LEVEL_BITS, useSession } from "@/store/session";
 import type { FilterSpec, ThemeMode } from "@/types";
 
@@ -75,7 +75,11 @@ const FILTER_FIELDS: Array<{
 
 const HIGHLIGHT_COLORS = ["yellow", "green", "blue", "purple"] as const;
 
-export function Toolbar() {
+interface ToolbarProps {
+  tableController: TableScopeController;
+}
+
+export function Toolbar({ tableController }: ToolbarProps) {
   const [dialog, setDialog] = useState<"export" | "split" | "settings" | null>(null);
   const [jumpLine, setJumpLine] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -101,12 +105,12 @@ export function Toolbar() {
   const setFilterField = useSession((s) => s.setFilterField);
   const setHighlightRule = useSession((s) => s.setHighlightRule);
   const search = useSession((s) => s.search);
+  const searchRevision = useSession((s) => s.searchRevision);
   const setSearch = useSession((s) => s.setSearch);
   const searchCount = useSession((s) => s.searchCount);
   const currentSearchLine = useSession((s) => s.currentSearchLine);
   const setSearchResult = useSession((s) => s.setSearchResult);
   const setCurrentSearchLine = useSession((s) => s.setCurrentSearchLine);
-  const navigateToResultIndex = useSession((s) => s.navigateToResultIndex);
   const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const [commandDraft, setCommandDraft] = useState(
     appConfig.currentCommand || DEFAULT_LOGCAT_COMMANDS[0],
@@ -262,8 +266,8 @@ export function Toolbar() {
         command: parsed.normalized,
         buffers: [parsed.buffer],
       });
-      setStreamControl(control);
       beginSession(control.status, control.sessionPath, "adb");
+      setStreamControl(control);
       await persistCommand(parsed.normalized);
     } catch (err) {
       console.error("start/resume logcat failed", err);
@@ -296,8 +300,8 @@ export function Toolbar() {
   const clearCapture = async () => {
     try {
       const control = await clearLogcat();
-      setStreamControl(control);
       beginSession(control.status, control.sessionPath, "adb");
+      setStreamControl(control);
     } catch (err) {
       console.error("clear logcat failed", err);
     }
@@ -322,43 +326,38 @@ export function Toolbar() {
     }
     if (!search.query.trim()) {
       setSearchResult(0, null);
-      void searchLogs(search).catch((err) => {
+      void searchLogs(search, searchRevision).catch((err) => {
         console.error("clear search failed", err);
       });
       return;
     }
     const timer = window.setTimeout(() => {
-      void searchLogs(search).catch((err) => {
+      void searchLogs(search, searchRevision).catch((err) => {
         console.error("search failed", err);
         setSearchResult(0, null);
       });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [search, status.totalBytes, setSearchResult]);
+  }, [search, searchRevision, status.totalBytes, setSearchResult]);
 
   const jumpSearch = useCallback(
     async (direction: "next" | "previous") => {
       if (!searchCount) return;
-      pauseTailFollowing("search");
       const from = currentSearchLine ?? 0;
       const line = await searchNext(from, direction);
       setCurrentSearchLine(line);
+      if (line != null) {
+        await tableController.navigateToSourceLine(line, "search");
+      }
     },
-    [currentSearchLine, pauseTailFollowing, searchCount, setCurrentSearchLine],
+    [currentSearchLine, searchCount, setCurrentSearchLine, tableController],
   );
 
   const jumpToLine = useCallback(async () => {
     const lineNo = Number(jumpLine);
     if (!Number.isFinite(lineNo) || lineNo < 1) return;
-    const target = await lineToResultIndex(lineNo);
-    if (!target) return;
-    pauseTailFollowing("jump");
-    navigateToResultIndex(target.resultIndex, {
-      lineNo: target.lineNo,
-      align: "center",
-      reason: "jump",
-    });
-  }, [jumpLine, navigateToResultIndex, pauseTailFollowing]);
+    await tableController.navigateToSourceLine(lineNo, "jump");
+  }, [jumpLine, tableController]);
 
   useEffect(() => {
     const openListener = () => void onOpen();

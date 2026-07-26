@@ -10,7 +10,7 @@ export interface ToastState {
   /** 唯一序号:变化即视为新 toast,重置自动消失计时器。 */
   id: number;
   message: string;
-  tone?: "success" | "info";
+  tone?: "success" | "info" | "error";
   action?: ToastAction;
 }
 

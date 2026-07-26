@@ -1,4 +1,13 @@
-import { useEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+import { useVirtualizer, type Rect, type Virtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
   ChevronDown,
@@ -11,13 +20,220 @@ import {
 import { problemFactLabel, problemKindLabel } from "@/lib/problems";
 import { problemHints } from "@/lib/problemHints";
 import { useProblems } from "@/store/problems";
-import type { ProblemOccurrence } from "@/types";
+import type { InputCoverage, ProblemOccurrence } from "@/types";
+
+const MIN_PANEL_HEIGHT = 180;
+const MIN_MAIN_HEIGHT = 160;
+const LIST_ITEM_HEIGHT = 54;
+
+const BUFFER_LABELS = {
+  main: "main",
+  system: "system",
+  events: "events",
+  crash: "crash",
+  radio: "radio",
+  kernel: "kernel",
+} as const;
+
+function coverageDescription(coverage: InputCoverage): string {
+  const origin = coverage.origin === "static-file" ? "文件日志" : "ADB 实时抓取";
+  const buffers =
+    coverage.requestedBuffers == null
+      ? "buffer 范围未知"
+      : coverage.requestedBuffers.length === 0
+        ? "未声明 buffer"
+        : `buffer: ${coverage.requestedBuffers.map((item) => BUFFER_LABELS[item]).join(", ")}`;
+  const completeness = {
+    unknown: "时间范围完整性未知",
+    bounded: "仅覆盖文件所含范围",
+    "start-truncated": "抓取开始前的日志不在样本中",
+    "end-truncated": "日志尾部可能不完整",
+  }[coverage.rangeCompleteness];
+  return `${origin} · ${buffers} · ${completeness}`;
+}
+
+function clampPanelHeight(height: number, maximum: number): number {
+  return Math.min(Math.max(MIN_PANEL_HEIGHT, height), maximum);
+}
+
+function observeProblemListRect<TScrollElement extends Element, TItemElement extends Element>(
+  instance: Virtualizer<TScrollElement, TItemElement>,
+  callback: (rect: Rect) => void,
+) {
+  const element = instance.scrollElement;
+  if (!element) return;
+  const update = () => {
+    const rect = element.getBoundingClientRect();
+    callback({
+      width: rect.width || element.clientWidth || 320,
+      height: rect.height || element.clientHeight || 240,
+    });
+  };
+  update();
+  const observer = new ResizeObserver(update);
+  observer.observe(element);
+  return () => observer.disconnect();
+}
+
+interface ProblemListboxProps<T> {
+  label: string;
+  idPrefix: string;
+  items: T[];
+  total: number;
+  selectedId: number | null;
+  getId: (item: T) => number;
+  onChoose: (item: T) => void;
+  onReachEnd?: () => void;
+  children: (item: T) => ReactNode;
+}
+
+function ProblemListbox<T>({
+  label,
+  idPrefix,
+  items,
+  total,
+  selectedId,
+  getId,
+  onChoose,
+  onReachEnd,
+  children,
+}: ProblemListboxProps<T>) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [activeIndex, setActiveIndex] = useState(() => {
+    const selectedIndex = items.findIndex((item) => getId(item) === selectedId);
+    return selectedIndex >= 0 ? selectedIndex : 0;
+  });
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => LIST_ITEM_HEIGHT,
+    getItemKey: (index) => getId(items[index]),
+    overscan: 6,
+    initialRect: { width: 320, height: 240 },
+    observeElementRect: observeProblemListRect,
+  });
+
+  useEffect(() => {
+    const selectedIndex = items.findIndex((item) => getId(item) === selectedId);
+    if (selectedIndex >= 0) {
+      setActiveIndex(selectedIndex);
+      return;
+    }
+    setActiveIndex((current) => Math.min(Math.max(0, current), Math.max(0, items.length - 1)));
+  }, [getId, items, selectedId]);
+
+  useEffect(() => {
+    if (items.length === 0) return;
+    virtualizer.scrollToIndex(activeIndex, { align: "auto" });
+  }, [activeIndex, items.length, virtualizer]);
+
+  const choose = useCallback(
+    (index: number) => {
+      const item = items[index];
+      if (!item) return;
+      setActiveIndex(index);
+      onChoose(item);
+    },
+    [items, onChoose],
+  );
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (items.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (activeIndex >= items.length - 1) {
+        onReachEnd?.();
+      } else {
+        setActiveIndex(activeIndex + 1);
+      }
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex(Math.max(0, activeIndex - 1));
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      setActiveIndex(0);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(items.length - 1);
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose(activeIndex);
+    }
+  };
+
+  const handleScroll = () => {
+    const element = parentRef.current;
+    if (!element || !onReachEnd) return;
+    if (element.scrollTop + element.clientHeight >= element.scrollHeight - LIST_ITEM_HEIGHT) {
+      onReachEnd();
+    }
+  };
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const activeItem = items[activeIndex];
+  const activeId = activeItem == null ? undefined : `${idPrefix}-${getId(activeItem)}`;
+
+  return (
+    <div
+      ref={parentRef}
+      className="lf-problems-list"
+      role="listbox"
+      tabIndex={0}
+      aria-label={label}
+      aria-activedescendant={activeId}
+      onKeyDown={handleKeyDown}
+      onScroll={handleScroll}
+    >
+      <div className="lf-problems-list-virtual" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualItems.map((virtualItem) => {
+          const item = items[virtualItem.index];
+          const id = getId(item);
+          return (
+            <div
+              id={`${idPrefix}-${id}`}
+              key={virtualItem.key}
+              role="option"
+              aria-selected={selectedId === id}
+              aria-posinset={virtualItem.index + 1}
+              aria-setsize={total}
+              className="lf-problems-item"
+              style={{
+                height: virtualItem.size,
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+              onClick={() => {
+                parentRef.current?.focus();
+                choose(virtualItem.index);
+              }}
+            >
+              {children(item)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 interface ProblemsDockProps {
   onOpen?: () => void;
   onRefresh?: () => void;
   onSelectGroup?: (groupId: number) => void;
   onSelectOccurrence?: (eventId: number) => void;
+  onLoadMoreGroups?: () => void;
+  onLoadMoreOccurrences?: () => void;
+  onRetryStatus?: () => void;
+  onRetryGroups?: () => void;
+  onRetryOccurrences?: () => void;
+  onRetryDetail?: () => void;
   onLocateFact?: (lineNo: number) => void;
   onLocateOccurrence?: (occurrence: ProblemOccurrence) => void;
   onOpenContext?: (occurrence: ProblemOccurrence) => void;
@@ -29,6 +245,12 @@ export function ProblemsDock({
   onRefresh,
   onSelectGroup,
   onSelectOccurrence,
+  onLoadMoreGroups,
+  onLoadMoreOccurrences,
+  onRetryStatus,
+  onRetryGroups,
+  onRetryOccurrences,
+  onRetryDetail,
   onLocateFact,
   onLocateOccurrence,
   onOpenContext,
@@ -38,6 +260,7 @@ export function ProblemsDock({
   const setPanelOpen = useProblems((state) => state.setPanelOpen);
   const panelHeight = useProblems((state) => state.panelHeight);
   const status = useProblems((state) => state.status);
+  const statusLoading = useProblems((state) => state.statusLoading);
   const groupPage = useProblems((state) => state.groupPage);
   const occurrencePage = useProblems((state) => state.occurrencePage);
   const detail = useProblems((state) => state.detail);
@@ -48,10 +271,23 @@ export function ProblemsDock({
   const hasNewResults = useProblems((state) => state.hasNewResults);
   const groupPageError = useProblems((state) => state.groupPageError);
   const occurrencePageError = useProblems((state) => state.occurrencePageError);
+  const detailError = useProblems((state) => state.detailError);
+  const statusError = useProblems((state) => state.statusError);
+  const groupLoading = useProblems((state) => state.groupLoading);
+  const occurrenceLoading = useProblems((state) => state.occurrenceLoading);
+  const detailLoading = useProblems((state) => state.detailLoading);
+  const setPanelHeight = useProblems((state) => state.setPanelHeight);
   const openRequestArmed = useRef(true);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const [panelMaximum, setPanelMaximum] = useState(() =>
+    Math.max(MIN_PANEL_HEIGHT, Math.floor(window.innerHeight * 0.45)),
+  );
+  const [layoutCollapsed, setLayoutCollapsed] = useState(false);
+  const visibleOpen = panelOpen && !layoutCollapsed;
 
   useEffect(() => {
-    if (!panelOpen) {
+    if (!visibleOpen) {
       openRequestArmed.current = true;
       return;
     }
@@ -59,7 +295,91 @@ export function ProblemsDock({
       openRequestArmed.current = false;
       onOpen?.();
     }
-  }, [onOpen, panelOpen]);
+  }, [onOpen, visibleOpen]);
+
+  useEffect(() => {
+    const workbench = toggleRef.current?.closest(".lf-workbench");
+    if (!workbench) return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[entries.length - 1]?.contentRect.height ?? 0;
+      if (height <= 0) return;
+      const shouldCollapse = height < MIN_MAIN_HEIGHT + MIN_PANEL_HEIGHT;
+      setLayoutCollapsed(shouldCollapse);
+      const maximum = Math.max(
+        MIN_PANEL_HEIGHT,
+        Math.floor(Math.min(window.innerHeight * 0.45, height - MIN_MAIN_HEIGHT)),
+      );
+      setPanelMaximum(maximum);
+      if (shouldCollapse) return;
+      const current = useProblems.getState().panelHeight;
+      const clamped = clampPanelHeight(current, maximum);
+      if (clamped !== current) setPanelHeight(clamped);
+    });
+    observer.observe(workbench);
+    return () => observer.disconnect();
+  }, [panelOpen, setPanelHeight]);
+
+  useEffect(
+    () => () => {
+      resizeCleanupRef.current?.();
+    },
+    [],
+  );
+
+  const resizeBy = useCallback(
+    (delta: number) => {
+      const current = useProblems.getState().panelHeight;
+      setPanelHeight(clampPanelHeight(current + delta, panelMaximum));
+    },
+    [panelMaximum, setPanelHeight],
+  );
+
+  const handleSeparatorKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      resizeBy(16);
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      resizeBy(-16);
+    } else if (event.key === "PageUp") {
+      event.preventDefault();
+      resizeBy(64);
+    } else if (event.key === "PageDown") {
+      event.preventDefault();
+      resizeBy(-64);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setPanelHeight(MIN_PANEL_HEIGHT);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setPanelHeight(panelMaximum);
+    }
+  };
+
+  const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    resizeCleanupRef.current?.();
+    const startY = event.clientY;
+    const startHeight = useProblems.getState().panelHeight;
+    const resize = (moveEvent: PointerEvent) => {
+      setPanelHeight(clampPanelHeight(startHeight + startY - moveEvent.clientY, panelMaximum));
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      resizeCleanupRef.current = null;
+    };
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    resizeCleanupRef.current = finish;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Window listeners keep the resize bounded if pointer capture is unavailable.
+    }
+  };
 
   const stats = status?.stats;
   const detected = stats?.observedOccurrenceCount ?? 0;
@@ -67,12 +387,24 @@ export function ProblemsDock({
   const badge = stats?.limited
     ? `检出 ${detected.toLocaleString()} · 可展开 ${expandable.toLocaleString()}`
     : detected.toLocaleString();
+  const scanLabel =
+    statusLoading && !status
+      ? "正在读取故障分析状态…"
+      : status?.scanning
+        ? `正在分析 ${status.scannedLines.toLocaleString()} / ${status.stableLines.toLocaleString()} 行`
+        : status?.finished
+          ? `已分析 ${status.stableLines.toLocaleString()} 行`
+          : "等待日志分析";
+  const coverageLabel = status
+    ? `${scanLabel} · ${coverageDescription(status.coverage)}`
+    : scanLabel;
 
   const toggle = (
     <button
+      ref={toggleRef}
       type="button"
       className="lf-problems-toggle"
-      aria-expanded={panelOpen}
+      aria-expanded={visibleOpen}
       aria-controls="lf-problems-panel"
       aria-label={`Problems，${badge}`}
       onClick={() => setPanelOpen(!panelOpen)}
@@ -80,15 +412,21 @@ export function ProblemsDock({
       <AlertTriangle aria-hidden="true" />
       <span>Problems</span>
       <span className="lf-problems-badge">{badge}</span>
-      {panelOpen ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
+      {visibleOpen ? <ChevronDown aria-hidden="true" /> : <ChevronUp aria-hidden="true" />}
     </button>
   );
 
-  if (!panelOpen) {
-    return <div className="lf-problems-collapsed">{toggle}</div>;
+  if (!visibleOpen) {
+    return (
+      <div className="lf-problems-collapsed" data-layout-collapsed={layoutCollapsed || undefined}>
+        {toggle}
+        <span className="lf-problems-coverage">{coverageLabel}</span>
+      </div>
+    );
   }
 
   const occurrence = detail?.occurrence ?? null;
+  const selectedGroup = groupPage?.items.find((group) => group.id === selectedGroupId) ?? null;
 
   return (
     <section
@@ -98,15 +436,21 @@ export function ProblemsDock({
       role="region"
       aria-label="故障调查工作台"
     >
+      <div
+        className="lf-problems-separator"
+        role="separator"
+        aria-label="调整 Problems 面板高度"
+        aria-orientation="horizontal"
+        aria-valuemin={MIN_PANEL_HEIGHT}
+        aria-valuemax={panelMaximum}
+        aria-valuenow={panelHeight}
+        tabIndex={0}
+        onKeyDown={handleSeparatorKeyDown}
+        onPointerDown={startPanelResize}
+      />
       <header className="lf-problems-header">
         {toggle}
-        <div className="lf-problems-coverage">
-          {status?.scanning
-            ? `正在分析 ${status.scannedLines.toLocaleString()} / ${status.stableLines.toLocaleString()} 行`
-            : status?.finished
-              ? `已分析 ${status.stableLines.toLocaleString()} 行`
-              : "等待日志分析"}
-        </div>
+        <div className="lf-problems-coverage">{coverageLabel}</div>
         {hasNewResults ? (
           <button type="button" className="lf-problems-refresh" onClick={onRefresh}>
             <RefreshCw aria-hidden="true" />
@@ -115,10 +459,29 @@ export function ProblemsDock({
         ) : null}
       </header>
 
+      {statusError ? (
+        <div className="lf-problems-limit-note" role="alert">
+          故障分析状态读取失败：{statusError}
+          {onRetryStatus ? (
+            <button type="button" aria-label="重试故障分析状态" onClick={onRetryStatus}>
+              重试
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {stats?.correlationLimited ? (
         <div className="lf-problems-limit-note" role="status">
-          部分晚到关联证据可能未保留（已淘汰{" "}
-          {stats.droppedRecentObservationCount.toLocaleString()} 条紧凑观察引用）
+          部分晚到关联证据可能未保留（已淘汰 {stats.droppedRecentObservationCount.toLocaleString()}{" "}
+          条紧凑观察引用）
+        </div>
+      ) : null}
+
+      {stats?.limited ? (
+        <div className="lf-problems-limit-note" role="status">
+          容量限制：检出 {stats.observedOccurrenceCount.toLocaleString()} 项，可展开{" "}
+          {stats.storedOccurrenceCount.toLocaleString()} 项，未保存{" "}
+          {stats.droppedOccurrenceCount.toLocaleString()} 项。
         </div>
       ) : null}
 
@@ -127,77 +490,109 @@ export function ProblemsDock({
           <h2>故障分组</h2>
           {groupPageError === "snapshot-expired" ? (
             <p className="lf-problems-state">结果快照已过期；当前内容已保留，请手动刷新。</p>
-          ) : null}
-          {groupPage ? (
-            <div
-              className="lf-problems-list"
-              role="listbox"
-              aria-label="故障分组"
-              aria-activedescendant={
-                selectedGroupId == null ? undefined : `lf-problem-group-${selectedGroupId}`
-              }
-            >
-              {groupPage.items.map((group, index) => (
-                <button
-                  id={`lf-problem-group-${group.id}`}
-                  key={group.id}
-                  type="button"
-                  role="option"
-                  aria-selected={selectedGroupId === group.id}
-                  aria-posinset={index + 1}
-                  aria-setsize={groupPage.total}
-                  className="lf-problems-item"
-                  onClick={() => {
-                    selectGroup(group.id);
-                    onSelectGroup?.(group.id);
-                  }}
-                >
-                  <span className="lf-problems-item-title">{problemKindLabel(group.kind)}</span>
-                  <span>{group.storedOccurrenceCount.toLocaleString()} 次</span>
-                  <span>
-                    第 {group.firstLine.toLocaleString()}–{group.lastLine.toLocaleString()} 行
-                  </span>
+          ) : groupPageError ? (
+            <p className="lf-problems-state" role="alert">
+              读取故障分组失败：{groupPageError}
+              {onRetryGroups ? (
+                <button type="button" aria-label="重试故障分组" onClick={onRetryGroups}>
+                  重试
                 </button>
-              ))}
-            </div>
+              ) : null}
+            </p>
+          ) : null}
+          {groupPage && groupPage.items.length > 0 ? (
+            <ProblemListbox
+              label="故障分组"
+              idPrefix="lf-problem-group"
+              items={groupPage.items}
+              total={groupPage.total}
+              selectedId={selectedGroupId}
+              getId={(group) => group.id}
+              onReachEnd={groupPage.nextCursor == null ? undefined : onLoadMoreGroups}
+              onChoose={(group) => {
+                if (onSelectGroup) onSelectGroup(group.id);
+                else selectGroup(group.id);
+              }}
+            >
+              {(group) => {
+                const kindLabel = problemKindLabel(group.kind);
+                const signature = group.signatureSummary.trim() || kindLabel;
+                const process = group.processSummary.trim();
+                return (
+                  <>
+                    <span
+                      className="lf-problems-item-title"
+                      title={group.signatureSummaryTruncated ? group.signatureSummary : undefined}
+                    >
+                      {signature}
+                    </span>
+                    <span title={group.processSummaryTruncated ? group.processSummary : undefined}>
+                      {process ? `${process} · ${kindLabel}` : kindLabel}
+                      {" · "}
+                      {group.storedOccurrenceCount.toLocaleString()} 次
+                    </span>
+                    <span>
+                      {group.firstTimestamp ?? `第 ${group.firstLine.toLocaleString()} 行`}
+                      {" → "}
+                      {group.lastTimestamp ?? `第 ${group.lastLine.toLocaleString()} 行`}
+                    </span>
+                  </>
+                );
+              }}
+            </ProblemListbox>
           ) : (
             <p className="lf-problems-state">
-              {status?.finished
-                ? "在已捕获范围内未检测到可展示的故障事件。"
-                : "展开后正在读取首批故障分组…"}
+              {groupLoading
+                ? "正在读取首批故障分组…"
+                : groupPageError
+                  ? "当前没有可展示的故障分组。"
+                  : status?.finished
+                    ? "在已捕获范围内未检测到可展示的故障事件。"
+                    : "在已捕获范围内暂未检测到可展示的故障事件。"}
             </p>
           )}
+          {groupPage?.nextCursor != null ? (
+            <button
+              type="button"
+              className="lf-problems-refresh"
+              disabled={groupLoading}
+              onClick={onLoadMoreGroups}
+            >
+              {groupLoading ? "正在加载…" : "加载更多分组"}
+            </button>
+          ) : null}
         </div>
 
         <div className="lf-problems-pane lf-problems-occurrences">
           <h2>发生记录</h2>
           {occurrencePageError === "snapshot-expired" ? (
             <p className="lf-problems-state">发生记录快照已过期；请重新选择分组。</p>
+          ) : occurrencePageError ? (
+            <p className="lf-problems-state" role="alert">
+              读取发生记录失败：{occurrencePageError}
+              {onRetryOccurrences ? (
+                <button type="button" aria-label="重试发生记录" onClick={onRetryOccurrences}>
+                  重试
+                </button>
+              ) : null}
+            </p>
           ) : null}
-          {occurrencePage ? (
-            <div
-              className="lf-problems-list"
-              role="listbox"
-              aria-label="发生记录"
-              aria-activedescendant={
-                selectedEventId == null ? undefined : `lf-problem-event-${selectedEventId}`
-              }
+          {occurrencePage && occurrencePage.items.length > 0 ? (
+            <ProblemListbox
+              label="发生记录"
+              idPrefix="lf-problem-event"
+              items={occurrencePage.items}
+              total={occurrencePage.total}
+              selectedId={selectedEventId}
+              getId={(item) => item.eventId}
+              onReachEnd={occurrencePage.nextCursor == null ? undefined : onLoadMoreOccurrences}
+              onChoose={(item) => {
+                if (onSelectOccurrence) onSelectOccurrence(item.eventId);
+                else selectEvent(item.eventId);
+              }}
             >
-              {occurrencePage.items.map((item, index) => (
-                <button
-                  id={`lf-problem-event-${item.eventId}`}
-                  key={item.eventId}
-                  type="button"
-                  role="option"
-                  aria-selected={selectedEventId === item.eventId}
-                  aria-posinset={index + 1}
-                  aria-setsize={occurrencePage.total}
-                  className="lf-problems-item"
-                  onClick={() => {
-                    selectEvent(item.eventId);
-                    onSelectOccurrence?.(item.eventId);
-                  }}
-                >
+              {(item) => (
+                <>
                   <span className="lf-problems-item-title">
                     {item.timestamp ?? `第 ${item.anchorLine.toLocaleString()} 行`}
                   </span>
@@ -205,26 +600,51 @@ export function ProblemsDock({
                   <span>
                     范围 {item.startLine.toLocaleString()}–{item.endLine.toLocaleString()}
                   </span>
-                </button>
-              ))}
-            </div>
+                </>
+              )}
+            </ProblemListbox>
           ) : (
             <p className="lf-problems-state">
-              {selectedGroupId == null ? "选择一个故障分组查看发生记录。" : "正在读取发生记录…"}
+              {selectedGroupId == null
+                ? "选择一个故障分组查看发生记录。"
+                : occurrenceLoading
+                  ? "正在读取发生记录…"
+                  : occurrencePageError
+                    ? "当前没有可展示的发生记录。"
+                    : "该分组没有可展示的发生记录。"}
             </p>
           )}
+          {occurrencePage?.nextCursor != null ? (
+            <button
+              type="button"
+              className="lf-problems-refresh"
+              disabled={occurrenceLoading}
+              onClick={onLoadMoreOccurrences}
+            >
+              {occurrenceLoading ? "正在加载…" : "加载更多发生记录"}
+            </button>
+          ) : null}
         </div>
 
         <div className="lf-problems-pane lf-problems-detail">
+          {detailError ? (
+            <p className="lf-problems-state" role="alert">
+              读取事件详情失败：{detailError}
+              {onRetryDetail ? (
+                <button type="button" aria-label="重试事件详情" onClick={onRetryDetail}>
+                  重试
+                </button>
+              ) : null}
+            </p>
+          ) : null}
           {detail && occurrence ? (
             <>
               <div className="lf-problems-detail-heading">
                 <div>
                   <h2>{problemKindLabel(occurrence.kind)}</h2>
                   <p>
-                    第 {occurrence.startLine.toLocaleString()}–
-                    {occurrence.endLine.toLocaleString()} 行
-                    {occurrence.pid == null ? "" : ` · PID ${occurrence.pid}`}
+                    第 {occurrence.startLine.toLocaleString()}–{occurrence.endLine.toLocaleString()}{" "}
+                    行{occurrence.pid == null ? "" : ` · PID ${occurrence.pid}`}
                   </p>
                 </div>
                 <div className="lf-problems-actions">
@@ -242,11 +662,20 @@ export function ProblemsDock({
                   </button>
                 </div>
               </div>
+              {selectedGroup ? (
+                <div className="lf-problems-group-note">
+                  <span title={selectedGroup.fingerprint}>指纹 {selectedGroup.fingerprint}</span>
+                  <span>同组仅表示事件指纹相同，不代表根因相同。</span>
+                </div>
+              ) : null}
 
               <section className="lf-problems-facts">
                 <h3>检测到的事实</h3>
                 {detail.facts.map((fact, index) => (
-                  <div className="lf-problems-fact" key={`${fact.sourceLine}-${fact.code}-${index}`}>
+                  <div
+                    className="lf-problems-fact"
+                    key={`${fact.sourceLine}-${fact.code}-${index}`}
+                  >
                     <span>{problemFactLabel(fact.code)}</span>
                     <button
                       type="button"
@@ -257,9 +686,10 @@ export function ProblemsDock({
                     </button>
                   </div>
                 ))}
-                {detail.observationTotal > detail.facts.length ? (
+                {detail.factsTruncated ? (
                   <p className="lf-problems-truncated">
-                    仅展示 {detail.facts.length}/{detail.observationTotal} 条关键证据，可查看事件范围
+                    仅展示 {detail.facts.length}/{detail.observationTotal}{" "}
+                    条关键证据，可查看事件范围
                   </p>
                 ) : null}
               </section>
@@ -275,7 +705,13 @@ export function ProblemsDock({
             </>
           ) : (
             <p className="lf-problems-state">
-              {selectedEventId == null ? "选择一次发生记录查看事实与上下文。" : "正在读取事件详情…"}
+              {selectedEventId == null
+                ? "选择一次发生记录查看事实与上下文。"
+                : detailLoading
+                  ? "正在读取事件详情…"
+                  : detailError
+                    ? "当前没有可展示的事件详情。"
+                    : "选择的事件没有可展示详情。"}
             </p>
           )}
         </div>
