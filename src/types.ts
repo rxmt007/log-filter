@@ -123,6 +123,16 @@ export interface NavigationTarget {
   resultIndex: number;
 }
 
+export type ProblemKind =
+  | "java-crash"
+  | "java-oom"
+  | "anr"
+  | "native-crash"
+  | "process-restart"
+  | "signal-exit"
+  | "lmk-kill"
+  | "kernel-oom-kill";
+
 export type RowsView = "all" | "filtered" | "bookmarks" | "errors";
 
 export type ThemeMode = "light" | "dark";
