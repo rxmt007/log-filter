@@ -6,6 +6,12 @@ use crate::indexer::Indexer;
 use crate::mmap_source::MmapSource;
 use crate::model::LogEntry;
 use crate::parser::parse_line_ref;
+use crate::problems::{
+    GroupId, GroupPage, GroupQuery, InputCoverage, ObservationRef, OccurrencePage, PageSpec,
+    ProblemEngine, ProblemEvent, ProblemEventId, ProblemGroupSummary, ProblemStats,
+    QuerySnapshotId, RangeCompleteness, SnapshotError, SourceSpan, SourceSpanError,
+    SourceSpanIndex,
+};
 use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
 };
@@ -17,6 +23,7 @@ use std::path::PathBuf;
 
 /// 导出分批行数:每批用批量原语拷进临时缓冲再写盘,界定内存占用。
 const EXPORT_CHUNK_LINES: usize = 4096;
+const PROBLEM_SCAN_MAX_LINES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowsView {
@@ -60,6 +67,18 @@ pub struct RemapStep {
     pub reset: bool,
     /// 本步之后索引是否已追平文件末尾。
     pub done: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ProblemScanStep {
+    pub scanned_lines: usize,
+    pub stable_lines: usize,
+    pub committed_occurrences: usize,
+    pub stored_occurrences: usize,
+    pub dropped_occurrences: usize,
+    pub failed_commits: usize,
+    pub caught_up: bool,
+    pub finished: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +134,11 @@ pub struct Session {
     error_lines: Vec<u32>,
     error_scan_lines: usize,
     encoding: ResolvedTextEncoding,
+    problem_engine: ProblemEngine,
+    problem_scan_lines: usize,
+    problem_finished: bool,
+    problem_coverage: InputCoverage,
+    problem_source_spans: SourceSpanIndex,
 }
 
 impl Session {
@@ -145,6 +169,13 @@ impl Session {
     ) -> std::io::Result<Session> {
         let source = MmapSource::open(path)?;
         let bookmarks = BookmarkStore::load_for_source(path).unwrap_or_default();
+        let problem_coverage = match input_state {
+            InputState::Static => InputCoverage::static_file(RangeCompleteness::Bounded),
+            InputState::Growing(_) => InputCoverage::adb_live(
+                crate::problems::BufferSet::MAIN,
+                RangeCompleteness::StartTruncated,
+            ),
+        };
         Ok(Session {
             source_path: path.to_path_buf(),
             source,
@@ -159,11 +190,20 @@ impl Session {
             error_lines: Vec::new(),
             error_scan_lines: 0,
             encoding: encoding.resolve(),
+            problem_engine: ProblemEngine::new(),
+            problem_scan_lines: 0,
+            problem_finished: false,
+            problem_coverage,
+            problem_source_spans: SourceSpanIndex::new(),
         })
     }
 
     pub fn set_encoding(&mut self, encoding: TextEncoding) {
-        self.encoding = encoding.resolve();
+        let resolved = encoding.resolve();
+        if self.encoding.config_label() != resolved.config_label() {
+            self.encoding = resolved;
+            self.reset_problem_analysis();
+        }
     }
 
     pub fn total_bytes(&self) -> usize {
@@ -287,6 +327,14 @@ impl Session {
         self.search_matches.clear();
         self.error_lines.clear();
         self.error_scan_lines = 0;
+        self.problem_source_spans = SourceSpanIndex::new();
+        self.reset_problem_analysis();
+    }
+
+    fn reset_problem_analysis(&mut self) {
+        self.problem_engine.reset();
+        self.problem_scan_lines = 0;
+        self.problem_finished = false;
     }
 
     pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<RemapStep> {
@@ -307,6 +355,186 @@ impl Session {
         let total = self.source.len();
         self.indexer.step(self.source.bytes(), total);
         self.refresh_error_lines();
+    }
+
+    /// Replace the capture-level provenance contract and restart only Problems analysis.
+    ///
+    /// Existing row/filter/search indexes remain valid because this changes fact admission,
+    /// not source bytes or decoding.
+    pub fn set_problem_input_coverage(&mut self, coverage: InputCoverage) {
+        if self.problem_coverage != coverage {
+            self.problem_coverage = coverage;
+            self.reset_problem_analysis();
+        }
+    }
+
+    /// Add a source span proven by the input adapter. Adding provenance after scanning starts
+    /// restarts Problems so previously unknown rows cannot keep a weaker admission decision.
+    pub fn add_problem_source_span(&mut self, span: SourceSpan) -> Result<(), SourceSpanError> {
+        self.problem_source_spans.insert(span)?;
+        self.reset_problem_analysis();
+        Ok(())
+    }
+
+    pub fn scan_problems_step(&mut self, max_lines: usize) -> ProblemScanStep {
+        let stable_lines = self.stable_lines();
+        if self.problem_finished {
+            return ProblemScanStep {
+                scanned_lines: self.problem_scan_lines,
+                stable_lines,
+                caught_up: self.problem_scan_lines >= stable_lines,
+                finished: true,
+                ..ProblemScanStep::default()
+            };
+        }
+
+        let start = self.problem_scan_lines.min(stable_lines);
+        let end = start
+            .saturating_add(max_lines.min(PROBLEM_SCAN_MAX_LINES))
+            .min(stable_lines);
+        let frontier = self.indexed_frontier();
+        let mut committed_occurrences = 0usize;
+        let mut stored_occurrences = 0usize;
+        let mut dropped_occurrences = 0usize;
+        let mut failed_commits = 0usize;
+
+        {
+            let source_bytes = self.source.bytes();
+            let indexer = &self.indexer;
+            let encoding = self.encoding;
+            let coverage = self.problem_coverage;
+            let source_spans = &self.problem_source_spans;
+            let engine = &mut self.problem_engine;
+            indexer.for_each_line_span(
+                source_bytes,
+                start,
+                end,
+                frontier,
+                |line, span_start, span_end| {
+                    let Ok(line) = u32::try_from(line) else {
+                        failed_commits = failed_commits.saturating_add(1);
+                        return;
+                    };
+                    let raw = &source_bytes[span_start..span_end];
+                    let text = encoding.decode(raw);
+                    let parsed = parse_line_ref(&text);
+                    let delta = engine.observe(crate::problems::ObservedLine::new(
+                        line,
+                        raw,
+                        parsed,
+                        source_spans.provenance_at(line),
+                        coverage,
+                    ));
+                    committed_occurrences =
+                        committed_occurrences.saturating_add(usize::from(delta.committed()));
+                    stored_occurrences =
+                        stored_occurrences.saturating_add(usize::from(delta.stored()));
+                    dropped_occurrences =
+                        dropped_occurrences.saturating_add(usize::from(delta.dropped()));
+                    failed_commits = failed_commits.saturating_add(usize::from(delta.failed()));
+                },
+            );
+        }
+        self.problem_scan_lines = end;
+        ProblemScanStep {
+            scanned_lines: end,
+            stable_lines,
+            committed_occurrences,
+            stored_occurrences,
+            dropped_occurrences,
+            failed_commits,
+            caught_up: end >= stable_lines,
+            finished: false,
+        }
+    }
+
+    pub fn finish_problem_input(&mut self) -> ProblemScanStep {
+        let stable_lines = self.stable_lines();
+        let terminal = match self.input_state {
+            InputState::Static => self.is_indexing_done(),
+            InputState::Growing(InputLifecycle::Sealed) => true,
+            InputState::Growing(InputLifecycle::Growing | InputLifecycle::Paused) => false,
+        };
+        if self.problem_finished || !terminal || self.problem_scan_lines < stable_lines {
+            return ProblemScanStep {
+                scanned_lines: self.problem_scan_lines,
+                stable_lines,
+                caught_up: self.problem_scan_lines >= stable_lines,
+                finished: self.problem_finished,
+                ..ProblemScanStep::default()
+            };
+        }
+
+        let delta = self.problem_engine.finish_input();
+        self.problem_finished = true;
+        ProblemScanStep {
+            scanned_lines: self.problem_scan_lines,
+            stable_lines,
+            committed_occurrences: usize::from(delta.committed()),
+            stored_occurrences: usize::from(delta.stored()),
+            dropped_occurrences: usize::from(delta.dropped()),
+            failed_commits: usize::from(delta.failed()),
+            caught_up: true,
+            finished: true,
+        }
+    }
+
+    pub fn problem_stats(&self) -> ProblemStats {
+        self.problem_engine.stats()
+    }
+
+    pub fn problem_scanned_lines(&self) -> usize {
+        self.problem_scan_lines
+    }
+
+    pub fn problem_analysis_finished(&self) -> bool {
+        self.problem_finished
+    }
+
+    pub fn create_problem_group_snapshot(
+        &mut self,
+        query: &GroupQuery,
+    ) -> Result<QuerySnapshotId, SnapshotError> {
+        self.problem_engine.create_group_snapshot(query)
+    }
+
+    pub fn create_problem_occurrence_snapshot(
+        &mut self,
+        group: GroupId,
+    ) -> Result<QuerySnapshotId, SnapshotError> {
+        self.problem_engine.create_occurrence_snapshot(group)
+    }
+
+    pub fn problem_group_snapshot_page(
+        &mut self,
+        snapshot: QuerySnapshotId,
+        page: PageSpec,
+    ) -> Result<GroupPage, SnapshotError> {
+        self.problem_engine.group_snapshot_page(snapshot, page)
+    }
+
+    pub fn problem_occurrence_snapshot_page(
+        &mut self,
+        snapshot: QuerySnapshotId,
+        page: PageSpec,
+    ) -> Result<OccurrencePage, SnapshotError> {
+        self.problem_engine.occurrence_snapshot_page(snapshot, page)
+    }
+
+    pub fn release_problem_snapshot(&mut self, snapshot: QuerySnapshotId) -> bool {
+        self.problem_engine.release_snapshot(snapshot)
+    }
+
+    pub fn problem_group(&self, id: GroupId) -> Option<ProblemGroupSummary> {
+        self.problem_engine.group(id)
+    }
+
+    pub fn problem_event(&self, id: ProblemEventId) -> Option<ProblemEvent> {
+        self.problem_engine.event(id)
+    }
+
+    pub fn problem_event_observations(&self, id: ProblemEventId) -> Option<&[ObservationRef]> {
+        self.problem_engine.event_observations(id)
     }
 
     pub fn toggle_bookmark(&mut self, line_no: u64) -> io::Result<bool> {
@@ -1938,5 +2166,126 @@ mod tests {
         let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, 2);
+    }
+
+    fn java_problem_log() -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:00.000   42   42 E AndroidRuntime: FATAL EXCEPTION: main"
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:00.001   42   42 E AndroidRuntime: Process: com.example.app, PID: 42"
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:00.002   42   42 E AndroidRuntime: java.lang.IllegalStateException: sample"
+        )
+        .unwrap();
+        file
+    }
+
+    #[test]
+    fn problem_scans_advance_in_bounded_stable_line_steps_and_finish_once() {
+        let file = java_problem_log();
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+
+        let first = session.scan_problems_step(2);
+        assert_eq!(first.scanned_lines, 2);
+        assert_eq!(first.stable_lines, 3);
+        assert!(!first.finished);
+        assert_eq!(session.problem_stats().stored_occurrence_count, 0);
+
+        let second = session.scan_problems_step(usize::MAX);
+        assert_eq!(second.scanned_lines, 3);
+        assert!(second.caught_up);
+        assert!(!second.finished);
+
+        let finished = session.finish_problem_input();
+        assert!(finished.finished);
+        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
+        let revision = session.problem_stats().revision;
+
+        let repeated = session.finish_problem_input();
+        assert!(repeated.finished);
+        assert_eq!(session.problem_stats().revision, revision);
+    }
+
+    #[test]
+    fn growing_partial_tail_is_not_seen_by_problem_analysis_until_sealed() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:00.000   42   42 E AndroidRuntime: FATAL EXCEPTION: main"
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:00.001   42   42 E AndroidRuntime: Process: com.example.app, PID: 42"
+        )
+        .unwrap();
+        write!(
+            file,
+            "07-26 12:00:00.002   42   42 E AndroidRuntime: java.lang.IllegalStateException: sample"
+        )
+        .unwrap();
+        file.flush().unwrap();
+
+        let mut session = Session::open_growing(file.path()).unwrap();
+        session.index_all();
+        assert_eq!(session.stable_lines(), 2);
+        let step = session.scan_problems_step(4096);
+        assert_eq!(step.scanned_lines, 2);
+        assert_eq!(session.problem_stats().stored_occurrence_count, 0);
+        assert!(!session.finish_problem_input().finished);
+
+        writeln!(file).unwrap();
+        file.flush().unwrap();
+        session.remap_and_index_step(usize::MAX).unwrap();
+        assert_eq!(session.stable_lines(), 3);
+        session.scan_problems_step(4096);
+        assert_eq!(session.problem_stats().stored_occurrence_count, 0);
+
+        session.seal_growing_input().unwrap();
+        assert!(session.finish_problem_input().finished);
+        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
+    }
+
+    #[test]
+    fn problem_query_snapshots_are_reachable_only_through_compact_ids() {
+        let file = java_problem_log();
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+        session.scan_problems_step(4096);
+        session.finish_problem_input();
+
+        let snapshot = session
+            .create_problem_group_snapshot(&crate::problems::GroupQuery::default())
+            .unwrap();
+        let groups = session
+            .problem_group_snapshot_page(snapshot, crate::problems::PageSpec::new(0, 100).unwrap())
+            .unwrap();
+        assert_eq!(groups.items.len(), 1);
+
+        let occurrences = session
+            .create_problem_occurrence_snapshot(groups.items[0].id)
+            .unwrap();
+        let page = session
+            .problem_occurrence_snapshot_page(
+                occurrences,
+                crate::problems::PageSpec::new(0, 100).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        let event = session.problem_event(page.items[0]).unwrap();
+        assert_eq!(event.anchor_line(), 0);
+        assert!(!session
+            .problem_event_observations(page.items[0])
+            .unwrap()
+            .is_empty());
     }
 }
