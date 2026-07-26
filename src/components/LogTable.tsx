@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -152,12 +152,14 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
   const scrollRequest = useSession((s) => s.scrollRequest);
   const selectRow = useSession((s) => s.selectRow);
   const setViewportPosition = useSession((s) => s.setViewportPosition);
+  const setTableViewportHeight = useSession((s) => s.setTableViewportHeight);
   const setTailFollowingFromViewport = useSession((s) => s.setTailFollowingFromViewport);
   const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const streamRunning = useSession((s) => s.streamRunning);
   const tailFollowing = useSession((s) => s.tailFollowing);
   const setTailFollowing = useSession((s) => s.setTailFollowing);
   const requestTailFollow = useSession((s) => s.requestTailFollow);
+  const acknowledgeScrollRequest = useSession((s) => s.acknowledgeScrollRequest);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
@@ -216,6 +218,18 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
     [],
   );
 
+  useLayoutEffect(() => {
+    const element = parentRef.current;
+    if (!element) return;
+    const updateHeight = () => {
+      setTableViewportHeight(element.getBoundingClientRect().height);
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [setTableViewportHeight]);
+
   const markProgrammaticScroll = useCallback(() => {
     programmaticScrollRef.current = true;
     if (programmaticScrollTimerRef.current != null) {
@@ -234,6 +248,11 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
       programmaticScrollTimerRef.current = null;
     }
   }, []);
+
+  const beginUserScrollInteraction = useCallback(() => {
+    clearProgrammaticScroll();
+    pauseTailFollowing("scroll");
+  }, [clearProgrammaticScroll, pauseTailFollowing]);
 
   const syncTailFollowingFromScroll = useCallback(() => {
     const element = parentRef.current;
@@ -519,10 +538,19 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
     let canceled = false;
     const scroll = () => {
       if (canceled) return;
-      const current = useSession.getState().scrollRequest;
+      const state = useSession.getState();
+      const current = state.scrollRequest;
       if (current?.nonce !== scrollRequest.nonce) return;
+      if (
+        scrollRequest.reason === "tail" &&
+        (state.sourceMode !== "adb" || !state.tailFollowing)
+      ) {
+        acknowledgeScrollRequest(scrollRequest.nonce);
+        return;
+      }
       markProgrammaticScroll();
       rv.scrollToIndex(Math.max(0, scrollRequest.index), { align: scrollRequest.align });
+      acknowledgeScrollRequest(scrollRequest.nonce);
     };
     if (scrollRequest.reason === "tail") {
       const block = Math.floor(scrollRequest.index / WINDOW) * WINDOW;
@@ -533,10 +561,19 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
     return () => {
       canceled = true;
     };
-  }, [ensureBlock, markProgrammaticScroll, rv, scrollRequest, total]);
+  }, [
+    acknowledgeScrollRequest,
+    ensureBlock,
+    markProgrammaticScroll,
+    rv,
+    scrollRequest,
+    total,
+  ]);
 
   const items = rv.getVirtualItems();
-  const firstVisibleIndex = items[0]?.index ?? null;
+  const scrollOffset = rv.scrollOffset ?? parentRef.current?.scrollTop ?? 0;
+  const firstVisibleIndex =
+    items.find((item) => item.end > scrollOffset)?.index ?? items[0]?.index ?? null;
 
   useEffect(() => {
     if (firstVisibleIndex == null) return;
@@ -682,10 +719,11 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
         )}
       </div>
       <div
+        id="lf-log-table-scroll"
         ref={parentRef}
         className="lf-table-scroll"
         onCopy={handleTableCopy}
-        onPointerDownCapture={clearProgrammaticScroll}
+        onPointerDownCapture={beginUserScrollInteraction}
         onScroll={syncTailFollowingFromScroll}
         onWheelCapture={handleTableWheel}
       >

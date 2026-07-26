@@ -2145,12 +2145,14 @@ pub fn get_minimap(buckets: usize, state: State<AppState>) -> MinimapDto {
     let guard = state.lock_session();
     let Some(session) = guard.as_ref() else {
         return MinimapDto {
+            bucket_count: 0,
             bookmarks: Vec::new(),
             errors: Vec::new(),
         };
     };
     let minimap = session.minimap(buckets);
     MinimapDto {
+        bucket_count: minimap.bucket_count,
         bookmarks: minimap.bookmarks,
         errors: minimap
             .errors

@@ -288,6 +288,7 @@ pub struct MinimapBucketDto {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MinimapDto {
+    pub bucket_count: usize,
     pub bookmarks: Vec<usize>,
     pub errors: Vec<MinimapBucketDto>,
 }
@@ -1500,6 +1501,30 @@ mod tests {
                 "done": true,
                 "generation": 9,
                 "requestId": 12
+            })
+        );
+    }
+
+    #[test]
+    fn minimap_serializes_effective_bucket_count_in_camel_case() {
+        let payload = MinimapDto {
+            bucket_count: 13,
+            bookmarks: vec![2],
+            errors: vec![MinimapBucketDto {
+                bucket: 7,
+                count: 3,
+            }],
+        };
+
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            json!({
+                "bucketCount": 13,
+                "bookmarks": [2],
+                "errors": [{
+                    "bucket": 7,
+                    "count": 3
+                }]
             })
         );
     }

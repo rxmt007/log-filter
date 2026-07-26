@@ -291,6 +291,7 @@ pub(crate) fn step_problem_analysis(
 pub(crate) struct ProblemProgressGate {
     last_scanned_lines: u64,
     last_revision: u64,
+    last_provisional_occurrence_count: u32,
     last_limited: bool,
     last_correlation_limited: bool,
     last_emit: Option<Instant>,
@@ -309,6 +310,7 @@ impl ProblemProgressGate {
         let limit_transition = progress.limited != self.last_limited
             || progress.correlation_limited != self.last_correlation_limited;
         let work_changed = progress.revision != self.last_revision
+            || progress.provisional_occurrence_count != self.last_provisional_occurrence_count
             || progress
                 .scanned_lines
                 .saturating_sub(self.last_scanned_lines)
@@ -321,6 +323,7 @@ impl ProblemProgressGate {
         if emit {
             self.last_scanned_lines = progress.scanned_lines;
             self.last_revision = progress.revision;
+            self.last_provisional_occurrence_count = progress.provisional_occurrence_count;
             self.last_limited = progress.limited;
             self.last_correlation_limited = progress.correlation_limited;
             self.last_emit = Some(now);
@@ -843,5 +846,23 @@ mod tests {
             .is_some());
         idle_gate.clear_deferred();
         assert!(idle_gate.should_emit_at(&progress(2), base + Duration::from_millis(101)));
+
+        let mut provisional_gate = ProblemProgressGate::default();
+        let mut provisional = progress(0);
+        provisional.scanned_lines = 13;
+        provisional.stable_lines = 13;
+        provisional.stored_group_count = 0;
+        provisional.provisional_occurrence_count = 1;
+        assert!(
+            provisional_gate.should_emit_at(&provisional, base),
+            "a short live crash must publish its provisional count even before an index revision"
+        );
+        provisional.provisional_occurrence_count = 2;
+        assert!(!provisional_gate.should_emit_at(&provisional, base + Duration::from_millis(1)));
+        assert!(provisional_gate
+            .schedule_deferred(base + Duration::from_millis(1))
+            .is_some());
+        provisional_gate.clear_deferred();
+        assert!(provisional_gate.should_emit_at(&provisional, base + Duration::from_millis(101)));
     }
 }

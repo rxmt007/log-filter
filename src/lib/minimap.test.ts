@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   bucketRanges,
   errorTickStyle,
+  indexToViewportTopPx,
+  maxViewportStartIndex,
   MINIMAP_BUCKETS,
   pointerToResultIndex,
   rangeStyle,
+  viewportHeightPx,
 } from "@/lib/minimap";
 
 describe("minimap helpers", () => {
@@ -26,9 +29,33 @@ describe("minimap helpers", () => {
   it("clamps pointer positions into the current result set", () => {
     const rect = { top: 100, height: 200 };
 
-    expect(pointerToResultIndex(50, rect, 100, 0)).toBe(0);
-    expect(pointerToResultIndex(300, rect, 100, 0)).toBe(99);
-    expect(pointerToResultIndex(200, rect, 100, 0)).toBe(56);
+    expect(pointerToResultIndex(50, rect, 100, 10, 0)).toBe(0);
+    expect(pointerToResultIndex(300, rect, 100, 10, 0)).toBe(90);
+    expect(pointerToResultIndex(200, rect, 100, 10, 0)).toBe(51);
+  });
+
+  it("sizes and maps the viewport from visible rows in the filtered result set", () => {
+    const rect = { top: 0, height: 500 };
+
+    expect(viewportHeightPx(rect, 40, 20)).toBe(250);
+    expect(indexToViewportTopPx(20, rect, 40, 20)).toBe(250);
+    expect(pointerToResultIndex(500, rect, 40, 20, 0)).toBe(20);
+  });
+
+  it("fills the track and disables its range when every result is visible", () => {
+    const rect = { top: 0, height: 500 };
+
+    expect(viewportHeightPx(rect, 10, 20)).toBe(500);
+    expect(indexToViewportTopPx(8, rect, 10, 20)).toBe(0);
+    expect(pointerToResultIndex(400, rect, 10, 20, 0)).toBe(0);
+  });
+
+  it("rounds a partially visible final row into the same integer viewport model", () => {
+    const rect = { top: 0, height: 500 };
+
+    expect(maxViewportStartIndex(11, 10.5)).toBe(0);
+    expect(viewportHeightPx(rect, 11, 10.5)).toBe(500);
+    expect(pointerToResultIndex(500, rect, 11, 10.5, 0)).toBe(0);
   });
 });
 
@@ -76,5 +103,16 @@ describe("errorTickStyle", () => {
   it("treats a zero-row file defensively without dividing by zero", () => {
     const { opacity } = errorTickStyle({ bucket: 0, count: 1 }, 0);
     expect(opacity).toBe(1); // rowsPerBucket 兜底为 1 ⇒ density 1 ⇒ 饱和
+  });
+
+  it("covers a short all-error result set continuously with its effective buckets", () => {
+    const styles = [0, 1, 2, 3].map((bucket) => errorTickStyle({ bucket, count: 1 }, 4, 4));
+
+    expect(styles).toEqual([
+      { top: "0%", height: "25%", opacity: 1 },
+      { top: "25%", height: "25%", opacity: 1 },
+      { top: "50%", height: "25%", opacity: 1 },
+      { top: "75%", height: "25%", opacity: 1 },
+    ]);
   });
 });

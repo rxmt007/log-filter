@@ -136,6 +136,7 @@ export interface ScrollRequest {
 }
 
 export interface MinimapData {
+  bucketCount: number;
   bookmarks: number[];
   errors: Array<{ bucket: number; count: number }>;
 }

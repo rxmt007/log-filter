@@ -236,9 +236,19 @@ describe("session store", () => {
   });
 
   it("pauses and restores tail following through explicit actions", () => {
-    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    useSession.setState({
+      sourceMode: "adb",
+      tailFollowing: true,
+      scrollRequest: {
+        index: 99,
+        align: "end",
+        reason: "tail",
+        nonce: 3,
+      },
+    });
     useSession.getState().pauseTailFollowing("row");
     expect(useSession.getState().tailFollowing).toBe(false);
+    expect(useSession.getState().scrollRequest).toBeNull();
 
     useSession.getState().setTailFollowingFromViewport(false, "program");
     expect(useSession.getState().tailFollowing).toBe(false);
@@ -261,12 +271,29 @@ describe("session store", () => {
 
     expect(useSession.getState().selectedLine).toBe(42);
     expect(useSession.getState().selectedResultIndex).toBe(41);
-    expect(useSession.getState().viewportResultIndex).toBe(99);
+    expect(useSession.getState().viewportResultIndex).toBe(41);
     expect(useSession.getState().scrollRequest).toMatchObject({
       index: 99,
       align: "end",
       reason: "tail",
     });
+  });
+
+  it("consumes only the matching one-shot scroll request", () => {
+    useSession.setState({
+      scrollRequest: {
+        index: 99,
+        align: "end",
+        reason: "tail",
+        nonce: 3,
+      },
+    });
+
+    useSession.getState().acknowledgeScrollRequest(2);
+    expect(useSession.getState().scrollRequest?.nonce).toBe(3);
+
+    useSession.getState().acknowledgeScrollRequest(3);
+    expect(useSession.getState().scrollRequest).toBeNull();
   });
 
   it("keeps the selected row when empty search results are refreshed during streaming", () => {
@@ -287,17 +314,38 @@ describe("session store", () => {
   });
 
   it("pauses tail following when filter conditions change", () => {
-    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    const tailRequest = {
+      index: 99,
+      align: "end" as const,
+      reason: "tail" as const,
+      nonce: 1,
+    };
+    useSession.setState({
+      sourceMode: "adb",
+      tailFollowing: true,
+      scrollRequest: tailRequest,
+    });
     useSession.getState().setFilter({ markedOnly: true });
     expect(useSession.getState().tailFollowing).toBe(false);
+    expect(useSession.getState().scrollRequest).toBeNull();
 
-    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    useSession.setState({
+      sourceMode: "adb",
+      tailFollowing: true,
+      scrollRequest: tailRequest,
+    });
     useSession.getState().setFilterField("tagInclude", { pattern: "ActivityManager" });
     expect(useSession.getState().tailFollowing).toBe(false);
+    expect(useSession.getState().scrollRequest).toBeNull();
 
-    useSession.setState({ sourceMode: "adb", tailFollowing: true });
+    useSession.setState({
+      sourceMode: "adb",
+      tailFollowing: true,
+      scrollRequest: tailRequest,
+    });
     useSession.getState().toggleLevel(LEVEL_BITS.E);
     expect(useSession.getState().tailFollowing).toBe(false);
+    expect(useSession.getState().scrollRequest).toBeNull();
   });
 
   it("initializes adb sessions with tail following enabled and file sessions disabled", () => {

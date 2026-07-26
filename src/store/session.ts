@@ -62,6 +62,7 @@ export interface SessionState {
   selectedResultIndex: number | null;
   viewportLine: number;
   viewportResultIndex: number;
+  tableViewportHeight: number;
   scrollRequest: ScrollRequest | null;
   bookmarks: number[];
   bookmarkRevision: number;
@@ -95,6 +96,7 @@ export interface SessionState {
   setSelectedResultIndex: (index: number | null) => void;
   setViewportPosition: (index: number, lineNo?: number | null) => void;
   setViewportResultIndex: (index: number) => void;
+  setTableViewportHeight: (height: number) => void;
   selectRow: (line: number | null, resultIndex: number | null) => void;
   navigateToResultIndex: (
     index: number,
@@ -105,6 +107,7 @@ export interface SessionState {
     },
   ) => void;
   requestTailFollow: (index: number) => void;
+  acknowledgeScrollRequest: (nonce: number) => void;
   commitTableNavigation: (
     update: TableNavigationCommit,
     guard: NavigationCommitGuard,
@@ -266,6 +269,7 @@ export const useSession = create<SessionState>()((set) => ({
   selectedResultIndex: null,
   viewportLine: 1,
   viewportResultIndex: 0,
+  tableViewportHeight: 0,
   scrollRequest: null,
   bookmarks: [],
   bookmarkRevision: 0,
@@ -372,10 +376,29 @@ export const useSession = create<SessionState>()((set) => ({
           : {}),
       };
     }),
-  setTailFollowing: (tailFollowing) => set({ tailFollowing }),
+  setTailFollowing: (tailFollowing) =>
+    set((s) => ({
+      tailFollowing,
+      ...(!tailFollowing && s.scrollRequest?.reason === "tail" ? { scrollRequest: null } : {}),
+    })),
   setTailFollowingFromViewport: (isAtBottom, source) =>
-    set((s) => (source === "user" && s.sourceMode === "adb" ? { tailFollowing: isAtBottom } : {})),
-  pauseTailFollowing: () => set((s) => (s.sourceMode === "adb" ? { tailFollowing: false } : {})),
+    set((s) =>
+      source === "user" && s.sourceMode === "adb"
+        ? {
+            tailFollowing: isAtBottom,
+            ...(isAtBottom || s.scrollRequest?.reason !== "tail" ? {} : { scrollRequest: null }),
+          }
+        : {},
+    ),
+  pauseTailFollowing: () =>
+    set((s) =>
+      s.sourceMode === "adb"
+        ? {
+            tailFollowing: false,
+            ...(s.scrollRequest?.reason === "tail" ? { scrollRequest: null } : {}),
+          }
+        : {},
+    ),
   setAppConfig: (appConfig) => set({ appConfig, theme: appConfig.theme }),
   setTheme: (theme) =>
     set((s) => ({
@@ -445,6 +468,9 @@ export const useSession = create<SessionState>()((set) => ({
         filter: { ...s.filter, ...patch },
         filterRevision,
         tailFollowing: s.sourceMode === "adb" ? false : s.tailFollowing,
+        ...(s.sourceMode === "adb" && s.scrollRequest?.reason === "tail"
+          ? { scrollRequest: null }
+          : {}),
       };
     }),
   setFilterField: (key, patch) =>
@@ -457,6 +483,9 @@ export const useSession = create<SessionState>()((set) => ({
         },
         filterRevision,
         tailFollowing: s.sourceMode === "adb" ? false : s.tailFollowing,
+        ...(s.sourceMode === "adb" && s.scrollRequest?.reason === "tail"
+          ? { scrollRequest: null }
+          : {}),
       };
     }),
   setHighlightRule: (index, patch) =>
@@ -474,6 +503,9 @@ export const useSession = create<SessionState>()((set) => ({
       filter: { ...s.filter, levels: s.filter.levels ^ bit },
       filterRevision: Math.max(s.filterRevision, s.status.filterInputRevision) + 1,
       tailFollowing: s.sourceMode === "adb" ? false : s.tailFollowing,
+      ...(s.sourceMode === "adb" && s.scrollRequest?.reason === "tail"
+        ? { scrollRequest: null }
+        : {}),
     })),
   setSearch: (patch) =>
     set((s) => ({
@@ -507,6 +539,11 @@ export const useSession = create<SessionState>()((set) => ({
       const viewportResultIndex = rowCount > 0 ? Math.min(Math.max(0, index), rowCount - 1) : 0;
       return viewportResultIndex === s.viewportResultIndex ? {} : { viewportResultIndex };
     }),
+  setTableViewportHeight: (height) =>
+    set((s) => {
+      const tableViewportHeight = Math.max(0, Math.round(height));
+      return tableViewportHeight === s.tableViewportHeight ? {} : { tableViewportHeight };
+    }),
   selectRow: (selectedLine, selectedResultIndex) => set({ selectedLine, selectedResultIndex }),
   navigateToResultIndex: (index, options) =>
     set((s) => {
@@ -536,7 +573,6 @@ export const useSession = create<SessionState>()((set) => ({
           : Math.max(0, index);
       const nonce = (s.scrollRequest?.nonce ?? 0) + 1;
       return {
-        viewportResultIndex: safeIndex,
         scrollRequest: {
           index: safeIndex,
           align: "end",
@@ -545,6 +581,8 @@ export const useSession = create<SessionState>()((set) => ({
         },
       };
     }),
+  acknowledgeScrollRequest: (nonce) =>
+    set((s) => (s.scrollRequest?.nonce === nonce ? { scrollRequest: null } : {})),
   commitTableNavigation: (update, guard) => {
     let accepted = false;
     set((state) => {

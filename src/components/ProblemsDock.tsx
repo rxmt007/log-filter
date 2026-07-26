@@ -469,9 +469,12 @@ export function ProblemsDock({
   const stats = status?.stats;
   const detected = stats?.observedOccurrenceCount ?? 0;
   const expandable = stats?.storedOccurrenceCount ?? 0;
+  const provisional = stats?.provisionalOccurrenceCount ?? 0;
   const badge = stats?.limited
     ? `检出 ${detected.toLocaleString()} · 可展开 ${expandable.toLocaleString()}`
-    : detected.toLocaleString();
+    : provisional > 0
+      ? `${detected.toLocaleString()} · 待定 ${provisional.toLocaleString()}`
+      : detected.toLocaleString();
   const scanLabel =
     statusLoading && !status
       ? "正在读取故障分析状态…"
@@ -479,7 +482,11 @@ export function ProblemsDock({
         ? `正在分析 ${status.scannedLines.toLocaleString()} / ${status.stableLines.toLocaleString()} 行`
         : status?.finished
           ? `已分析 ${status.stableLines.toLocaleString()} 行`
-          : "等待日志分析";
+          : status?.coverage.origin === "adb-live"
+            ? provisional > 0
+              ? `已追上当前日志 · ${provisional.toLocaleString()} 项待定稿 · 停止抓取后完成定稿`
+              : "已追上当前日志 · 持续监听 · 停止抓取后完成尾部分析"
+            : "等待日志分析";
   const coverageLabel = status
     ? `${scanLabel} · ${coverageDescription(status.coverage)}`
     : scanLabel;
@@ -687,7 +694,9 @@ export function ProblemsDock({
                   ? "当前没有可展示的故障分组。"
                   : status?.finished
                     ? "在已捕获范围内未检测到可展示的故障事件。"
-                    : "在已捕获范围内暂未检测到可展示的故障事件。"}
+                    : provisional > 0
+                      ? `当前分析共有 ${provisional.toLocaleString()} 项待定稿，仍在等待晚到关联证据；停止抓取后完成定稿，符合当前分类且保留详情的事件届时可展开。`
+                      : "在已捕获范围内暂未检测到可展示的故障事件。"}
             </p>
           )}
           {groupPage?.nextCursor != null ? (

@@ -45,6 +45,8 @@ pub struct MinimapBucket {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Minimap {
+    /// 实际量程桶数；短结果集不会保留请求量程中的空洞。
+    pub bucket_count: usize,
     pub bookmarks: Vec<usize>,
     /// 升序,每桶一条,count = 桶内错误行数(密度加权,取代旧的"命中即整桶"二值语义)。
     pub errors: Vec<MinimapBucket>,
@@ -734,14 +736,16 @@ impl Session {
 
     pub fn minimap(&self, buckets: usize) -> Minimap {
         let total = self.current_result_len();
-        if buckets == 0 || total == 0 {
+        let bucket_count = buckets.min(total);
+        if bucket_count == 0 {
             return Minimap {
+                bucket_count: 0,
                 bookmarks: Vec::new(),
                 errors: Vec::new(),
             };
         }
         if !self.filter_active {
-            return self.source_minimap(buckets);
+            return self.source_minimap(bucket_count);
         }
         // 反向遍历:书签/错误行是小集合,逐个二分反查在过滤结果中的位置,
         // 避免 O(过滤结果总数) 的全量扫描(minimap 会被状态事件高频触发)。
@@ -751,7 +755,7 @@ impl Session {
             // 超过 u32 的书签行不可能在命中数组内(命中数组元素都 ≤ u32::MAX)。
             .filter_map(|line_no| u32::try_from(line_no - 1).ok())
             .filter_map(|needle| self.filtered.binary_search(&needle).ok())
-            .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, buckets))
+            .filter_map(|result_idx| bucket_for_zero_based(result_idx, total, bucket_count))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -759,13 +763,17 @@ impl Session {
         let mut error_counts: BTreeMap<usize, u32> = BTreeMap::new();
         for idx in &self.error_lines {
             if let Ok(result_idx) = self.filtered.binary_search(idx) {
-                if let Some(bucket) = bucket_for_zero_based(result_idx, total, buckets) {
+                if let Some(bucket) = bucket_for_zero_based(result_idx, total, bucket_count) {
                     *error_counts.entry(bucket).or_insert(0) += 1;
                 }
             }
         }
         let errors = collect_minimap_buckets(error_counts);
-        Minimap { bookmarks, errors }
+        Minimap {
+            bucket_count,
+            bookmarks,
+            errors,
+        }
     }
 
     fn current_result_len(&self) -> usize {
@@ -842,23 +850,27 @@ impl Session {
         }
     }
 
-    fn source_minimap(&self, buckets: usize) -> Minimap {
+    fn source_minimap(&self, bucket_count: usize) -> Minimap {
         let total = self.stable_lines();
         let bookmarks = self
             .bookmark_source_lines()
             .into_iter()
-            .filter_map(|line| bucket_for_zero_based((line - 1) as usize, total, buckets))
+            .filter_map(|line| bucket_for_zero_based((line - 1) as usize, total, bucket_count))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
         let mut error_counts: BTreeMap<usize, u32> = BTreeMap::new();
         for idx in &self.error_lines {
-            if let Some(bucket) = bucket_for_zero_based(*idx as usize, total, buckets) {
+            if let Some(bucket) = bucket_for_zero_based(*idx as usize, total, bucket_count) {
                 *error_counts.entry(bucket).or_insert(0) += 1;
             }
         }
         let errors = collect_minimap_buckets(error_counts);
-        Minimap { bookmarks, errors }
+        Minimap {
+            bucket_count,
+            bookmarks,
+            errors,
+        }
     }
 
     pub fn export_view(&mut self, view: RowsView, output: &Path) -> io::Result<ExportSummary> {
@@ -1683,6 +1695,7 @@ mod tests {
         assert_eq!(
             session.minimap(10),
             Minimap {
+                bucket_count: 0,
                 bookmarks: Vec::new(),
                 errors: Vec::new(),
             }
@@ -1871,6 +1884,7 @@ mod tests {
         .unwrap();
 
         let map = s.minimap(4);
+        assert_eq!(map.bucket_count, 4);
         assert_eq!(
             map.errors,
             vec![
@@ -1907,6 +1921,7 @@ mod tests {
         s.index_all();
 
         let map = s.minimap(4);
+        assert_eq!(map.bucket_count, 4);
         assert_eq!(
             map.errors,
             vec![MinimapBucket {
@@ -1914,6 +1929,32 @@ mod tests {
                 count: 2
             }]
         );
+    }
+
+    #[test]
+    fn minimap_uses_effective_bucket_count_for_short_results() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        for i in 0..13 {
+            writeln!(
+                file,
+                "04-20 12:06:02.{i:03}   300   330 E AndroidRuntime: error {i}"
+            )
+            .unwrap();
+        }
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+
+        let map = session.minimap(180);
+
+        assert_eq!(map.bucket_count, 13);
+        assert_eq!(
+            map.errors
+                .iter()
+                .map(|entry| entry.bucket)
+                .collect::<Vec<_>>(),
+            (0..13).collect::<Vec<_>>()
+        );
+        assert!(map.errors.iter().all(|entry| entry.count == 1));
     }
 
     #[test]
@@ -2092,6 +2133,7 @@ mod tests {
         s.toggle_bookmark(2).unwrap();
 
         let map = s.minimap(4);
+        assert_eq!(map.bucket_count, 4);
         assert_eq!(map.bookmarks, vec![1]);
         assert_eq!(
             map.errors,
@@ -2112,7 +2154,8 @@ mod tests {
         let mut s = Session::open(f.path()).unwrap();
         s.index_all();
         s.toggle_bookmark(2).unwrap();
-        // 过滤后结果为行 2(书签, result 0)与行 7(错误, result 1)
+        // 过滤后结果为行 2(书签, result 0)与行 7(错误, result 1);
+        // 请求 4 桶时实际量程收缩为 2 桶。
         s.set_filter(&FilterSpec {
             word_include: FilterField::plain(true, "m1|m6"),
             ..Default::default()
@@ -2120,11 +2163,12 @@ mod tests {
         .unwrap();
 
         let map = s.minimap(4);
+        assert_eq!(map.bucket_count, 2);
         assert_eq!(map.bookmarks, vec![0]);
         assert_eq!(
             map.errors,
             vec![MinimapBucket {
-                bucket: 2,
+                bucket: 1,
                 count: 1
             }]
         );

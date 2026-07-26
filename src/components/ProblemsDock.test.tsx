@@ -137,6 +137,62 @@ describe("ProblemsDock", () => {
     });
   });
 
+  it("explains that a caught-up live tail finishes its open tail when capture stops", () => {
+    useProblems.getState().acceptStatus({
+      ...status,
+      scannedLines: 1_000,
+      scanning: false,
+      finished: false,
+      coverage: {
+        origin: "adb-live",
+        requestedBuffers: ["crash"],
+        rangeCompleteness: "start-truncated",
+      },
+      stats: {
+        ...status.stats,
+        observedOccurrenceCount: 0,
+        storedOccurrenceCount: 0,
+        provisionalOccurrenceCount: 0,
+        limited: false,
+        correlationLimited: false,
+      },
+    });
+
+    render(<ProblemsDock />);
+
+    expect(screen.getByText(/已追上当前日志 · 持续监听/)).toBeInTheDocument();
+    expect(screen.getByText(/停止抓取后完成尾部分析/)).toBeInTheDocument();
+  });
+
+  it("surfaces provisional live occurrences without claiming they are expandable", () => {
+    useProblems.getState().acceptStatus({
+      ...status,
+      scannedLines: 1_000,
+      scanning: false,
+      finished: false,
+      coverage: {
+        origin: "adb-live",
+        requestedBuffers: ["crash"],
+        rangeCompleteness: "start-truncated",
+      },
+      stats: {
+        ...status.stats,
+        observedOccurrenceCount: 0,
+        storedOccurrenceCount: 0,
+        provisionalOccurrenceCount: 1,
+        limited: false,
+        correlationLimited: false,
+      },
+    });
+
+    render(<ProblemsDock />);
+
+    expect(screen.getByRole("button", { name: "Problems，0 · 待定 1" })).toBeInTheDocument();
+    expect(screen.getByText(/1 项待定稿/)).toBeInTheDocument();
+    expect(screen.getByText(/停止抓取后完成定稿/)).toBeInTheDocument();
+    expect(screen.queryByText(/停止抓取后可展开/)).not.toBeInTheDocument();
+  });
+
   it("is folded by default, requests no list, and distinguishes detected from expandable", () => {
     useProblems.getState().acceptStatus(status);
     const onOpen = vi.fn();

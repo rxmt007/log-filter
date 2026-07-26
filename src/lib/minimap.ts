@@ -1,5 +1,4 @@
 export const MINIMAP_BUCKETS = 180;
-export const VIEWPORT_HEIGHT_RATIO = 0.08;
 export const VIEWPORT_MIN_HEIGHT = 22;
 
 export interface MinimapRect {
@@ -44,39 +43,63 @@ export function rangeStyle(range: { start: number; end: number }, buckets = MINI
   };
 }
 
-export function viewportHeightPx(rect: MinimapRect) {
-  return Math.max(VIEWPORT_MIN_HEIGHT, rect.height * VIEWPORT_HEIGHT_RATIO);
+export function viewportHeightPx(rect: MinimapRect, resultCount: number, visibleRows: number) {
+  if (rect.height <= 0 || resultCount <= 0) return 0;
+  const proportional = rect.height * Math.min(1, normalizeVisibleRows(visibleRows) / resultCount);
+  return Math.min(rect.height, Math.max(VIEWPORT_MIN_HEIGHT, proportional));
 }
 
-export function maxViewportTopPx(rect: MinimapRect) {
-  return Math.max(0, rect.height - viewportHeightPx(rect));
+export function maxViewportTopPx(rect: MinimapRect, resultCount: number, visibleRows: number) {
+  return Math.max(0, rect.height - viewportHeightPx(rect, resultCount, visibleRows));
 }
 
-export function indexToViewportTopPx(index: number, rect: MinimapRect, resultCount: number) {
-  if (resultCount <= 1) return 0;
-  return clamp((index / (resultCount - 1)) * maxViewportTopPx(rect), 0, maxViewportTopPx(rect));
+export function maxViewportStartIndex(resultCount: number, visibleRows: number) {
+  return Math.max(0, resultCount - normalizeVisibleRows(visibleRows));
 }
 
-export function viewportTopPxToResultIndex(topPx: number, rect: MinimapRect, resultCount: number) {
+export function indexToViewportTopPx(
+  index: number,
+  rect: MinimapRect,
+  resultCount: number,
+  visibleRows: number,
+) {
+  const maxIndex = maxViewportStartIndex(resultCount, visibleRows);
+  if (maxIndex <= 0) return 0;
+  const maxTop = maxViewportTopPx(rect, resultCount, visibleRows);
+  return clamp((index / maxIndex) * maxTop, 0, maxTop);
+}
+
+export function viewportTopPxToResultIndex(
+  topPx: number,
+  rect: MinimapRect,
+  resultCount: number,
+  visibleRows: number,
+) {
   if (resultCount <= 0 || rect.height <= 0) return null;
-  if (resultCount === 1) return 0;
-  const maxTop = maxViewportTopPx(rect);
+  const maxIndex = maxViewportStartIndex(resultCount, visibleRows);
+  if (maxIndex <= 0) return 0;
+  const maxTop = maxViewportTopPx(rect, resultCount, visibleRows);
   const frac = maxTop > 0 ? clamp(topPx / maxTop, 0, 1) : 0;
-  return clamp(Math.round(frac * (resultCount - 1)), 0, resultCount - 1);
+  return clamp(Math.round(frac * maxIndex), 0, maxIndex);
 }
 
 export function pointerToResultIndex(
   clientY: number,
   rect: MinimapRect,
   resultCount: number,
+  visibleRows: number,
   grabOffset: number,
 ) {
   const topPx = clientY - rect.top - grabOffset;
-  return viewportTopPxToResultIndex(topPx, rect, resultCount);
+  return viewportTopPxToResultIndex(topPx, rect, resultCount, visibleRows);
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeVisibleRows(visibleRows: number) {
+  return Math.max(0, Math.ceil(visibleRows));
 }
 
 function formatPercent(value: number) {

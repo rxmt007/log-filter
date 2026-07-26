@@ -834,6 +834,11 @@
   cursor: grabbing;
 }
 
+.lf-minimap:focus-visible {
+  outline: 2px solid var(--lf-accent);
+  outline-offset: -2px;
+}
+
 .lf-minimap-tick {
   position: absolute;
   height: 2px;
@@ -875,8 +880,7 @@
   position: absolute;
   left: 1px;
   right: 1px;
-  height: 8%;
-  min-height: 22px;
+  box-sizing: border-box;
   border: 1px solid var(--lf-accent);
   border-radius: 2px;
   background: rgba(59, 130, 246, 0.14);
@@ -2061,7 +2065,7 @@
   align-items: center;
   justify-content: center;
   padding: 8px;
-  border: 1px solid var(--lf-accent-strong);
+  border: 0;
   border-radius: 999px;
   background: var(--lf-accent);
   color: #fff;
@@ -2071,6 +2075,11 @@
 
 .lf-follow-tail:hover {
   background: var(--lf-accent-strong);
+}
+
+.lf-follow-tail:focus-visible {
+  outline: 2px solid var(--lf-accent);
+  outline-offset: 2px;
 }
 
 .lf-follow-tail svg {
