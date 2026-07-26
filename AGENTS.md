@@ -87,9 +87,9 @@ LogFilter/          原 Java 工程(只读参考,已忽略,将删除)
 
 ## IPC 接口与并发不变量
 
-- **Tauri 命令**:`open_file`、`list_devices`、`start_logcat`、`pause_logcat`、`resume_logcat`、`stop_logcat`、`clear_logcat`、`get_status`、`get_rows`(≤512 行硬上限)、`set_filter`、`get_filtered_count`、`search`、`search_next`、`toggle_bookmark`、`list_bookmarks`、`next_bookmark`、`line_to_result_index`、`get_minimap`、`export_logs`、`cancel_export`、`split_log_file`、`get_config`、`set_config`。
-- **事件**:`index:progress`、`filter:done`、`search:progress`、`stream:append`、`split:progress`、`export:progress`。
-- **并发不变量**:全局 Session 在 `Mutex` 内;写侧**先递增 generation 再替换 session**;一切后台任务经 `lock_session_if_current` 持锁校验;filter / search / export 各有任务代号(`next_*_generation`)实现取消。
+- **Tauri 命令**:`open_file`、`list_devices`、`start_logcat`、`pause_logcat`、`resume_logcat`、`stop_logcat`、`clear_logcat`、`get_status`、`get_rows`/`get_rows_checked`(≤512 行硬上限)、`map_source_line`、`set_filter`、`get_filtered_count`、`search`、`search_next`、`toggle_bookmark`、`list_bookmarks`、`next_bookmark`、`line_to_result_index`、`get_minimap`、`get_problems_status`、`get_problem_groups`、`get_problem_occurrences`、`get_problem_detail`、`release_problem_snapshot`、`export_logs`、`export_problem_logs`、`cancel_export`、`split_log_file`、`get_config`、`set_config`。
+- **事件**:`index:progress`、`filter:done`、`search:progress`、`stream:append`、`stream:control`、`stream:error`、`problems:progress`、`split:progress`、`export:progress`。
+- **并发不变量**:全局 Session 在 `Mutex` 内;写侧持锁时**先递增 session/analysis generation 再替换 session**;普通后台任务经 `lock_session_if_current`、Problems 经 `lock_analysis_if_current` 持锁校验;filter / search / export 各有任务代号(`next_*_generation`)实现取消。Problems 每个 1MiB 索引片后最多以 32 个独立短锁追赶,每步最多 4096 物理行/128 条详细行;`index:progress` 仍按累计 8MiB 或终态节流。
 
 ## 性能基线(10GiB / 7115 万行实测)
 
@@ -98,6 +98,11 @@ LogFilter/          原 Java 工程(只读参考,已忽略,将删除)
 - 窗口读 `get_rows` p99 1.6ms
 - 导出:All 576 MB/s,Filtered 36 MB/s;私有内存峰值 ≈1.4GiB
 - 完整数据与方法见 [`docs/superpowers/2026-07-06-benchmark-10gb.md`](docs/superpowers/2026-07-06-benchmark-10gb.md);性能改动以此为回归基线。
+- Problems production 中位数:index + 分析 32.78s、索引最大锁段 25.66ms、Problems
+  最大锁段 2.82ms、受控事件风暴 retained heap 42.47MiB;但扫描期窗口 p99 28.399ms
+  与 standalone 重扫 2.62M 行/s 尚未达标。完整口径与未完成项见
+  [`docs/superpowers/2026-07-26-benchmark-problems-10gb.md`](docs/superpowers/2026-07-26-benchmark-problems-10gb.md),
+  **不得宣称 Problems 性能已全部验收**。
 
 ## 关键约定
 

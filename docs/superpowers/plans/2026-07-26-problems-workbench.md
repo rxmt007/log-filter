@@ -6,6 +6,10 @@
 
 **设计依据:** `docs/superpowers/specs/2026-07-26-logfilter-problems-workbench-design.md`
 
+**状态说明（2026-07-26）:** 本轮只对能由现有源码和定向测试直接证明的细项标记 `[x]`；
+复合条目任一条件缺证据就保持未完成。验证全集、10GiB 性能闸门、视觉/可访问性验收、
+独立评审与提交项均未据此宣称完成。
+
 **总体架构:** `crates/logcore/src/problems/` 是深模块,隐藏候选分类、多行状态机、证据关联、fingerprint、group 更新和内存上限。`Session` 只负责按稳定完整行顺序推进和提供有界查询。Tauri 只负责 generation 校验、调度、DTO 和事件。前端以唯一 `TableScope` 驱动主表,Problems 只保存分页元数据,原始日志继续通过 `get_rows(..., count≤512)` 窗口读取。
 
 ## Global Constraints
@@ -27,7 +31,7 @@
   ```sh
   cargo test -p logcore
   cargo test -p log-filter
-  cargo clippy --workspace --all-targets
+  cargo clippy --workspace --all-targets -- -D warnings
   cargo fmt --all -- --check
   pnpm typecheck
   pnpm lint
@@ -102,19 +106,19 @@ Session 创建时区分 static/growing 输入:
 
 **TDD steps:**
 
-- [ ] 在 `indexer.rs` 增加失败测试:
+- [x] 在 `indexer.rs` 增加失败测试:
   - 预算停在第一行中间时 `total_lines=1`、`completed_lines=0`。
   - 预算正好停在换行后,只增加已闭合行数,不把新行首算完整。
   - 同一行后续补齐换行后 `completed_lines` 恰好增加一次。
   - CRLF 被字节预算拆开时不漏不重。
-- [ ] 实现 Indexer 的 `completed_lines` 跟踪,保持既有 checkpoint/line span 语义。
-- [ ] 在 `session.rs` 增加 static/growing、stable frontier 与 pause/resume/seal 状态机测试。
-- [ ] 修改 `refresh_error_lines` 只推进到 stable frontier。
-- [ ] 修改实时 append 的 filter/search 增量范围,从 previous stable 到 current stable。
-- [ ] Session/status DTO 暴露 `stableLines`;Problems context 的 All rowCount 只能使用该字段。
+- [x] 实现 Indexer 的 `completed_lines` 跟踪,保持既有 checkpoint/line span 语义。
+- [x] 在 `session.rs` 增加 static/growing、stable frontier 与 pause/resume/seal 状态机测试。
+- [x] 修改 `refresh_error_lines` 只推进到 stable frontier。
+- [x] 修改实时 append 的 filter/search 增量范围,从 previous stable 到 current stable。
+- [x] Session/status DTO 暴露 `stableLines`;Problems context 的 All rowCount 只能使用该字段。
 - [ ] 增加 filter/search/errors 对“同一尾行跨两个 stdout 块补齐”的回归测试。
 - [ ] 增加 truncate/rotate 后所有 stable/派生游标归零测试。
-- [ ] 修改 `resume_logcat_blocking` 只接受 `runtime.paused == true`;Stop 后 resume 返回确定错误,Start 创建新 session。
+- [x] 修改 `resume_logcat_blocking` 只接受 `runtime.paused == true`;Stop 后 resume 返回确定错误,Start 创建新 session。
 - [ ] 增加“半行 → Stop/seal → Resume 被拒绝”和“半行 → Pause → Resume → 补齐”回归测试。
 - [ ] 运行验证全集。
 - [ ] 独立评审:重点检查 trailing newline、最后无换行行、Pause/Stop/Resume 和 Windows remap。
@@ -238,19 +242,19 @@ pub struct ObservationRef {
 
 - [ ] 写 model/ObservationRef size、无原文字段、8 refs 截断优先级、
   `observation_total: u16`/4,096 上限和 line overflow 测试。
-- [ ] 冻结 `(RuleId,ObservationRole) → FactCode` total mapping;写穷尽测试,不存在的组合必须报 detector bug。
+- [x] 冻结 `(RuleId,ObservationRole) → FactCode` total mapping;写穷尽测试,不存在的组合必须报 detector bug。
 - [ ] 写 SourceCoverage/SourceSpanIndex 测试:live requested buffers、static unknown、可靠 span、main-only 伪造 tag、unknown kernel text、Inferred EventLog standalone 不提交/与独立 text grammar 配对后只作佐证。
-- [ ] 写 ProcessInstanceTracker 测试:日志中段 provisional epoch、PID reuse、UID/user 缺失、name-only 禁止关联、active/recent 表确定性淘汰。
-- [ ] 写通用 fingerprint builder golden 测试:domain/version/两种 quality/`ProcessFingerprintKey`;类别 exception/frame/signal 归一化随 Tasks 4–8 测。
-- [ ] 写 ProblemIndex append/group/count/first/last/representative 测试;observed line/time 与 stored event id 分开,first/last/最近排序按 source line order,墙钟回拨不重排。
-- [ ] 写 query snapshot 分页测试:第一页后 revision 增长,第二页无重复/遗漏/重排;TTL、8 个/16MiB 淘汰与 session reset。
+- [x] 写 ProcessInstanceTracker 测试:日志中段 provisional epoch、PID reuse、UID/user 缺失、name-only 禁止关联、active/recent 表确定性淘汰。
+- [x] 写通用 fingerprint builder golden 测试:domain/version/两种 quality/`ProcessFingerprintKey`;类别 exception/frame/signal 归一化随 Tasks 4–8 测。
+- [x] 写 ProblemIndex append/group/count/first/last/representative 测试;observed line/time 与 stored event id 分开,first/last/最近排序按 source line order,墙钟回拨不重排。
+- [x] 写 query snapshot 分页测试:第一页后 revision 增长,第二页无重复/遗漏/重排;TTL、8 个/16MiB 淘汰与 session reset。
 - [ ] 在 100k groups/1M occurrences 下测 snapshot 首建/分页/release;任何 Session 锁段 ≤20ms,并发 `get_rows` p99 仍达标。
 - [ ] 写 full-stack/type-only、known/unknown-process 不跨质量合并测试。
 - [ ] 写 100 万 occurrence 元数据预算测试。
-- [ ] 写高 distinct fingerprint 事件风暴触发 `limited=true` 的测试。
-- [ ] 写 observed/stored/dropped 与 representative 语义测试。
+- [x] 写高 distinct fingerprint 事件风暴触发 `limited=true` 的测试。
+- [x] 写 observed/stored/dropped 与 representative 语义测试。
 - [ ] 写 event 容量足够但 refs/group/intern 容量不足的原子 drop 测试;不得半提交。
-- [ ] 实现模型、fingerprint 和索引。
+- [x] 实现模型、fingerprint 和索引。
 - [ ] 运行验证全集。
 - [ ] 独立评审:重点检查隐式分配、每次 append 的复杂度和 overflow。
 - [ ] Commit: `feat: add compact problem facts and fingerprint index`
@@ -314,7 +318,7 @@ priority/outcomeContribution/coverageRequirement
 - [ ] 写 growing 暂时 EOF 不 finish、static finish、reset、maxLines/maxBytes/unmatchedBudget 测试。
 - [ ] 对每个 RuleContract 验证 candidateStart 只开候选,未满足 minimumCommitGrammar 时不得因 EOF/limit 升级;optional evidence 缺失仍可按契约提交。
 - [ ] 写两个 PID/tag 交错但状态不串线测试。
-- [ ] 写 EventLog E01–E05 schema/golden 测试。
+- [x] 写 EventLog E01–E05 schema/golden 测试。
 - [ ] 写 raw continuation 与每行带 logcat prefix 的统一输入测试;raw 行恰好匹配一个 pending 才附着,两个兼容候选时忽略并计 ambiguity。
 - [ ] 写单行 1MiB、active pending 64、pending state 8MiB 和 deterministic eviction 事件风暴测试。
 - [ ] 验证超限时只有已满足 `minimumCommitGrammar` 的 candidate 才 truncated
@@ -359,7 +363,7 @@ priority/outcomeContribution/coverageRequirement
 - [ ] message/PID/源码行变化不改变预期 fingerprint。
 - [ ] 完整 custom-handler FATAL 仍产生 occurrence,但 outcome 为 unknown;“仅 FATAL 文本”才是负例。
 - [ ] Java FATAL↔am_crash 只在同 instance、±512 行、同 timestamp segment 可比较时 ≤60s 且最近唯一时合并。
-- [ ] 实现并运行定向测试。
+- [x] 实现并运行定向测试。
 - [ ] 运行验证全集。
 - [ ] 独立评审:检查 `FATAL EXCEPTION != 已死亡`、OOME 不等于泄漏。
 - [ ] Commit: `feat: detect aosp managed crashes and fatal java oom`
@@ -386,7 +390,7 @@ priority/outcomeContribution/coverageRequirement
 - [ ] 验证 `Reason` 只作为 recorded trigger,不进入原因字段。
 - [ ] 验证 block endLine 只到最后匹配 evidence。
 - [ ] ANR block↔am_anr 只在同 victim instance、±512 行、同 timestamp segment 可比较时 ≤60s 且最近唯一时合并。
-- [ ] 实现并运行定向测试。
+- [x] 实现并运行定向测试。
 - [ ] 运行验证全集。
 - [ ] 独立评审。
 - [ ] Commit: `feat: detect aosp anr events`
@@ -418,7 +422,7 @@ priority/outcomeContribution/coverageRequirement
 - [ ] tombstone 缺 process name 不提交;libc signal-only 无 process mapping 时只形成 UnknownProcess/SignalOnly 且不跨 Observation 合并。
 - [ ] recoverable native 是正 occurrence 且 death assertion 为负,不是整体检测负例。
 - [ ] libc/tombstone/native am_crash 只在同 instance、±4096 行、同 timestamp segment 可比较时 ≤60s 且最近唯一时合并。
-- [ ] 实现并运行定向测试。
+- [x] 实现并运行定向测试。
 - [ ] 运行验证全集。
 - [ ] 独立评审。
 - [ ] Commit: `feat: detect aosp native crash evidence`
@@ -449,7 +453,7 @@ priority/outcomeContribution/coverageRequirement
 - [ ] death→start 要求 UID+process 匹配,双方都有 user 时 user 也匹配;无 user schema 只能借 active/historical mapping,永不 name-only。
 - [ ] death→start 只关联下一个未冲突 matching start,不设成立时间阈值;≤30s 只影响 UI badge,recent identity 被容量淘汰时暴露 coverage limited。
 - [ ] lifecycle fingerprint 使用 ProcessFingerprintKey + relation/signal class,pid/epoch/elapsed time 变化不拆组。
-- [ ] 实现并运行定向测试。
+- [x] 实现并运行定向测试。
 - [ ] 运行验证全集。
 - [ ] 独立评审。
 - [ ] Commit: `feat: correlate android process lifecycle facts`
@@ -483,7 +487,7 @@ priority/outcomeContribution/coverageRequirement
 - [ ] tag 必须精确为 `lowmemorykiller`;unknown/inferred kernel-shaped text 不能升级。
 - [ ] kill↔death 只在同 instance、death 在后、4096 行内、同 timestamp segment 可比较时 0–60s 且最近唯一时合并。
 - [ ] kernel OOM fingerprint 只含 ProcessFingerprintKey + global/memcg mechanism,动态 counters/constraint 数值不拆组。
-- [ ] 实现并运行定向测试。
+- [x] 实现并运行定向测试。
 - [ ] 运行验证全集。
 - [ ] 独立评审:检查 `KILL_ISSUED != DEATH_OBSERVED`,victim 不等于内存原因。
 - [ ] Commit: `feat: detect aosp lmk and kernel oom facts`
@@ -546,7 +550,7 @@ impl Session {
 
 **TDD steps:**
 
-- [ ] 建立 mixed golden corpus,固定所有 event tuple、每项 ObservationRef、source provenance 和 group counts。
+- [x] 建立 mixed golden corpus,固定所有 event tuple、每项 ObservationRef、source provenance 和 group counts。
 - [ ] X01 chunk partition invariance:至少逐行边界和随机字节边界。
 - [ ] X02 append invariance:任意 prefix + append remainder。
 - [ ] X03–X10:逐行截断、interleave budget、同毫秒/PID、fuzz、10GB noise、分组、歧义、stable hash。
@@ -559,13 +563,13 @@ impl Session {
   `correlationLimited` oracle。
 - [ ] 单 event 构造 8/9/255/256/4096/4097 项去重后 evidence,证明
   `observationTotal` 不回绕且超限可见。
-- [ ] Session 使用 `Indexer::for_each_line_span`,不物化 spans。
-- [ ] Session 为 static import 建立 Unknown/可靠 divider span coverage,为 adb live 接收 requested buffer 位集;逐行无法证明时保持 Unknown/Inferred。
-- [ ] `scan_problems_step` 每次最多 4096 行并只读 stable frontier。
-- [ ] reset/truncation 同时清 index、pending 和 scan cursor。
-- [ ] static worker 实现 `Indexing → SealStaticSource → CatchingUpProblems(循环至 scanned==stable) → FinishPending → Finished`;每批 generation 检查/yield,done 只发送一次。
+- [x] Session 使用 `Indexer::for_each_line_span`,不物化 spans。
+- [x] Session 为 static import 建立 Unknown/可靠 divider span coverage,为 adb live 接收 requested buffer 位集;逐行无法证明时保持 Unknown/Inferred。
+- [x] `scan_problems_step` 每次最多 4096 行并只读 stable frontier。
+- [x] reset/truncation 同时清 index、pending 和 scan cursor。
+- [x] static worker 实现 `Indexing → SealStaticSource → CatchingUpProblems(循环至 scanned==stable) → FinishPending → Finished`;每批 generation 检查/yield,done 只发送一次。
 - [ ] 编码/profile 变化只递增 `analysisGeneration`、清 Problems/query snapshots 并从稳定行 0 重扫;`sessionGeneration` 只在替换输入时变化。
-- [ ] 新增 `lock_analysis_if_current(sessionGeneration,analysisGeneration)`;扫描中的旧 analysis task 不得继续更新。`streamGeneration` 仅取消 reader,Pause/Resume 不改变 analysis token。
+- [x] 新增 `lock_analysis_if_current(sessionGeneration,analysisGeneration)`;扫描中的旧 analysis task 不得继续更新。`streamGeneration` 仅取消 reader,Pause/Resume 不改变 analysis token。
 - [ ] 在 UI 前先运行 release 后端性能闸门:Problems ≥5.0M 行/s,记录正常/事件风暴 corpus;不达标先优化后续 IPC。
 - [ ] 运行验证全集。
 - [ ] 独立交叉评审:规则实现者不得独自批准混合仲裁。
@@ -585,15 +589,20 @@ impl Session {
 
 **Scheduling:**
 
-现有 index worker/stream reader 交替运行两个独立锁临界区:
+现有 static index worker 在每个索引片后，用短临界区追赶仍在页缓存中的 Problems 数据:
 
 ```text
-index_step(8MiB) → unlock
-scan_problems_step(4096 lines) → unlock
-emit/yield
+index_step(1MiB) → unlock
+repeat at most 32 times:
+  scan_problems_step(max 4096 physical lines / 128 detail lines) → unlock → yield
+emit index progress after 8MiB cumulative advance or terminal state
+emit throttled Problems progress
 ```
 
-静态文件到 EOF 后必须进入 catch-up 循环,不能只按每个 8MiB index step 附带一次 Problems step。analysis token 只含 session/analysis generation;`streamGeneration` 仅为 transport cancellation token。
+事件风暴会在达到 128 条实际 candidate/pending-detail 行时提前结束当前 step；普通稀疏
+语料仍受 4096 物理行上限约束。静态文件到 EOF 后必须进入 catch-up 循环，不能假设 32
+步一定追平。analysis token 只含 session/analysis generation；`streamGeneration` 仅为
+transport cancellation token。
 
 Pause/Resume/Stop/Start 通过专用 `stream_control` mutex 串行化。转换顺序为:使 reader generation 失效 → 不持 Session lock 时 kill/join 并确认 EOF → 用匹配 session generation 更新 Session lifecycle → 发布 runtime 状态。失败进入 `ControlError`,未确认 EOF 时不得标 Sealed。
 
@@ -607,18 +616,23 @@ Pause/Resume/Stop/Start 通过专用 `stream_control` mutex 串行化。转换�
 - `release_problem_snapshot`
 - `problems:progress`
 
-不新增 Problems 原文读取命令。上下文复用 `get_rows("all")`;`export_problem_logs` 只在同一 Session 锁内把 opaque event id 解析成范围,随后复用现有 range export worker。
+不新增 Problems 原文读取命令。上下文复用
+`get_rows_checked(view="all", count≤512)`；`export_problem_logs` 只在同一 Session 锁内
+把 opaque event id 解析成范围，随后复用现有 range export worker。
 
 **Limits:**
 
 - group page default 100,max 200。
 - occurrence page default 100,max 200。
-- 第一次查询返回 `querySnapshotId`;cursor 绑定 snapshot + position,不绑定不断变化的当前 revision。
+- 第一次查询在服务端冻结 core snapshot，客户端只收到 `snapshotHandle`；后续 cursor
+  绑定 snapshot + position + query signature 且单次消费，不暴露 core `querySnapshotId`。
 - snapshot 同时 ≤8、TTL 5 分钟、ID vectors 合计 ≤16MiB;过期返回 `snapshot-expired`。
 - 分类/排序/group 切换和刷新显式调用 generation-safe `release_problem_snapshot`;异常客户端遗留项由 TTL/LRU 回收。
 - 所有 Problems 请求携带
   `expectedAnalysisToken { sessionGeneration, analysisGeneration }`;response 回显 token/revision/snapshot。
-- Session 保存 applied `filterResultRevision/requestId`;`get_rows(filtered)`、`line_to_result_index` 接收 expected analysis token + expectedFilterResultRevision,不匹配返回 `stale-filter-result` 并回显实际 revision。All rows 回显 decodeRevision。
+- Session 保存 applied `filterResultRevision/requestId`；`get_rows_checked` 与
+  `map_source_line` 接收 expected analysis token + decode revision；filtered scope 另校验
+  expectedFilterResultRevision，不匹配返回 `stale-filter-result` 并回显实际 revision。
 - `export_problem_logs(eventId,expectedAnalysisToken,mode,radius)` 原子解析 range,消除跨 Session TOCTOU。
 - stale session、unknown id、expired snapshot 返回明确错误。
 - progress 只有 counters/revision,无数组;包含
@@ -628,7 +642,7 @@ Pause/Resume/Stop/Start 通过专用 `stream_control` mutex 串行化。转换�
 
 **TDD steps:**
 
-- [ ] DTO serde/camelCase 测试。
+- [x] DTO serde/camelCase 测试。
 - [ ] 分页 clamp、未知 id、stale generation、snapshot expiry/capacity 测试。
 - [ ] 第一页后扫描 revision 增长,用同 snapshot 取第二页无重复/遗漏/重排。
 - [ ] recent ring 强制淘汰后 status/progress 精确回显
@@ -638,7 +652,7 @@ Pause/Resume/Stop/Start 通过专用 `stream_control` mutex 串行化。转换�
 - [ ] index worker 交替推进、EOF catch-up 到最终 stable line 后才 done 测试。
 - [ ] stream append/Pause/Resume/Stop→Sealed/Stop 后 Resume 被拒绝/Clear 测试。
 - [ ] 重叠 Pause+Resume、Pause+Stop、Stop+Start 竞态测试;断言单一转换顺序、无 join-under-Session-lock、runtime/Session 不分叉。
-- [ ] live start 把 requested buffers 送入 Session,但混合 stdout 行不被误标 Known。
+- [x] live start 把 requested buffers 送入 Session,但混合 stdout 行不被误标 Known。
 - [ ] 选择 event 后切换 Session,detail/locate/export 全部拒绝旧 generation 的竞态测试。
 - [ ] `set_config` 改 encoding 时只递增 analysis generation + decodeRevision 并重扫;旧 progress/query 失效,Session/input 不替换。
 - [ ] Pause/Resume analysis token 不变;Stop 后 Start session/analysis token 都变化。
@@ -719,21 +733,21 @@ revision 语义:
 
 **TDD steps:**
 
-- [ ] 先写 ResultsScope 与现有 filtered 行为逐字段等价测试。
-- [ ] 写 ProblemContextScope → rowsView all、rowCount stableLines、minimap hidden;live 尾部未闭合行不可见。
-- [ ] 写 Results cache key 包含 decodeRevision + filterResultRevision;All cache identity 包含 decodeRevision 并排除 filterInput/filterResult/source revision。
+- [x] 先写 ResultsScope 与现有 filtered 行为逐字段等价测试。
+- [x] 写 ProblemContextScope → rowsView all、rowCount stableLines、minimap hidden;live 尾部未闭合行不可见。
+- [x] 写 Results cache key 包含 decodeRevision + filterResultRevision;All cache identity 包含 decodeRevision 并排除 filterInput/filterResult/source revision。
 - [ ] 历史 context 连续 append 时不重拉完整可见历史 blocks;不足额尾块才按需刷新。
-- [ ] encoding 改变只通过 decodeRevision 失效已解码 All/Results blocks,Pause/Resume 不失效。
+- [x] encoding 改变只通过 decodeRevision 失效已解码 All/Results blocks,Pause/Resume 不失效。
 - [ ] 写 context 中 `filter:done` 不钳位 selection/viewport/rowCount。
 - [ ] 写 search/行号/bookmark/follow-latest 全部经过 `navigateToSourceLine` 的 reducer/controller 测试。
 - [ ] 在 `src/App.tableScope.test.tsx` 用 mocked IPC 做 Toolbar/App/LogTable
   集成测试,确保没有绕过 controller 的直接 filtered mapping 调用。
 - [ ] 把 `WINDOW=200` 提升为共享常量,IPC adapter 对 `count<=0` 或 `count>512` 拒绝。
-- [ ] LogTable 总数、view、cache、scroll clamp 全部改读 TableDataset。
+- [x] LogTable 总数、view、cache、scroll clamp 全部改读 TableDataset。
 - [ ] LogTable 从首个可见且已加载 row 记录 viewport source line,迟到 rows/mapping 用 generation + request nonce 丢弃。
 - [ ] Minimap context 时零请求且渲染不可聚焦 presentation rail,返回 results 后重新请求。
-- [ ] StatusBar 在 context 显示“临时未过滤上下文”,Toolbar/App 导航遵守 scope。
-- [ ] follow-latest 在 context 中先退出 context,再恢复 tail-follow。
+- [x] StatusBar 在 context 显示“临时未过滤上下文”,Toolbar/App 导航遵守 scope。
+- [x] follow-latest 在 context 中先退出 context,再恢复 tail-follow。
 - [ ] 退役当前未生效/产生双重语义的 store `view`。
 - [ ] 运行验证全集。
 - [ ] 独立评审:确认主表没有残留硬编码 `filteredLines/getRows("filtered")`。
@@ -792,18 +806,18 @@ interface ProblemsUiState {
 
 **TDD steps:**
 
-- [ ] Problems snapshot pagination、去重、旧 generation 丢弃和 snapshot-expired 状态测试。
-- [ ] 第一页后 revision 增长,第二页仍来自同 snapshot 且无重复/遗漏/重排。
-- [ ] 面板折叠时 group/occurrence 请求为 0。
-- [ ] 展开只取第一页,靠近尾端才取下一页。
-- [ ] 分类/排序/group 切换通过 IPC 释放对应 snapshot 并重置 cursor。
-- [ ] 10,000+ synthetic groups 的虚拟列表验证。
+- [x] Problems snapshot pagination、去重、旧 generation 丢弃和 snapshot-expired 状态测试。
+- [x] 第一页后 revision 增长,第二页仍来自同 snapshot 且无重复/遗漏/重排。
+- [x] 面板折叠时 group/occurrence 请求为 0。
+- [x] 展开只取第一页,靠近尾端才取下一页。
+- [x] 分类/排序/group 切换通过 IPC 释放对应 snapshot 并重置 cursor。
+- [x] 10,000+ synthetic groups 的虚拟列表验证。
 - [ ] 空态固定为“在已捕获范围内未检测到”;覆盖扫描中、完成、limited、coverage/provenance 不足和错误态。
 - [ ] `correlationLimited` 单独文案与 dropped recent count 测试;不得显示成“未死亡”或
   根因结论。
-- [ ] `FactCode → 文案` 与 `ProblemKind → 排查提示` 都做 TypeScript 穷尽映射测试;提示不得出现后端事实字段。
-- [ ] 每项 fact 的定位按钮使用自己的 sourceLine,不是统一 anchor。
-- [ ] `observationRefsTruncated` 时显示“仅展示 8/M 条关键证据,可查看事件范围”,不得静默少事实。
+- [x] `FactCode → 文案` 与 `ProblemKind → 排查提示` 都做 TypeScript 穷尽映射测试;提示不得出现后端事实字段。
+- [x] 每项 fact 的定位按钮使用自己的 sourceLine,不是统一 anchor。
+- [x] `observationRefsTruncated` 时显示“仅展示 8/M 条关键证据,可查看事件范围”,不得静默少事实。
 - [ ] `ProblemsDock.test.tsx` 固定断言 badge 的 N 来自
   `observedOccurrenceCount`、M 来自 `storedOccurrenceCount`;limited 时不得把 dropped
   occurrence 算作可展开项。
@@ -814,7 +828,7 @@ interface ProblemsUiState {
   count。
 - [ ] separator 的 aria min/max/now、方向键 16px、Page 64px、Home/End 和 ResizeObserver clamp 测试。
 - [ ] 覆盖 960×720、1180×720、极矮窗口和工具栏换行后的 dock clamp,断言无 ResizeObserver 振荡。
-- [ ] 插入位置固定为 Main 与 StatusBar 之间。
+- [x] 插入位置固定为 Main 与 StatusBar 之间。
 - [ ] 运行验证全集。
 - [ ] 独立视觉/交互评审,对照已确认底部工作台设计。
 - [ ] Commit: `feat: add the bottom problems workbench`
@@ -863,31 +877,31 @@ interface TableScopeController {
 
 **TDD/acceptance:**
 
-- [ ] anchor 在 filtered 中:不切 scope,居中定位。
-- [ ] anchor 被过滤:自动打开 all-backed context。
-- [ ] 显式查看上下文始终进入 context。
+- [x] anchor 在 filtered 中:不切 scope,居中定位。
+- [x] anchor 被过滤:自动打开 all-backed context。
+- [x] 显式查看上下文始终进入 context。
 - [ ] 进入/切换/返回期间 `setFilter` 调用次数为 0,FilterSpec 深比较不变。
-- [ ] context 中切换 occurrence 不覆盖原 returnPoint。
-- [ ] 返回恢复原 viewport/selection;过滤变化时按 source line 重映射。
+- [x] context 中切换 occurrence 不覆盖原 returnPoint。
+- [x] 返回恢复原 viewport/selection;过滤变化时按 source line 重映射。
 - [ ] context 中修改过滤并立即返回时保存完整 PendingRestore;只有匹配当前 input revision 的 `filter:done` 到达后才最终定位。
 - [ ] pending 等待 R1 时再次编辑为 R2:保留 source-line 目标,把 pending revision 替换为
   R2 并递增 nonce;R1 done/映射迟到均忽略,只有 R2 applied 后恢复。继续编辑 R3
   同理,不能积累多个 pending。
-- [ ] viewport line 不可见时用 Nearest 映射,selected line 不可见时清 selection;不得沿用旧 result index。
+- [x] viewport line 不可见时用 Nearest 映射,selected line 不可见时清 selection;不得沿用旧 result index。
 - [ ] filter 失败/取消时清 pending、显示错误并按最后一次已应用结果安全恢复。
 - [ ] input revision 尚未应用时的普通 source-line 导航排队等待,显示“正在应用最新过滤…”,不使用旧结果。
 - [ ] context 中任何 `filter:done` 不改变 context viewport/selection/rowCount。
 - [ ] session 变化时安全退出且旧返回点不可用。
-- [ ] session/analysis generation 或 request nonce 变化后,迟到的 rows/line mapping/detail 响应全部丢弃。
+- [x] session/analysis generation 或 request nonce 变化后,迟到的 rows/line mapping/detail 响应全部丢弃。
 - [ ] filtered rows/mapping 携带 expectedFilterResultRevision;`stale-filter-result` 触发按当前 applied revision 重试/等待,不接受跨 dataset 响应。
-- [ ] context 行请求始终为 all 且 count≤512。
-- [ ] event range 淡色、anchor 强高亮。
+- [x] context 行请求始终为 all 且 count≤512。
+- [x] event range 淡色、anchor 强高亮。
 - [ ] context banner 即使 Problems 折叠仍可见,固定文案“当前过滤保持,但暂不应用于此上下文”;StatusBar 显示临时未过滤语义。
 - [ ] tail-follow 进入和返回后均保持暂停。
-- [ ] 用户主动“追最新”在 context 中先退出 context,再恢复尾随。
-- [ ] ExportDialog 支持“事件范围(含区间内原始日志)”和 ±50 行上下文。
-- [ ] 前端导出只传 eventId/expectedAnalysisToken/mode/radius;切换 Session 或 encoding 后旧 event 导出被后端拒绝。
-- [ ] 导出原始字节,不插 facts/hints。
+- [x] 用户主动“追最新”在 context 中先退出 context,再恢复尾随。
+- [x] ExportDialog 支持“事件范围(含区间内原始日志)”和 ±50 行上下文。
+- [x] 前端导出只传 eventId/expectedAnalysisToken/mode/radius;切换 Session 或 encoding 后旧 event 导出被后端拒绝。
+- [x] 导出原始字节,不插 facts/hints。
 - [ ] ExportDialog 单一 owner、initial focus、focus trap、Escape、关闭后恢复 occurrence;虚拟项卸载时 fallback 到 panel heading/toggle。
 - [ ] 折叠按钮、region、chips、separator、列表、live region 和 focus return 可仅键盘操作,由 Task 11 的 jsdom/Testing Library 基建自动验证。
 - [ ] 运行验证全集。
