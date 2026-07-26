@@ -29,6 +29,7 @@ use tauri::{AppHandle, Emitter, State};
 
 const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
 const SCAN_CHUNK_LINES: usize = 4096;
+const PROBLEM_CATCH_UP_STEPS_PER_INDEX: usize = 32;
 const PROBLEM_PROGRESS_STRIDE: u64 = 65_536;
 const PROBLEM_SNAPSHOT_RECORDS_PER_LOCK: usize = 4096;
 const SEARCH_PROGRESS_STRIDE: usize = 65_536; // 搜索进度事件节流阈值(约 16 个扫描块)
@@ -1528,12 +1529,23 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
                 last_analysis_generation = analysis_generation;
                 problem_progress_gate = ProblemProgressGate::default();
             }
-            if let Some(progress) =
-                step_problem_analysis(&app_state, my_gen, analysis_generation, false)
-            {
+            // Catch up the stable lines exposed by this index slice while their mmap
+            // pages are still hot. Every Problems step still owns its own bounded
+            // critical section and yields between steps.
+            for _ in 0..PROBLEM_CATCH_UP_STEPS_PER_INDEX {
+                let Some(progress) =
+                    step_problem_analysis(&app_state, my_gen, analysis_generation, false)
+                else {
+                    break;
+                };
+                let caught_up = progress.scanned_lines >= progress.stable_lines;
                 if problem_progress_gate.should_emit(&progress) {
                     let _ = app.emit("problems:progress", progress);
                 }
+                if caught_up {
+                    break;
+                }
+                std::thread::yield_now();
             }
 
             if index_done {

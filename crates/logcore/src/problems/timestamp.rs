@@ -6,25 +6,11 @@ pub fn parse_log_timestamp(date: &str, time: &str) -> Option<PackedLogTimestamp>
     parse_log_timestamp_bytes(date.as_bytes(), time.as_bytes())
 }
 
-/// 从完整原始行前两个 ASCII token 解析 Android 时间戳,无需先解码正文。
-pub fn parse_log_timestamp_prefix(raw: &[u8]) -> Option<PackedLogTimestamp> {
-    let raw = trim_ascii_start(raw);
-    let date = raw.get(..5)?;
-    if !raw.get(5)?.is_ascii_whitespace() {
-        return None;
-    }
-    let remainder = trim_ascii_start(&raw[5..]);
-    let time = remainder.get(..12)?;
-    if remainder
-        .get(12)
-        .is_some_and(|byte| !byte.is_ascii_whitespace())
-    {
-        return None;
-    }
-    parse_log_timestamp_bytes(date, time)
+pub(crate) fn parse_log_timestamp_bytes(date: &[u8], time: &[u8]) -> Option<PackedLogTimestamp> {
+    parse_log_timestamp_probe(date, time).map(|parsed| parsed.timestamp)
 }
 
-fn parse_log_timestamp_bytes(date: &[u8], time: &[u8]) -> Option<PackedLogTimestamp> {
+pub(crate) fn parse_log_timestamp_probe(date: &[u8], time: &[u8]) -> Option<ParsedLogTimestamp> {
     if date.len() != 5
         || time.len() != 12
         || date[2] != b'-'
@@ -45,7 +31,9 @@ fn parse_log_timestamp_bytes(date: &[u8], time: &[u8]) -> Option<PackedLogTimest
         return None;
     }
 
-    PackedLogTimestamp::new(month, day, hour, minute, second, millis)
+    let timestamp = PackedLogTimestamp::new(month, day, hour, minute, second, millis)?;
+    let decoded = decoded_timestamp(month, day, hour, minute, second, millis)?;
+    Some(ParsedLogTimestamp { timestamp, decoded })
 }
 
 fn parse_two_digits(bytes: &[u8], start: usize) -> Option<u8> {
@@ -65,17 +53,6 @@ fn parse_three_digits(bytes: &[u8], start: usize) -> Option<u16> {
         return None;
     }
     Some(u16::from(hundreds - b'0') * 100 + u16::from(tens - b'0') * 10 + u16::from(ones - b'0'))
-}
-
-fn trim_ascii_start(mut bytes: &[u8]) -> &[u8] {
-    while let [first, rest @ ..] = bytes {
-        if first.is_ascii_whitespace() {
-            bytes = rest;
-        } else {
-            break;
-        }
-    }
-    bytes
 }
 
 fn days_in_month(month: u8) -> Option<u8> {
@@ -116,11 +93,17 @@ impl SegmentedTimestamp {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DecodedTimestamp {
     month: u8,
     day: u8,
     timeline_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ParsedLogTimestamp {
+    timestamp: PackedLogTimestamp,
+    decoded: DecodedTimestamp,
 }
 
 #[derive(Debug, Default)]
@@ -144,19 +127,25 @@ impl TimestampSegmentTracker {
     }
 
     pub fn observe(&mut self, timestamp: Option<PackedLogTimestamp>) -> Option<SegmentedTimestamp> {
+        self.observe_probe(timestamp.and_then(|timestamp| {
+            decode_timestamp(timestamp).map(|decoded| ParsedLogTimestamp { timestamp, decoded })
+        }))
+    }
+
+    pub(crate) fn observe_probe(
+        &mut self,
+        parsed: Option<ParsedLogTimestamp>,
+    ) -> Option<SegmentedTimestamp> {
         if self.exhausted {
             return None;
         }
-        let Some(timestamp) = timestamp.filter(|value| value.is_known()) else {
+        let Some(parsed) = parsed.filter(|value| value.timestamp.is_known()) else {
             self.last = None;
             self.boundary_pending |= self.has_segment;
             return None;
         };
-        let Some(decoded) = decode_timestamp(timestamp) else {
-            self.last = None;
-            self.boundary_pending |= self.has_segment;
-            return None;
-        };
+        let timestamp = parsed.timestamp;
+        let decoded = parsed.decoded;
 
         let starts_new_segment = self.boundary_pending
             || self.last.is_some_and(|last| {
@@ -203,9 +192,31 @@ fn decode_timestamp(timestamp: PackedLogTimestamp) -> Option<DecodedTimestamp> {
         return None;
     }
 
+    decoded_timestamp(
+        month,
+        day,
+        u8::try_from(hour).ok()?,
+        u8::try_from(minute).ok()?,
+        u8::try_from(second).ok()?,
+        u16::try_from(millis).ok()?,
+    )
+}
+
+fn decoded_timestamp(
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    millis: u16,
+) -> Option<DecodedTimestamp> {
     const DAYS_BEFORE_MONTH: [u16; 12] = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335];
-    let day_of_year = u64::from(DAYS_BEFORE_MONTH[usize::from(month - 1)]) + u64::from(day - 1);
-    let timeline_ms = ((((day_of_year * 24 + hour) * 60 + minute) * 60 + second) * 1_000) + millis;
+    let day_of_year = u64::from(DAYS_BEFORE_MONTH[usize::from(month.checked_sub(1)?)])
+        + u64::from(day.checked_sub(1)?);
+    let timeline_ms = ((((day_of_year * 24 + u64::from(hour)) * 60 + u64::from(minute)) * 60
+        + u64::from(second))
+        * 1_000)
+        + u64::from(millis);
     Some(DecodedTimestamp {
         month,
         day,
@@ -247,24 +258,6 @@ mod tests {
             ("07-26", "09:08:60.006"),
         ] {
             assert_eq!(parse_log_timestamp(date, time), None, "{date} {time}");
-        }
-    }
-
-    #[test]
-    fn byte_prefix_parser_matches_the_string_parser_without_decoding_the_line() {
-        for raw in [
-            b"07-26 09:08:07.006  1  1 I Tag: value".as_slice(),
-            b"07-26 09:08:07.006 D/Tag(  1): value".as_slice(),
-            b"--------- beginning of main".as_slice(),
-            b"07-26 invalid \xff".as_slice(),
-        ] {
-            let decoded = String::from_utf8_lossy(raw);
-            let mut tokens = decoded.split_whitespace();
-            let expected = tokens
-                .next()
-                .zip(tokens.next())
-                .and_then(|(date, time)| parse_log_timestamp(date, time));
-            assert_eq!(parse_log_timestamp_prefix(raw), expected, "raw: {raw:?}");
         }
     }
 

@@ -27,7 +27,9 @@ use super::recognizers::{
     LifecycleOccurrence, LifecycleRecognizer, LifecycleRecognizerError, LifecycleRelation,
     LifecycleTime, LmkMechanism, LmkOccurrence, LmkRecognizer, NativeRecognizer, ProblemRecognizer,
 };
-use super::timestamp::{parse_log_timestamp, SegmentedTimestamp, TimestampSegmentTracker};
+use super::timestamp::{
+    parse_log_timestamp, ParsedLogTimestamp, SegmentedTimestamp, TimestampSegmentTracker,
+};
 use super::{classify_candidate, CandidateKinds};
 use crate::parser::ParsedLine;
 use std::cell::Cell;
@@ -780,9 +782,11 @@ impl ProblemEngine {
     pub(crate) fn observe_non_candidate(
         &mut self,
         line: u32,
-        timestamp: Option<PackedLogTimestamp>,
+        timestamp: Option<ParsedLogTimestamp>,
     ) -> ProblemDelta {
-        self.observe_timestamp_value(timestamp);
+        if self.timestamps.observe_probe(timestamp).is_none() {
+            self.timestamp_origin = None;
+        }
         if self.provisional.next_finalize_after_line().is_none()
             && self.recent.next_expiry_line().is_none()
         {
@@ -2579,9 +2583,9 @@ mod tests {
         let mut engine = ProblemEngine::new();
         assert!(!engine.requires_full_line());
 
-        let first = super::super::timestamp::parse_log_timestamp("07-26", "12:00:01.000");
+        let first = super::super::timestamp::parse_log_timestamp_probe(b"07-26", b"12:00:01.000");
         engine.observe_non_candidate(0, first);
-        assert!(engine.timestamp_origin.is_some());
+        assert!(engine.timestamp_origin.is_none());
         engine.observe_non_candidate(1, None);
         assert!(engine.timestamp_origin.is_none());
 
@@ -2592,6 +2596,7 @@ mod tests {
             LineProvenance::Known(crate::problems::LogBuffer::Main),
         );
         assert!(engine.requires_full_line());
+        assert!(engine.timestamp_origin.is_some());
     }
 
     #[test]

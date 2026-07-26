@@ -7,8 +7,8 @@ use crate::mmap_source::MmapSource;
 use crate::model::LogEntry;
 use crate::parser::parse_line_ref;
 use crate::problems::{
-    might_be_problem_candidate, parse_log_timestamp_prefix, BufferProvenanceTracker, GroupId,
-    GroupPage, GroupQuery, GroupSnapshotCapture, GroupSortRecord, InputCoverage, ObservationRef,
+    classify_candidate, preclassify_problem_line, BufferProvenanceTracker, GroupId, GroupPage,
+    GroupQuery, GroupSnapshotCapture, GroupSortRecord, InputCoverage, ObservationRef,
     OccurrencePage, PageSpec, ProblemEngine, ProblemEvent, ProblemEventId, ProblemGroupSummary,
     ProblemMemoryStats, ProblemStats, QuerySnapshotId, RangeCompleteness, SnapshotError,
     SourceSpan, SourceSpanError, SourceSpanIndex,
@@ -472,17 +472,20 @@ impl Session {
                     let raw = &source_bytes[span_start..span_end];
                     let provenance =
                         buffer_tracker.observe_stable_line(raw, source_spans.provenance_at(line));
-                    let needs_detail =
-                        engine.requires_full_line() || might_be_problem_candidate(raw);
+                    let pending_detail = engine.requires_full_line();
+                    let gate = preclassify_problem_line(raw);
+                    let needs_detail = pending_detail || gate.might_be_candidate;
                     let delta = if needs_detail {
-                        detail_lines = detail_lines.saturating_add(1);
                         let text = encoding.decode(raw);
                         let parsed = parse_line_ref(&text);
+                        if pending_detail || !classify_candidate(&parsed, raw).is_empty() {
+                            detail_lines = detail_lines.saturating_add(1);
+                        }
                         engine.observe(crate::problems::ObservedLine::new(
                             line, raw, parsed, provenance, coverage,
                         ))
                     } else {
-                        engine.observe_non_candidate(line, parse_log_timestamp_prefix(raw))
+                        engine.observe_non_candidate(line, gate.timestamp)
                     };
                     committed_occurrences =
                         committed_occurrences.saturating_add(usize::from(delta.committed()));

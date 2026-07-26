@@ -141,7 +141,18 @@ pub fn level_byte_of_line(line: &[u8]) -> Option<u8> {
 /// 仅返回与 `parse_line_ref` 同样成立的 threadtime/time envelope；非 ASCII tag
 /// 返回 `None`,让调用方回退到完整解析而不是猜测。
 pub fn tag_bytes_of_line(line: &[u8]) -> Option<&[u8]> {
-    threadtime_tag_bytes(line).or_else(|| time_tag_bytes(line))
+    ascii_log_envelope(line).map(|envelope| envelope.tag)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AsciiLogEnvelope<'a> {
+    pub(crate) date: &'a [u8],
+    pub(crate) time: &'a [u8],
+    pub(crate) tag: &'a [u8],
+}
+
+pub(crate) fn ascii_log_envelope(line: &[u8]) -> Option<AsciiLogEnvelope<'_>> {
+    threadtime_ascii_envelope(line).or_else(|| time_ascii_envelope(line))
 }
 
 fn ascii_tokens(line: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -149,10 +160,10 @@ fn ascii_tokens(line: &[u8]) -> impl Iterator<Item = &[u8]> {
         .filter(|token| !token.is_empty())
 }
 
-fn threadtime_tag_bytes(line: &[u8]) -> Option<&[u8]> {
+fn threadtime_ascii_envelope(line: &[u8]) -> Option<AsciiLogEnvelope<'_>> {
     let mut cursor = 0;
-    let _date = next_ascii_token(line, &mut cursor)?;
-    let _time = next_ascii_token(line, &mut cursor)?;
+    let date = next_ascii_token(line, &mut cursor)?;
+    let time = next_ascii_token(line, &mut cursor)?;
     let pid = next_ascii_token(line, &mut cursor)?;
     let tid = next_ascii_token(line, &mut cursor)?;
     let level = next_ascii_token(line, &mut cursor)?;
@@ -174,7 +185,7 @@ fn threadtime_tag_bytes(line: &[u8]) -> Option<&[u8]> {
     } else {
         tail
     };
-    (!tag.is_empty() && tag.is_ascii()).then_some(tag)
+    (!tag.is_empty() && tag.is_ascii()).then_some(AsciiLogEnvelope { date, time, tag })
 }
 
 fn threadtime_level_byte(line: &[u8]) -> Option<u8> {
@@ -194,10 +205,10 @@ fn threadtime_level_byte(line: &[u8]) -> Option<u8> {
     Some(level[0])
 }
 
-fn time_tag_bytes(line: &[u8]) -> Option<&[u8]> {
+fn time_ascii_envelope(line: &[u8]) -> Option<AsciiLogEnvelope<'_>> {
     let mut cursor = 0;
-    let _date = next_ascii_token(line, &mut cursor)?;
-    let _time = next_ascii_token(line, &mut cursor)?;
+    let date = next_ascii_token(line, &mut cursor)?;
+    let time = next_ascii_token(line, &mut cursor)?;
     let rest = trim_ascii_start(&line[cursor..]);
     let level = *rest.first()?;
     if !b"VDIWEF".contains(&level) || rest.get(1) != Some(&b'/') {
@@ -210,7 +221,7 @@ fn time_tag_bytes(line: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let tag = &after[..open];
-    (!tag.is_empty() && tag.is_ascii()).then_some(tag)
+    (!tag.is_empty() && tag.is_ascii()).then_some(AsciiLogEnvelope { date, time, tag })
 }
 
 fn next_ascii_token<'a>(bytes: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {

@@ -1,4 +1,5 @@
-use crate::parser::{tag_bytes_of_line, ParsedLine};
+use super::timestamp::{parse_log_timestamp_probe, ParsedLogTimestamp};
+use crate::parser::{ascii_log_envelope, ParsedLine};
 
 /// 廉价候选类别位集。分类只决定“哪些确定性 parser 值得看这一行”，不提交 Problem。
 #[repr(transparent)]
@@ -154,33 +155,54 @@ pub fn classify_candidate(line: &ParsedLine<'_>, raw_bytes: &[u8]) -> CandidateK
 /// `false` 只表示该行不可能自行打开平台故障候选；多行 recognizer 尚未闭合时,
 /// Session 仍会绕过此闸门并提交完整行。ASCII-compatible 的受支持本地编码可直接
 /// 读取 Android 平台 tag；无法证明 envelope/tag 时只对严格 raw 起始语法返回 true。
-pub fn might_be_problem_candidate(raw_bytes: &[u8]) -> bool {
-    if let Some(tag) = tag_bytes_of_line(raw_bytes) {
-        return matches!(
-            tag,
-            b"AndroidRuntime"
-                | b"art"
-                | b"dalvikvm"
-                | b"ActivityManager"
-                | b"am_crash"
-                | b"am_anr"
-                | b"am_proc_start"
-                | b"am_proc_died"
-                | b"am_kill"
-                | b"Zygote"
-                | b"libc"
-                | b"DEBUG"
-                | b"debuggerd"
-                | b"lmkd"
-                | b"lowmemorykiller"
-                | b"kernel"
-        );
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ProblemLineGate {
+    pub(crate) might_be_candidate: bool,
+    pub(crate) timestamp: Option<ParsedLogTimestamp>,
+}
+
+pub(crate) fn preclassify_problem_line(raw_bytes: &[u8]) -> ProblemLineGate {
+    if let Some(envelope) = ascii_log_envelope(raw_bytes) {
+        return ProblemLineGate {
+            might_be_candidate: is_candidate_tag(envelope.tag),
+            timestamp: parse_log_timestamp_probe(envelope.date, envelope.time),
+        };
     }
 
     let raw = trim_ascii_start(raw_bytes);
-    is_tombstone_separator(raw)
-        || is_kernel_oom_text(raw)
-        || contains_ascii(raw, b"lowmemorykiller: Killing '")
+    ProblemLineGate {
+        might_be_candidate: is_tombstone_separator(raw)
+            || is_kernel_oom_text(raw)
+            || contains_ascii(raw, b"lowmemorykiller: Killing '"),
+        timestamp: None,
+    }
+}
+
+#[cfg(test)]
+fn might_be_problem_candidate(raw_bytes: &[u8]) -> bool {
+    preclassify_problem_line(raw_bytes).might_be_candidate
+}
+
+fn is_candidate_tag(tag: &[u8]) -> bool {
+    matches!(
+        tag,
+        b"AndroidRuntime"
+            | b"art"
+            | b"dalvikvm"
+            | b"ActivityManager"
+            | b"am_crash"
+            | b"am_anr"
+            | b"am_proc_start"
+            | b"am_proc_died"
+            | b"am_kill"
+            | b"Zygote"
+            | b"libc"
+            | b"DEBUG"
+            | b"debuggerd"
+            | b"lmkd"
+            | b"lowmemorykiller"
+            | b"kernel"
+    )
 }
 
 fn starts_with_payload(bytes: &[u8], prefix: &[u8]) -> bool {
@@ -566,5 +588,18 @@ mod tests {
             b"07-26 10:00:00.000  1  1 I ActivityManager: ordinary platform chatter"
         ));
         assert!(!might_be_problem_candidate(b"ordinary raw output"));
+    }
+
+    #[test]
+    fn byte_gate_extracts_time_only_from_a_valid_logcat_envelope() {
+        assert!(preclassify_problem_line(
+            b"07-26 10:00:00.000  1  1 I ExampleApp: ordinary output"
+        )
+        .timestamp
+        .is_some());
+        assert_eq!(
+            preclassify_problem_line(b"07-26 10:00:00.000 malformed raw output").timestamp,
+            None
+        );
     }
 }
