@@ -1,4 +1,6 @@
+mod budget;
 mod classifier;
+mod correlation;
 mod engine;
 mod eventlog;
 mod facts;
@@ -11,7 +13,18 @@ mod provenance;
 mod recognizers;
 mod timestamp;
 
+pub use budget::{
+    ProblemMemoryBudget, ProblemMemoryBudgetError, ProblemMemoryStats,
+    DEFAULT_PROBLEM_MEMORY_BUDGET_BYTES,
+};
 pub use classifier::{classify_candidate, CandidateKinds};
+pub use correlation::{
+    CompactCorrelationPayload, CorrelationLimitsError, CorrelationSequenceExhausted,
+    FinalizedProvisional, ProvisionalEntry, ProvisionalFinalizeReason, ProvisionalInsertOutcome,
+    ProvisionalLimits, ProvisionalStats, ProvisionalStore, RecentInsertOutcome, RecentObservation,
+    RecentObservationLimits, RecentObservationStats, RecentObservationStore, MAX_PROVISIONAL_BYTES,
+    MAX_PROVISIONAL_OCCURRENCES, MAX_RECENT_OBSERVATIONS, MAX_RECENT_OBSERVATION_BYTES,
+};
 pub use engine::{ObservedLine, ProblemDelta, ProblemEngine};
 pub use eventlog::{
     parse_event_log, AmAnr, AmCrash, AmKill, AmProcDied, AmProcStart, AmbiguousSchemaMatches,
@@ -25,9 +38,12 @@ pub use fingerprint::{
     FingerprintBuilder, FingerprintTokenKind, ProblemFingerprint, ProcessFingerprintKey,
 };
 pub use index::{
-    AppendDropReason, AppendOutcome, GroupId, GroupKey, GroupPage, GroupQuery, GroupSort,
-    OccurrencePage, PageSpec, PageSpecError, ProblemGroupSummary, ProblemIndex, ProblemIndexError,
-    ProblemIndexLimits, ProblemIndexLimitsError, ProblemStats, QuerySnapshotId, SnapshotError,
+    AppendDropReason, AppendOutcome, BoundedProblemSummary, GroupId, GroupKey, GroupPage,
+    GroupQuery, GroupSnapshotCapture, GroupSort, GroupSortRecord, OccurrencePage, PageSpec,
+    PageSpecError, ProblemDisplaySummary, ProblemGroupSummary, ProblemIndex, ProblemIndexError,
+    ProblemIndexLimits, ProblemIndexLimitsError, ProblemProcessSummary, ProblemSignatureSummary,
+    ProblemStats, QuerySnapshotId, SnapshotError, MAX_PROBLEM_PROCESS_SUMMARY_BYTES,
+    MAX_PROBLEM_SIGNATURE_SUMMARY_BYTES,
 };
 pub use model::{
     internal_line_index, public_line_number, BoundaryFlags, EvidenceFlags, IdentityQuality,
@@ -46,6 +62,7 @@ pub use process_instance::{
     TerminatedProcessInstance, TrackedProcessInstance, MAX_ACTIVE_PROCESS_INSTANCES,
     MAX_RECENT_TERMINATED_INSTANCES,
 };
+pub(crate) use provenance::BufferProvenanceTracker;
 pub use provenance::{
     BufferSet, CaptureOrigin, EvidenceAdmission, EvidenceFormat, InputCoverage, LineProvenance,
     LogBuffer, RangeCompleteness, SourceSpan, SourceSpanError, SourceSpanIndex,

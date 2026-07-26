@@ -243,6 +243,10 @@ impl ProblemRecognizer for AnrRecognizer {
 }
 
 impl AnrRecognizer {
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     fn expire_before(&mut self, line: &ObservedLine<'_>) {
         let mut index = 0;
         while index < self.pending.len() {
@@ -467,6 +471,18 @@ fn build_anr_problem(
             format,
         ));
     }
+    problem.set_correlation_identity(
+        &process,
+        reason.as_ref().map(|reason| reason.canonical.as_bytes()),
+    );
+    problem.set_display_summary(
+        &process,
+        Some(
+            reason
+                .as_ref()
+                .map_or("ANR", |reason| reason.canonical.as_str()),
+        ),
+    );
     Some(problem)
 }
 
@@ -625,6 +641,9 @@ mod tests {
         let raw = "07-26 12:00:00.000  55  55 I am_anr: [321,com.example.app,0,Input dispatching timed out, waiting for focus]";
         let mut known = ProblemEngine::new();
         known.observe(events_line(0, raw, true));
+        assert_eq!(known.stats().stored_occurrence_count, 0);
+        assert_eq!(known.stats().provisional_occurrence_count, 1);
+        known.finish_input();
         assert_eq!(known.stats().stored_occurrence_count, 1);
         assert_eq!(known.event(ProblemEventId(0)).unwrap().pid(), 321);
 
@@ -658,8 +677,12 @@ mod tests {
         }
         engine.finish_input();
         assert_eq!(engine.stats().stored_occurrence_count, 2);
-        assert_eq!(engine.event(ProblemEventId(0)).unwrap().pid(), 111);
-        assert_eq!(engine.event(ProblemEventId(1)).unwrap().pid(), 222);
+        let mut pids = [
+            engine.event(ProblemEventId(0)).unwrap().pid(),
+            engine.event(ProblemEventId(1)).unwrap().pid(),
+        ];
+        pids.sort_unstable();
+        assert_eq!(pids, [111, 222]);
     }
 
     #[test]
@@ -766,6 +789,8 @@ mod tests {
             512,
             "07-26 12:00:01.000  7  7 I Other: boundary",
         );
+        assert_eq!(complete.stats().provisional_occurrence_count, 1);
+        complete.finish_input();
         assert_eq!(complete.stats().stored_occurrence_count, 1);
 
         let mut incomplete = ProblemEngine::new();

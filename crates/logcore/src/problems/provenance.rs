@@ -203,6 +203,59 @@ impl LineProvenance {
     }
 }
 
+/// Streaming fallback provenance derived from exact logcat buffer dividers.
+///
+/// The tracker owns only the active buffer, so memory use is constant regardless
+/// of input size. A divider affects rows after itself. Provenance supplied by an
+/// input adapter wins for the current row; a valid divider still advances the
+/// fallback state used after that explicit span ends.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BufferProvenanceTracker {
+    active_buffer: Option<LogBuffer>,
+}
+
+impl BufferProvenanceTracker {
+    pub(crate) const fn new() -> Self {
+        Self {
+            active_buffer: None,
+        }
+    }
+
+    pub(crate) fn observe_stable_line(
+        &mut self,
+        raw_line: &[u8],
+        adapter_provenance: LineProvenance,
+    ) -> LineProvenance {
+        let fallback = self
+            .active_buffer
+            .map(LineProvenance::Known)
+            .unwrap_or(LineProvenance::Unknown);
+        let resolved = match adapter_provenance {
+            LineProvenance::Unknown => fallback,
+            explicit => explicit,
+        };
+
+        if let Some(buffer) = parse_logcat_buffer_divider(raw_line) {
+            self.active_buffer = Some(buffer);
+        }
+        resolved
+    }
+}
+
+fn parse_logcat_buffer_divider(raw_line: &[u8]) -> Option<LogBuffer> {
+    let line = raw_line.strip_suffix(b"\n").unwrap_or(raw_line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    match line {
+        b"--------- beginning of main" => Some(LogBuffer::Main),
+        b"--------- beginning of system" => Some(LogBuffer::System),
+        b"--------- beginning of events" => Some(LogBuffer::Events),
+        b"--------- beginning of crash" => Some(LogBuffer::Crash),
+        b"--------- beginning of radio" => Some(LogBuffer::Radio),
+        b"--------- beginning of kernel" => Some(LogBuffer::Kernel),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EvidenceFormat {
@@ -422,5 +475,136 @@ mod tests {
             spans.insert(SourceSpan::new(18, 21, LogBuffer::Main).unwrap()),
             Err(SourceSpanError::Overlap)
         );
+    }
+
+    #[test]
+    fn standard_logcat_dividers_change_only_subsequent_line_provenance() {
+        let mut tracker = BufferProvenanceTracker::new();
+
+        assert_eq!(
+            tracker.observe_stable_line(b"--------- beginning of main\n", LineProvenance::Unknown),
+            LineProvenance::Unknown
+        );
+        assert_eq!(
+            tracker.observe_stable_line(b"main payload\n", LineProvenance::Unknown),
+            LineProvenance::Known(LogBuffer::Main)
+        );
+        assert_eq!(
+            tracker.observe_stable_line(
+                b"--------- beginning of events\r\n",
+                LineProvenance::Unknown
+            ),
+            LineProvenance::Known(LogBuffer::Main)
+        );
+        assert_eq!(
+            tracker.observe_stable_line(b"events payload\n", LineProvenance::Unknown),
+            LineProvenance::Known(LogBuffer::Events)
+        );
+        assert_eq!(
+            tracker.observe_stable_line(b"--------- beginning of crash\n", LineProvenance::Unknown),
+            LineProvenance::Known(LogBuffer::Events)
+        );
+        assert_eq!(
+            tracker.observe_stable_line(b"crash payload\n", LineProvenance::Unknown),
+            LineProvenance::Known(LogBuffer::Crash)
+        );
+    }
+
+    #[test]
+    fn every_supported_standard_divider_is_recognized_exactly() {
+        for (divider, buffer) in [
+            (b"--------- beginning of main\n".as_slice(), LogBuffer::Main),
+            (
+                b"--------- beginning of system\n".as_slice(),
+                LogBuffer::System,
+            ),
+            (
+                b"--------- beginning of events\n".as_slice(),
+                LogBuffer::Events,
+            ),
+            (
+                b"--------- beginning of crash\n".as_slice(),
+                LogBuffer::Crash,
+            ),
+            (
+                b"--------- beginning of radio\n".as_slice(),
+                LogBuffer::Radio,
+            ),
+            (
+                b"--------- beginning of kernel\n".as_slice(),
+                LogBuffer::Kernel,
+            ),
+        ] {
+            let mut tracker = BufferProvenanceTracker::new();
+            assert_eq!(
+                tracker.observe_stable_line(divider, LineProvenance::Unknown),
+                LineProvenance::Unknown
+            );
+            assert_eq!(
+                tracker.observe_stable_line(b"payload\n", LineProvenance::Unknown),
+                LineProvenance::Known(buffer)
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_messages_cannot_forge_a_logcat_divider() {
+        for lookalike in [
+            b"07-26 12:00:00.000  1  1 I App: --------- beginning of events\n".as_slice(),
+            b"prefix --------- beginning of events\n".as_slice(),
+            b" --------- beginning of events\n".as_slice(),
+            b"--------- beginning of events trailing\n".as_slice(),
+            b"--------- switch to events\n".as_slice(),
+            b"---------- beginning of events\n".as_slice(),
+        ] {
+            let mut tracker = BufferProvenanceTracker::new();
+            assert_eq!(
+                tracker.observe_stable_line(lookalike, LineProvenance::Unknown),
+                LineProvenance::Unknown
+            );
+            assert_eq!(
+                tracker.observe_stable_line(b"next payload\n", LineProvenance::Unknown),
+                LineProvenance::Unknown
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_adapter_provenance_wins_without_blocking_divider_progress() {
+        let mut tracker = BufferProvenanceTracker::new();
+
+        assert_eq!(
+            tracker.observe_stable_line(
+                b"--------- beginning of events\n",
+                LineProvenance::Known(LogBuffer::Main)
+            ),
+            LineProvenance::Known(LogBuffer::Main),
+            "the adapter owns attribution for the divider row itself"
+        );
+        assert_eq!(
+            tracker.observe_stable_line(
+                b"payload inside explicit span\n",
+                LineProvenance::Known(LogBuffer::Crash)
+            ),
+            LineProvenance::Known(LogBuffer::Crash),
+            "an explicit adapter span wins a conflict on its rows"
+        );
+        assert_eq!(
+            tracker.observe_stable_line(b"payload after explicit span\n", LineProvenance::Unknown),
+            LineProvenance::Known(LogBuffer::Events),
+            "the divider remains the fallback after the explicit span ends"
+        );
+    }
+
+    #[test]
+    fn tracker_state_is_constant_size_and_unknown_without_a_divider() {
+        assert!(std::mem::size_of::<BufferProvenanceTracker>() <= 2);
+        let mut tracker = BufferProvenanceTracker::new();
+        for _ in 0..10_000 {
+            assert_eq!(
+                tracker.observe_stable_line(b"ordinary payload\n", LineProvenance::Unknown),
+                LineProvenance::Unknown
+            );
+        }
     }
 }

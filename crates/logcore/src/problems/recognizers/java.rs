@@ -291,6 +291,8 @@ impl JavaPending {
                 EvidenceFormat::AospText,
             ));
         }
+        problem.set_correlation_identity(&process, Some(self.exception_type.as_str().as_bytes()));
+        problem.set_display_summary(&process, Some(self.exception_type.as_str()));
         Some(problem)
     }
 }
@@ -420,6 +422,10 @@ impl ProblemRecognizer for JavaRecognizer {
 }
 
 impl JavaRecognizer {
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     fn expire_before(&mut self, line: &ObservedLine<'_>) {
         let mut index = 0;
         while index < self.pending.len() {
@@ -671,6 +677,8 @@ fn recognize_am_crash(line: &ObservedLine<'_>) -> Option<RecognizedProblem> {
         EvidencePriority::MinimumGrammar,
         EvidenceFormat::EventLogShapedText,
     ));
+    problem.set_correlation_identity(&process, Some(exception.as_bytes()));
+    problem.set_display_summary(&process, Some(exception.as_str()));
     Some(problem)
 }
 
@@ -871,20 +879,15 @@ mod tests {
         }
         engine.finish_input();
         assert_eq!(engine.stats().stored_occurrence_count, 2);
-        assert_eq!(
-            engine
-                .event(crate::problems::ProblemEventId(0))
+        let mut pids = [0, 0];
+        for (id, slot) in pids.iter_mut().enumerate() {
+            *slot = engine
+                .event(crate::problems::ProblemEventId(id as u32))
                 .unwrap()
-                .pid(),
-            111
-        );
-        assert_eq!(
-            engine
-                .event(crate::problems::ProblemEventId(1))
-                .unwrap()
-                .pid(),
-            222
-        );
+                .pid();
+        }
+        pids.sort_unstable();
+        assert_eq!(pids, [111, 222]);
     }
 
     #[test]
@@ -892,6 +895,9 @@ mod tests {
         let raw = "07-26 12:00:00.000  55  55 I am_crash: [321,com.example.app,0,java.lang.IllegalStateException,bad state,Example.kt,42]";
         let mut known = ProblemEngine::new();
         known.observe(events_line(0, raw, true));
+        assert_eq!(known.stats().stored_occurrence_count, 0);
+        assert_eq!(known.stats().provisional_occurrence_count, 1);
+        known.finish_input();
         assert_eq!(known.stats().stored_occurrence_count, 1);
         let observations = known
             .event_observations(crate::problems::ProblemEventId(0))
@@ -936,6 +942,8 @@ mod tests {
             512,
             "07-26 12:00:01.000  7  7 I Other: boundary",
         );
+        assert_eq!(complete.stats().provisional_occurrence_count, 1);
+        complete.finish_input();
         assert_eq!(complete.stats().stored_occurrence_count, 1);
 
         let mut incomplete = ProblemEngine::new();

@@ -1,11 +1,13 @@
 use super::super::engine::{ObservedLine, RecognizedProblem};
 use super::{parse_pid, trim_ascii, FixedText, ProblemRecognizer};
 use crate::problems::{
-    BoundaryFlags, EvidenceFlags, EvidenceFormat, EvidencePriority, FingerprintBuilder,
-    FingerprintTokenKind, GroupKey, LineProvenance, ObservationCandidate, ObservationRef,
-    ObservationRole, OutcomeFlags, PackedLogTimestamp, ProblemEventDraft, ProblemKind,
-    ProcessFingerprintKey, ProcessInstanceKey, RuleId, SignatureQuality,
+    parse_event_log, parse_log_timestamp, BoundaryFlags, EventLogRecord, EvidenceAdmission,
+    EvidenceFlags, EvidenceFormat, EvidencePriority, FingerprintBuilder, FingerprintTokenKind,
+    GroupKey, LineProvenance, ObservationCandidate, ObservationRef, ObservationRole, OutcomeFlags,
+    PackedLogTimestamp, ProblemEventDraft, ProblemKind, ProcessFingerprintKey, ProcessInstanceKey,
+    RuleId, SignatureQuality,
 };
+use std::collections::VecDeque;
 
 pub(crate) const MAX_NATIVE_LINES: u32 = 256;
 pub(crate) const MAX_NATIVE_BYTES: u32 = 64 * 1024;
@@ -274,6 +276,8 @@ impl NativePending {
                 EvidencePriority::Outcome,
             ));
         }
+        problem.set_correlation_identity(&process, Some(signal.canonical()));
+        problem.set_display_summary(&process, std::str::from_utf8(signal.canonical()).ok());
         Some(problem)
     }
 }
@@ -281,30 +285,37 @@ impl NativePending {
 #[derive(Debug, Default)]
 pub(crate) struct NativeRecognizer {
     pending: Option<NativePending>,
-    ready: Option<RecognizedProblem>,
+    ready: VecDeque<RecognizedProblem>,
 }
 
 impl NativeRecognizer {
     pub(crate) const fn new() -> Self {
         Self {
             pending: None,
-            ready: None,
+            ready: VecDeque::new(),
         }
     }
 
+    pub(crate) const fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
     fn finalize(&mut self, limited: bool) {
-        if self.ready.is_none() {
-            self.ready = self
-                .pending
-                .take()
-                .and_then(|pending| pending.into_problem(limited));
+        if let Some(problem) = self
+            .pending
+            .take()
+            .and_then(|pending| pending.into_problem(limited))
+        {
+            self.ready.push_back(problem);
         }
     }
 }
 
 impl ProblemRecognizer for NativeRecognizer {
     fn observe(&mut self, line: &ObservedLine<'_>) {
-        if self.ready.is_some() {
+        if let Some(problem) = recognize_native_am_crash(line) {
+            self.finalize(false);
+            self.ready.push_back(problem);
             return;
         }
         let message = line.parsed.message;
@@ -364,12 +375,95 @@ impl ProblemRecognizer for NativeRecognizer {
 
     fn reset(&mut self) {
         self.pending = None;
-        self.ready = None;
+        self.ready.clear();
     }
 
     fn pop_ready(&mut self) -> Option<RecognizedProblem> {
-        self.ready.take()
+        self.ready.pop_front()
     }
+}
+
+fn recognize_native_am_crash(line: &ObservedLine<'_>) -> Option<RecognizedProblem> {
+    if line.parsed.tag != "am_crash"
+        || line
+            .coverage
+            .admit(EvidenceFormat::EventLogShapedText, line.provenance)
+            != EvidenceAdmission::CommitEligible
+    {
+        return None;
+    }
+    let EventLogRecord::Crash(crash) =
+        parse_event_log(line.parsed.tag, line.parsed.message).ok()?
+    else {
+        return None;
+    };
+    if crash.exception != "Native crash" {
+        return None;
+    }
+    let process = ProcessFingerprintKey::new(Some(crash.process_name));
+    if process.is_unknown() {
+        return None;
+    }
+    let identity_quality = process.identity_quality();
+    let signature_quality = SignatureQuality::Minimal;
+    let mut fingerprint = FingerprintBuilder::new(
+        ProblemKind::NativeCrash,
+        FINGERPRINT_VERSION,
+        signature_quality,
+        identity_quality,
+        &process,
+    );
+    fingerprint.token(FingerprintTokenKind::StructuredField, b"native-am-crash");
+    let group_key = GroupKey::new(
+        ProblemKind::NativeCrash,
+        FINGERPRINT_VERSION,
+        signature_quality,
+        identity_quality,
+        fingerprint.finish(),
+    );
+    let mut outcome = OutcomeFlags::NONE;
+    if crash.recoverable == Some(true) {
+        outcome.insert(OutcomeFlags::EXPLICITLY_RECOVERABLE);
+    }
+    let draft = ProblemEventDraft {
+        start_line: line.line,
+        end_line: line.line,
+        anchor_line: line.line,
+        anchor_timestamp: parse_log_timestamp(line.parsed.date, line.parsed.time)
+            .unwrap_or_default(),
+        pid: crash.pid,
+        process_instance: ProcessInstanceKey(0),
+        kind: ProblemKind::NativeCrash,
+        evidence: EvidenceFlags::PRIMARY | EvidenceFlags::STRUCTURED,
+        outcome,
+        boundary: BoundaryFlags::NONE,
+    };
+    let primary = ObservationCandidate::new(
+        ObservationRef::new(
+            line.line,
+            RuleId::ManagedAmCrashV1,
+            ObservationRole::Primary,
+            EvidenceFormat::EventLogShapedText,
+            line.provenance,
+        )
+        .expect("am_crash primary is part of the published fact contract"),
+        EvidencePriority::MinimumGrammar,
+    );
+    let mut problem = RecognizedProblem::new(draft, group_key, primary);
+    problem.push_observation(ObservationCandidate::new(
+        ObservationRef::new(
+            line.line,
+            RuleId::ManagedAmCrashV1,
+            ObservationRole::ProcessIdentity,
+            EvidenceFormat::EventLogShapedText,
+            line.provenance,
+        )
+        .expect("am_crash process identity is part of the published fact contract"),
+        EvidencePriority::MinimumGrammar,
+    ));
+    problem.set_correlation_identity(&process, None);
+    problem.set_display_summary(&process, Some("Native crash"));
+    Some(problem)
 }
 
 fn observation(

@@ -7,10 +7,10 @@ use crate::mmap_source::MmapSource;
 use crate::model::LogEntry;
 use crate::parser::parse_line_ref;
 use crate::problems::{
-    GroupId, GroupPage, GroupQuery, InputCoverage, ObservationRef, OccurrencePage, PageSpec,
-    ProblemEngine, ProblemEvent, ProblemEventId, ProblemGroupSummary, ProblemStats,
-    QuerySnapshotId, RangeCompleteness, SnapshotError, SourceSpan, SourceSpanError,
-    SourceSpanIndex,
+    BufferProvenanceTracker, GroupId, GroupPage, GroupQuery, GroupSnapshotCapture, GroupSortRecord,
+    InputCoverage, ObservationRef, OccurrencePage, PageSpec, ProblemEngine, ProblemEvent,
+    ProblemEventId, ProblemGroupSummary, ProblemMemoryStats, ProblemStats, QuerySnapshotId,
+    RangeCompleteness, SnapshotError, SourceSpan, SourceSpanError, SourceSpanIndex,
 };
 use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
@@ -127,9 +127,14 @@ pub struct Session {
     input_state: InputState,
     filtered: Vec<u32>,
     filter_active: bool,
+    /// The spec represented by `filtered`. A newly requested filter lives in
+    /// `pending_filter_spec` until its complete hit vector is atomically applied.
     filter_spec: FilterSpec,
+    pending_filter_spec: Option<FilterSpec>,
     search_matches: Vec<u32>,
+    /// The spec represented by `search_matches`.
     search_spec: Option<SearchSpec>,
+    pending_search_spec: Option<SearchSpec>,
     bookmarks: BookmarkStore,
     error_lines: Vec<u32>,
     error_scan_lines: usize,
@@ -139,6 +144,7 @@ pub struct Session {
     problem_finished: bool,
     problem_coverage: InputCoverage,
     problem_source_spans: SourceSpanIndex,
+    problem_buffer_tracker: BufferProvenanceTracker,
 }
 
 impl Session {
@@ -184,8 +190,10 @@ impl Session {
             filtered: Vec::new(),
             filter_active: false,
             filter_spec: FilterSpec::default(),
+            pending_filter_spec: None,
             search_matches: Vec::new(),
             search_spec: None,
+            pending_search_spec: None,
             bookmarks,
             error_lines: Vec::new(),
             error_scan_lines: 0,
@@ -195,15 +203,37 @@ impl Session {
             problem_finished: false,
             problem_coverage,
             problem_source_spans: SourceSpanIndex::new(),
+            problem_buffer_tracker: BufferProvenanceTracker::new(),
         })
     }
 
     pub fn set_encoding(&mut self, encoding: TextEncoding) {
         let resolved = encoding.resolve();
         if self.encoding.config_label() != resolved.config_label() {
+            let desired_filter = self
+                .pending_filter_spec
+                .take()
+                .unwrap_or_else(|| self.filter_spec.clone());
+            if desired_filter.is_active() {
+                self.filtered.clear();
+                self.filter_active = true;
+                self.filter_spec = desired_filter.clone();
+                self.pending_filter_spec = Some(desired_filter);
+            }
+            let desired_search = self
+                .pending_search_spec
+                .take()
+                .or_else(|| self.active_search_spec());
+            self.search_matches.clear();
+            self.search_spec = desired_search.clone();
+            self.pending_search_spec = desired_search;
             self.encoding = resolved;
             self.reset_problem_analysis();
         }
+    }
+
+    pub fn encoding_config_label(&self) -> &'static str {
+        self.encoding.config_label()
     }
 
     pub fn total_bytes(&self) -> usize {
@@ -321,12 +351,26 @@ impl Session {
     /// 为真时从 0 起重扫已索引区间(`filter_spec` 保留供其重建);`open_file` 路径则在索引
     /// 完成后由 `rerun_scans_after_index_done` 重算。本函数自身不产出任何命中。
     fn reset_derived_state(&mut self) {
+        let desired_filter = self
+            .pending_filter_spec
+            .take()
+            .unwrap_or_else(|| self.filter_spec.clone());
+        let desired_search = self
+            .pending_search_spec
+            .take()
+            .or_else(|| self.search_spec.clone());
         self.indexer = Indexer::new();
         self.filtered.clear();
-        self.filter_active = false;
+        self.filter_active = desired_filter.is_active();
+        self.filter_spec = desired_filter;
         self.search_matches.clear();
+        self.search_spec = desired_search;
         self.error_lines.clear();
         self.error_scan_lines = 0;
+        // A truncated/replaced source is a new input identity. Source-line
+        // bookmarks from the previous bytes must never mark the replacement.
+        self.bookmarks = BookmarkStore::new();
+        let _ = fs::remove_file(crate::bookmarks::sidecar_path_for(&self.source_path));
         self.problem_source_spans = SourceSpanIndex::new();
         self.reset_problem_analysis();
     }
@@ -335,6 +379,7 @@ impl Session {
         self.problem_engine.reset();
         self.problem_scan_lines = 0;
         self.problem_finished = false;
+        self.problem_buffer_tracker = BufferProvenanceTracker::new();
     }
 
     pub fn remap_and_index_step(&mut self, budget: usize) -> io::Result<RemapStep> {
@@ -366,6 +411,10 @@ impl Session {
             self.problem_coverage = coverage;
             self.reset_problem_analysis();
         }
+    }
+
+    pub const fn problem_input_coverage(&self) -> InputCoverage {
+        self.problem_coverage
     }
 
     /// Add a source span proven by the input adapter. Adding provenance after scanning starts
@@ -404,6 +453,7 @@ impl Session {
             let encoding = self.encoding;
             let coverage = self.problem_coverage;
             let source_spans = &self.problem_source_spans;
+            let buffer_tracker = &mut self.problem_buffer_tracker;
             let engine = &mut self.problem_engine;
             indexer.for_each_line_span(
                 source_bytes,
@@ -418,12 +468,10 @@ impl Session {
                     let raw = &source_bytes[span_start..span_end];
                     let text = encoding.decode(raw);
                     let parsed = parse_line_ref(&text);
+                    let provenance =
+                        buffer_tracker.observe_stable_line(raw, source_spans.provenance_at(line));
                     let delta = engine.observe(crate::problems::ObservedLine::new(
-                        line,
-                        raw,
-                        parsed,
-                        source_spans.provenance_at(line),
-                        coverage,
+                        line, raw, parsed, provenance, coverage,
                     ));
                     committed_occurrences =
                         committed_occurrences.saturating_add(usize::from(delta.committed()));
@@ -483,6 +531,10 @@ impl Session {
         self.problem_engine.stats()
     }
 
+    pub fn problem_memory_stats(&self) -> ProblemMemoryStats {
+        self.problem_engine.memory_stats()
+    }
+
     pub fn problem_scanned_lines(&self) -> usize {
         self.problem_scan_lines
     }
@@ -496,6 +548,31 @@ impl Session {
         query: &GroupQuery,
     ) -> Result<QuerySnapshotId, SnapshotError> {
         self.problem_engine.create_group_snapshot(query)
+    }
+
+    pub fn problem_group_snapshot_capture(&self) -> GroupSnapshotCapture {
+        self.problem_engine.group_snapshot_capture()
+    }
+
+    pub fn problem_group_sort_records(
+        &self,
+        query: &GroupQuery,
+        capture: GroupSnapshotCapture,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<GroupSortRecord>, SnapshotError> {
+        self.problem_engine
+            .group_sort_records(query, capture, offset, limit)
+    }
+
+    pub fn install_problem_group_snapshot(
+        &mut self,
+        ids: Vec<GroupId>,
+        revision: u64,
+        query: crate::problems::GroupQuery,
+    ) -> Result<QuerySnapshotId, SnapshotError> {
+        self.problem_engine
+            .install_group_snapshot_ids(ids, revision, query)
     }
 
     pub fn create_problem_occurrence_snapshot(
@@ -513,12 +590,32 @@ impl Session {
         self.problem_engine.group_snapshot_page(snapshot, page)
     }
 
+    pub fn problem_group_snapshot_page_for_query(
+        &mut self,
+        snapshot: QuerySnapshotId,
+        page: PageSpec,
+        query: crate::problems::GroupQuery,
+    ) -> Result<GroupPage, SnapshotError> {
+        self.problem_engine
+            .group_snapshot_page_for_query(snapshot, page, query)
+    }
+
     pub fn problem_occurrence_snapshot_page(
         &mut self,
         snapshot: QuerySnapshotId,
         page: PageSpec,
     ) -> Result<OccurrencePage, SnapshotError> {
         self.problem_engine.occurrence_snapshot_page(snapshot, page)
+    }
+
+    pub fn problem_occurrence_snapshot_page_for_group(
+        &mut self,
+        snapshot: QuerySnapshotId,
+        page: PageSpec,
+        group: GroupId,
+    ) -> Result<OccurrencePage, SnapshotError> {
+        self.problem_engine
+            .occurrence_snapshot_page_for_group(snapshot, page, group)
     }
 
     pub fn release_problem_snapshot(&mut self, snapshot: QuerySnapshotId) -> bool {
@@ -663,6 +760,57 @@ impl Session {
             return None;
         }
         self.current_result_index_for_source_idx(line_no - 1)
+    }
+
+    /// Map a source line to the closest current filtered result. Equal-distance
+    /// ties prefer the preceding source line to keep viewport restoration stable.
+    pub fn nearest_result_for_line_no(&self, line_no: u64) -> Option<ResultTarget> {
+        let stable_lines = self.stable_lines();
+        if line_no == 0 || stable_lines == 0 {
+            return None;
+        }
+        let source_idx = line_no.saturating_sub(1).min((stable_lines - 1) as u64);
+        if !self.filter_active {
+            return Some(ResultTarget {
+                line_no: source_idx + 1,
+                result_index: source_idx as usize,
+            });
+        }
+        let needle = u32::try_from(source_idx).unwrap_or(u32::MAX);
+        match self.filtered.binary_search(&needle) {
+            Ok(result_index) => Some(ResultTarget {
+                line_no: source_idx + 1,
+                result_index,
+            }),
+            Err(insertion) => {
+                let before = insertion
+                    .checked_sub(1)
+                    .and_then(|index| self.filtered.get(index).copied().map(|line| (index, line)));
+                let after = self
+                    .filtered
+                    .get(insertion)
+                    .copied()
+                    .map(|line| (insertion, line));
+                let (result_index, selected) = match (before, after) {
+                    (Some(before), Some(after)) => {
+                        let before_distance = needle.saturating_sub(before.1);
+                        let after_distance = after.1.saturating_sub(needle);
+                        if before_distance <= after_distance {
+                            before
+                        } else {
+                            after
+                        }
+                    }
+                    (Some(before), None) => before,
+                    (None, Some(after)) => after,
+                    (None, None) => return None,
+                };
+                Some(ResultTarget {
+                    line_no: u64::from(selected) + 1,
+                    result_index,
+                })
+            }
+        }
     }
 
     fn source_minimap(&self, buckets: usize) -> Minimap {
@@ -887,20 +1035,30 @@ impl Session {
     }
 
     pub fn set_filter_pending(&mut self, spec: &FilterSpec) -> Result<Option<usize>, FilterError> {
-        self.filter_spec = spec.clone();
         if !spec.is_active() {
+            self.pending_filter_spec = None;
+            self.filter_spec = spec.clone();
             self.filtered.clear();
             self.filter_active = false;
             return Ok(Some(self.stable_lines()));
         }
         FilterMatcher::new(spec)?;
+        self.pending_filter_spec = Some(spec.clone());
         Ok(None)
     }
 
+    /// Return the filter whose hit vector is currently visible.
     pub fn active_filter_spec(&self) -> Option<FilterSpec> {
-        self.filter_spec
-            .is_active()
-            .then(|| self.filter_spec.clone())
+        (self.filter_active && self.filter_spec.is_active()).then(|| self.filter_spec.clone())
+    }
+
+    /// Return the latest requested filter, including one still being scanned.
+    pub fn desired_filter_spec(&self) -> Option<FilterSpec> {
+        self.pending_filter_spec.clone().or_else(|| {
+            self.filter_spec
+                .is_active()
+                .then(|| self.filter_spec.clone())
+        })
     }
 
     pub fn filter_indexed_range(
@@ -932,6 +1090,9 @@ impl Session {
 
     pub fn apply_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u32>) -> usize {
         self.filter_spec = spec.clone();
+        if self.pending_filter_spec.as_ref() == Some(spec) {
+            self.pending_filter_spec = None;
+        }
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
@@ -944,16 +1105,12 @@ impl Session {
     }
 
     pub fn append_filter_results(&mut self, spec: &FilterSpec, matches: Vec<u32>) -> usize {
-        if !spec.is_active() {
-            self.filtered.clear();
-            self.filter_active = false;
-            return self.stable_lines();
+        // Incremental live appends may only extend the already published
+        // dataset. A pending replacement spec must not mix into old results.
+        if !self.filter_active || self.filter_spec != *spec {
+            return self.filtered_count();
         }
-        self.filter_spec = spec.clone();
-        self.filter_active = true;
-        self.filtered.extend(matches);
-        self.filtered.sort_unstable();
-        self.filtered.dedup();
+        append_sorted_unique(&mut self.filtered, matches);
         self.filtered.len()
     }
 
@@ -976,19 +1133,28 @@ impl Session {
 
     pub fn set_search_pending(&mut self, spec: &SearchSpec) -> Result<bool, SearchError> {
         if spec.query.is_empty() {
+            self.pending_search_spec = None;
             self.search_spec = None;
             self.search_matches.clear();
             return Ok(false);
         }
         SearchMatcher::new(spec)?;
-        self.search_spec = Some(spec.clone());
+        self.pending_search_spec = Some(spec.clone());
         Ok(true)
     }
 
+    /// Return the search represented by `search_matches`.
     pub fn active_search_spec(&self) -> Option<SearchSpec> {
         self.search_spec
             .clone()
             .filter(|spec| !spec.query.is_empty())
+    }
+
+    /// Return the latest requested search, including one still being scanned.
+    pub fn desired_search_spec(&self) -> Option<SearchSpec> {
+        self.pending_search_spec
+            .clone()
+            .or_else(|| self.active_search_spec())
     }
 
     pub fn search_indexed_range(
@@ -1019,6 +1185,9 @@ impl Session {
 
     pub fn apply_search_results(&mut self, spec: &SearchSpec, matches: Vec<u32>) -> SearchSummary {
         self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
+        if self.pending_search_spec.as_ref() == Some(spec) {
+            self.pending_search_spec = None;
+        }
         self.search_matches = matches;
         SearchSummary {
             count: self.search_matches.len(),
@@ -1027,10 +1196,9 @@ impl Session {
     }
 
     pub fn append_search_results(&mut self, spec: &SearchSpec, matches: Vec<u32>) -> SearchSummary {
-        self.search_spec = (!spec.query.is_empty()).then(|| spec.clone());
-        self.search_matches.extend(matches);
-        self.search_matches.sort_unstable();
-        self.search_matches.dedup();
+        if self.search_spec.as_ref() == Some(spec) {
+            append_sorted_unique(&mut self.search_matches, matches);
+        }
         SearchSummary {
             count: self.search_matches.len(),
             first: self.search_matches.first().map(|idx| u64::from(*idx) + 1),
@@ -1234,6 +1402,48 @@ fn push_hit(matches: &mut Vec<u32>, idx: usize) {
     } else {
         debug_assert!(false, "line index exceeds u32 range");
     }
+}
+
+/// Append an already sorted hit batch without re-sorting the full 10GB-scale
+/// history on every live chunk. The normal incremental path is strictly after
+/// the existing frontier and therefore O(new hits); the merge fallback keeps
+/// public callers deterministic when ranges overlap.
+fn append_sorted_unique(existing: &mut Vec<u32>, mut incoming: Vec<u32>) {
+    if incoming.is_empty() {
+        return;
+    }
+    incoming.dedup();
+    if existing
+        .last()
+        .is_none_or(|last| incoming.first().is_some_and(|first| *last < *first))
+    {
+        existing.extend(incoming);
+        return;
+    }
+
+    let previous = std::mem::take(existing);
+    let mut merged = Vec::with_capacity(previous.len().saturating_add(incoming.len()));
+    let (mut left, mut right) = (0, 0);
+    while left < previous.len() && right < incoming.len() {
+        match previous[left].cmp(&incoming[right]) {
+            std::cmp::Ordering::Less => {
+                merged.push(previous[left]);
+                left += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                merged.push(incoming[right]);
+                right += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                merged.push(previous[left]);
+                left += 1;
+                right += 1;
+            }
+        }
+    }
+    merged.extend_from_slice(&previous[left..]);
+    merged.extend_from_slice(&incoming[right..]);
+    *existing = merged;
 }
 
 /// 把"桶→错误行数"映射按桶升序收成 `MinimapBucket` 列表(BTreeMap 已保证键有序)。
@@ -1514,6 +1724,33 @@ mod tests {
     }
 
     #[test]
+    fn nearest_filtered_mapping_prefers_the_preceding_line_on_a_tie() {
+        let f = temp_filter_log();
+        let mut session = Session::open(f.path()).unwrap();
+        session.index_all();
+        let spec = FilterSpec {
+            tag_include: FilterField::plain(true, "synthetic-active-filter"),
+            ..Default::default()
+        };
+        session.apply_filter_results(&spec, vec![0, 2]);
+
+        assert_eq!(
+            session.nearest_result_for_line_no(2),
+            Some(ResultTarget {
+                line_no: 1,
+                result_index: 0
+            })
+        );
+        assert_eq!(
+            session.nearest_result_for_line_no(3),
+            Some(ResultTarget {
+                line_no: 3,
+                result_index: 1
+            })
+        );
+    }
+
+    #[test]
     fn default_filter_does_not_materialize_all_line_numbers() {
         let f = temp_filter_log();
         let mut s = Session::open(f.path()).unwrap();
@@ -1659,11 +1896,66 @@ mod tests {
         };
 
         assert_eq!(s.set_filter_pending(&spec).unwrap(), None);
-        assert_eq!(s.active_filter_spec(), Some(spec.clone()));
+        assert_eq!(s.active_filter_spec(), None);
+        assert_eq!(s.desired_filter_spec(), Some(spec.clone()));
 
         let matcher = FilterMatcher::new(&spec).unwrap();
         let matches = s.filter_indexed_range(&matcher, 0, s.total_lines());
         assert_eq!(s.apply_filter_results(&spec, matches), 2);
+        assert_eq!(s.active_filter_spec(), Some(spec));
+    }
+
+    #[test]
+    fn pending_filter_does_not_mix_new_spec_into_applied_results() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let applied = FilterSpec {
+            tag_include: FilterField::plain(true, "Network"),
+            ..Default::default()
+        };
+        let pending = FilterSpec {
+            tag_include: FilterField::plain(true, "Payment"),
+            ..Default::default()
+        };
+
+        assert_eq!(s.set_filter(&applied).unwrap(), 2);
+        assert_eq!(s.set_filter_pending(&pending).unwrap(), None);
+
+        assert_eq!(s.active_filter_spec(), Some(applied));
+        assert_eq!(s.desired_filter_spec(), Some(pending));
+        assert_eq!(
+            s.get_rows_for_view(RowsView::Filtered, 0, 10)
+                .into_iter()
+                .map(|(_, row)| row.tag)
+                .collect::<Vec<_>>(),
+            vec!["Network", "Network"]
+        );
+    }
+
+    #[test]
+    fn invalid_pending_filter_preserves_the_applied_dataset() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let applied = FilterSpec {
+            tag_include: FilterField::plain(true, "Network"),
+            ..Default::default()
+        };
+        let invalid = FilterSpec {
+            tag_include: FilterField {
+                enabled: true,
+                pattern: "(".to_string(),
+                regex: true,
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(s.set_filter(&applied).unwrap(), 2);
+        assert!(s.set_filter_pending(&invalid).is_err());
+        assert_eq!(s.active_filter_spec(), Some(applied.clone()));
+        assert_eq!(s.desired_filter_spec(), Some(applied));
+        assert_eq!(s.filtered_count(), 2);
     }
 
     #[test]
@@ -1673,12 +1965,30 @@ mod tests {
         s.index_all();
         let spec = SearchSpec::plain("Network");
         assert!(s.set_search_pending(&spec).unwrap());
-        assert_eq!(s.active_search_spec(), Some(spec));
+        assert_eq!(s.active_search_spec(), None);
+        assert_eq!(s.desired_search_spec(), Some(spec));
 
         let empty = SearchSpec::plain("");
         assert!(!s.set_search_pending(&empty).unwrap());
         assert_eq!(s.active_search_spec(), None);
+        assert_eq!(s.desired_search_spec(), None);
         assert_eq!(s.search_next(1, SearchDirection::Next), None);
+    }
+
+    #[test]
+    fn pending_search_does_not_mix_new_spec_into_applied_matches() {
+        let f = temp_filter_log();
+        let mut s = Session::open(f.path()).unwrap();
+        s.index_all();
+        let applied = SearchSpec::plain("Network");
+        let pending = SearchSpec::plain("Payment");
+
+        assert_eq!(s.search(&applied).unwrap().count, 2);
+        assert!(s.set_search_pending(&pending).unwrap());
+
+        assert_eq!(s.active_search_spec(), Some(applied));
+        assert_eq!(s.desired_search_spec(), Some(pending));
+        assert_eq!(s.search_next(1, SearchDirection::Next), Some(2));
     }
 
     #[test]
@@ -2141,6 +2451,37 @@ mod tests {
         assert_eq!(session.error_count(), 0);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn growing_truncation_clears_bookmarks_and_their_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("growing-bookmark-reset.log");
+        std::fs::write(
+            &path,
+            "04-20 12:06:02.125   146   179 I Old: first\n\
+             04-20 12:06:02.225   146   179 I Old: second\n",
+        )
+        .unwrap();
+        let mut session = Session::open_growing(&path).unwrap();
+        session.index_all();
+        assert!(session.toggle_bookmark(2).unwrap());
+        let sidecar = crate::bookmarks::sidecar_path_for(&path);
+        assert!(sidecar.exists());
+
+        std::fs::write(
+            &path,
+            "04-20 12:06:03.000   200   220 I Fresh: replacement\n",
+        )
+        .unwrap();
+        assert!(session.remap_and_index_step(usize::MAX).unwrap().reset);
+
+        assert!(session.list_bookmarks().is_empty());
+        assert!(!sidecar.exists());
+        drop(session);
+        let reopened = Session::open_growing(&path).unwrap();
+        assert!(reopened.list_bookmarks().is_empty());
+    }
+
     #[test]
     fn appends_filter_results_for_newly_indexed_range() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
@@ -2166,6 +2507,42 @@ mod tests {
         let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, 2);
+    }
+
+    #[test]
+    fn incremental_hit_batches_append_or_merge_without_duplicates() {
+        let mut hits = vec![1, 3, 5];
+        append_sorted_unique(&mut hits, vec![7, 8, 9]);
+        assert_eq!(hits, vec![1, 3, 5, 7, 8, 9]);
+
+        append_sorted_unique(&mut hits, vec![3, 4, 4, 8, 10]);
+        assert_eq!(hits, vec![1, 3, 4, 5, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn encoding_change_invalidates_decoded_filter_and_search_results_until_rescanned() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "04-20 12:06:02.125   146   179 E Example: matching payload"
+        )
+        .unwrap();
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+        let filter = FilterSpec {
+            word_include: FilterField::plain(true, "matching"),
+            ..Default::default()
+        };
+        let search = SearchSpec::plain("matching");
+        assert_eq!(session.set_filter(&filter).unwrap(), 1);
+        assert_eq!(session.search(&search).unwrap().count, 1);
+
+        session.set_encoding(TextEncoding::Local);
+
+        assert_eq!(session.filtered_count(), 0);
+        assert_eq!(session.search_next(0, SearchDirection::Next), None);
+        assert_eq!(session.desired_filter_spec(), Some(filter));
+        assert_eq!(session.desired_search_spec(), Some(search));
     }
 
     fn java_problem_log() -> tempfile::NamedTempFile {
@@ -2216,6 +2593,21 @@ mod tests {
     }
 
     #[test]
+    fn session_exposes_the_unified_problem_memory_ledger() {
+        let file = java_problem_log();
+        let session = Session::open(file.path()).unwrap();
+
+        let memory = session.problem_memory_stats();
+
+        assert_eq!(
+            memory.limit_bytes,
+            crate::problems::DEFAULT_PROBLEM_MEMORY_BUDGET_BYTES
+        );
+        assert_eq!(memory.charged_bytes, 0);
+        assert_eq!(memory.retained_heap_bytes, 0);
+    }
+
+    #[test]
     fn growing_partial_tail_is_not_seen_by_problem_analysis_until_sealed() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(
@@ -2253,6 +2645,183 @@ mod tests {
         session.seal_growing_input().unwrap();
         assert!(session.finish_problem_input().finished);
         assert_eq!(session.problem_stats().stored_occurrence_count, 1);
+    }
+
+    #[test]
+    fn static_logcat_events_divider_makes_am_crash_commit_eligible() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "--------- beginning of main").unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:00.000  100  100 I Example: ordinary payload"
+        )
+        .unwrap();
+        writeln!(file, "--------- beginning of events").unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:01.000  100  100 I am_crash: [321,com.example.app,0,java.lang.IllegalStateException,bad state,Example.kt,42]"
+        )
+        .unwrap();
+
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+        session.scan_problems_step(4096);
+        session.finish_problem_input();
+
+        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
+        assert!(session
+            .problem_event_observations(ProblemEventId(0))
+            .unwrap()
+            .iter()
+            .all(|observation| observation.provenance()
+                == crate::problems::LineProvenance::Known(crate::problems::LogBuffer::Events)));
+    }
+
+    #[test]
+    fn logcat_divider_state_survives_bounded_problem_scan_chunks() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "--------- beginning of events").unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:01.000  100  100 I am_crash: [321,com.example.app,0,java.lang.IllegalStateException,bad state,Example.kt,42]"
+        )
+        .unwrap();
+
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+        assert_eq!(session.scan_problems_step(1).scanned_lines, 1);
+        assert_eq!(session.problem_stats().stored_occurrence_count, 0);
+        assert_eq!(session.scan_problems_step(1).scanned_lines, 2);
+        session.finish_problem_input();
+
+        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
+    }
+
+    #[test]
+    fn growing_partial_divider_waits_for_newline_then_applies_to_live_append() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "--------- beginning of events").unwrap();
+        file.flush().unwrap();
+
+        let mut session = Session::open_growing(file.path()).unwrap();
+        session.set_problem_input_coverage(InputCoverage::adb_live(
+            crate::problems::BufferSet::EVENTS,
+            RangeCompleteness::StartTruncated,
+        ));
+        session.index_all();
+        assert_eq!(session.stable_lines(), 0);
+        assert_eq!(session.scan_problems_step(4096).scanned_lines, 0);
+
+        writeln!(file).unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:01.000  100  100 I am_anr: [321,com.example.app,7,Input dispatching timed out]"
+        )
+        .unwrap();
+        file.flush().unwrap();
+        session.remap_and_index_step(usize::MAX).unwrap();
+        assert_eq!(session.stable_lines(), 2);
+        session.scan_problems_step(4096);
+        session.seal_growing_input().unwrap();
+        session.finish_problem_input();
+
+        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
+        assert_eq!(
+            session.problem_event(ProblemEventId(0)).unwrap().kind(),
+            crate::problems::ProblemKind::Anr
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn growing_truncation_resets_divider_provenance_to_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provenance-reset.log");
+        std::fs::write(
+            &path,
+            "--------- beginning of kernel\n\
+             filler filler filler filler filler filler filler filler filler filler\n\
+             filler filler filler filler filler filler filler filler filler filler\n",
+        )
+        .unwrap();
+        let mut session = Session::open_growing(&path).unwrap();
+        session.set_problem_input_coverage(InputCoverage::adb_live(
+            crate::problems::BufferSet::KERNEL,
+            RangeCompleteness::StartTruncated,
+        ));
+        session.index_all();
+        session.scan_problems_step(4096);
+
+        std::fs::write(
+            &path,
+            "07-26 12:00:02.000  0  0 E kernel: Out of memory: Killed process 333 (com.kernel.app) total-vm:42kB\n",
+        )
+        .unwrap();
+        let remap = session.remap_and_index_step(usize::MAX).unwrap();
+        assert!(remap.reset);
+        session.scan_problems_step(4096);
+        session.seal_growing_input().unwrap();
+        session.finish_problem_input();
+
+        assert_eq!(
+            session.problem_stats().stored_occurrence_count,
+            0,
+            "the replacement source must not inherit the old kernel divider"
+        );
+    }
+
+    #[test]
+    fn known_kernel_divider_admits_kernel_oom_kill() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "--------- beginning of kernel").unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:02.000  0  0 E kernel: Out of memory: Killed process 333 (com.kernel.app) total-vm:42kB"
+        )
+        .unwrap();
+
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+        session.scan_problems_step(4096);
+        session.finish_problem_input();
+
+        let event = session.problem_event(ProblemEventId(0)).unwrap();
+        assert_eq!(event.kind(), crate::problems::ProblemKind::KernelOomKill);
+        assert!(session
+            .problem_event_observations(ProblemEventId(0))
+            .unwrap()
+            .iter()
+            .all(|observation| observation.provenance()
+                == crate::problems::LineProvenance::Known(crate::problems::LogBuffer::Kernel)));
+    }
+
+    #[test]
+    fn explicit_source_span_wins_divider_conflict_only_on_its_rows() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "--------- beginning of events").unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:01.000  100  100 I am_crash: [321,blocked.app,0,java.lang.IllegalStateException,blocked,Blocked.kt,42]"
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "07-26 12:00:02.000  100  100 I am_crash: [654,accepted.app,0,java.lang.IllegalStateException,accepted,Accepted.kt,42]"
+        )
+        .unwrap();
+
+        let mut session = Session::open(file.path()).unwrap();
+        session
+            .add_problem_source_span(
+                SourceSpan::new(1, 1, crate::problems::LogBuffer::Main).unwrap(),
+            )
+            .unwrap();
+        session.index_all();
+        session.scan_problems_step(4096);
+        session.finish_problem_input();
+
+        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
+        assert_eq!(session.problem_event(ProblemEventId(0)).unwrap().pid(), 654);
     }
 
     #[test]

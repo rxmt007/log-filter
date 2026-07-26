@@ -169,8 +169,7 @@ impl LmkRecognizer {
         self.pending.iter().flatten().count()
     }
 
-    #[cfg(test)]
-    pub const fn pending_eviction_count(&self) -> u64 {
+    pub(crate) const fn pending_eviction_count(&self) -> u64 {
         self.pending_eviction_count
     }
 

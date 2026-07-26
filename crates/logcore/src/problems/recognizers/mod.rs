@@ -11,8 +11,9 @@ pub(super) use kernel_oom::{KernelOomOccurrence, KernelOomRecognizer};
 pub(super) use lmk::{LmkMechanism, LmkOccurrence, LmkRecognizer};
 pub(super) use native::NativeRecognizer;
 pub(super) use process::{
-    parse_zygote_signal_exit, LifecycleOccurrence, LifecycleRecognizer, LifecycleRecognizerError,
-    LifecycleRelation, LifecycleTime,
+    parse_zygote_signal_exit, LifecycleDelta, LifecycleObservation, LifecycleObservationKind,
+    LifecycleOccurrence, LifecycleRecognizer, LifecycleRecognizerError, LifecycleRelation,
+    LifecycleTime,
 };
 
 use super::engine::{ObservedLine, RecognizedProblem};

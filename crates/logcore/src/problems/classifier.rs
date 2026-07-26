@@ -92,6 +92,12 @@ pub fn classify_candidate(line: &ParsedLine<'_>, raw_bytes: &[u8]) -> CandidateK
         b"am_proc_start" | b"am_proc_died" | b"am_kill" => {
             kinds |= CandidateKinds::EVENT_LOG | CandidateKinds::LIFECYCLE;
         }
+        b"Zygote"
+            if starts_with_payload(message, b"Process ")
+                && contains_ascii(message, b" exited due to signal ") =>
+        {
+            kinds |= CandidateKinds::LIFECYCLE;
+        }
         b"libc" => {
             if starts_with_payload(message, b"Fatal signal ") {
                 kinds |= CandidateKinds::NATIVE_CRASH;

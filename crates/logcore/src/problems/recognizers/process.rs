@@ -1,6 +1,7 @@
 use crate::problems::{
-    EventLogRecord, EvidenceFormat, LineProvenance, LogBuffer, ProcessIdentity, ProcessInstance,
-    ProcessInstanceTracker, ProcessTrackerError,
+    EventLogRecord, EvidenceFormat, LineProvenance, LogBuffer, ProblemMemoryBudget,
+    ProcessIdentity, ProcessInstance, ProcessInstanceKey, ProcessInstanceTracker,
+    ProcessTrackerError,
 };
 use std::str;
 
@@ -119,6 +120,7 @@ pub struct LifecycleObservation {
     pub process: ProcessNameToken,
     pub uid: Option<u32>,
     pub user: Option<u32>,
+    pub process_instance: ProcessInstanceKey,
     pub strength: ObservationStrength,
     pub source: LifecycleSource,
 }
@@ -167,8 +169,17 @@ impl Default for LifecycleRecognizer {
 
 impl LifecycleRecognizer {
     pub fn new() -> Self {
+        Self::with_budget(ProblemMemoryBudget::new())
+    }
+
+    pub(crate) fn with_budget(memory_budget: ProblemMemoryBudget) -> Self {
         Self {
-            tracker: ProcessInstanceTracker::new(),
+            tracker: ProcessInstanceTracker::with_limits_and_budget(
+                crate::problems::MAX_ACTIVE_PROCESS_INSTANCES,
+                crate::problems::MAX_RECENT_TERMINATED_INSTANCES,
+                memory_budget,
+            )
+            .expect("documented process tracker limits must be valid"),
             pending: [None; MAX_PENDING_DEATHS],
             pending_eviction_count: 0,
         }
@@ -178,13 +189,23 @@ impl LifecycleRecognizer {
         &self.tracker
     }
 
-    #[cfg(test)]
-    pub const fn pending_eviction_count(&self) -> u64 {
+    pub(crate) const fn pending_eviction_count(&self) -> u64 {
         self.pending_eviction_count
     }
 
     pub fn pending_count(&self) -> usize {
         self.pending.iter().flatten().count()
+    }
+
+    pub(crate) fn observe_fault_identity(
+        &mut self,
+        line: u32,
+        pid: u32,
+        process: &str,
+    ) -> Result<ProcessInstanceKey, LifecycleRecognizerError> {
+        let identity = ProcessIdentity::new(pid, process, None, None)
+            .expect("recognized fault identities have a non-zero pid and process name");
+        Ok(self.tracker.observe_identity(line, identity)?.key())
     }
 
     #[cfg(test)]
@@ -254,7 +275,13 @@ impl LifecycleRecognizer {
                 };
                 if strength == ObservationStrength::SupportingOnly {
                     return Ok(LifecycleDelta {
-                        observation: Some(start_observation(line, parsed, strength, source)),
+                        observation: Some(start_observation(
+                            line,
+                            parsed,
+                            ProcessInstanceKey(0),
+                            strength,
+                            source,
+                        )),
                         occurrence: None,
                     });
                 }
@@ -271,7 +298,14 @@ impl LifecycleRecognizer {
                 };
                 if strength == ObservationStrength::SupportingOnly {
                     return Ok(LifecycleDelta {
-                        observation: Some(death_observation(line, parsed, None, strength, source)),
+                        observation: Some(death_observation(
+                            line,
+                            parsed,
+                            None,
+                            ProcessInstanceKey(0),
+                            strength,
+                            source,
+                        )),
                         occurrence: None,
                     });
                 }
@@ -281,6 +315,11 @@ impl LifecycleRecognizer {
                 let Some(process) = ProcessNameToken::new(kill.process_name) else {
                     return Ok(LifecycleDelta::default());
                 };
+                let process_instance = self
+                    .tracker
+                    .active_for_pid(kill.pid)
+                    .filter(|active| active.process_name() == process.as_str())
+                    .map_or(ProcessInstanceKey(0), |active| active.instance().key());
                 Ok(LifecycleDelta {
                     observation: Some(LifecycleObservation {
                         kind: LifecycleObservationKind::KillRequest,
@@ -289,6 +328,7 @@ impl LifecycleRecognizer {
                         process,
                         uid: None,
                         user: non_negative_user(kill.user_id),
+                        process_instance,
                         strength: ObservationStrength::SupportingOnly,
                         source,
                     }),
@@ -348,6 +388,7 @@ impl LifecycleRecognizer {
                 process,
                 uid: Some(uid),
                 user,
+                process_instance: terminated_instance.key(),
                 strength: ObservationStrength::Independent,
                 source,
             }),
@@ -379,7 +420,9 @@ impl LifecycleRecognizer {
     }
 
     pub fn reset(&mut self) {
-        *self = Self::new();
+        self.tracker.reset();
+        self.pending.fill(None);
+        self.pending_eviction_count = 0;
     }
 
     fn record_start(
@@ -424,7 +467,13 @@ impl LifecycleRecognizer {
             }
         });
         Ok(LifecycleDelta {
-            observation: Some(start_observation(line, start, strength, source)),
+            observation: Some(start_observation(
+                line,
+                start,
+                started_instance.key(),
+                strength,
+                source,
+            )),
             occurrence,
         })
     }
@@ -468,6 +517,7 @@ impl LifecycleRecognizer {
                 line,
                 death,
                 active_identity.map(|identity| identity.0),
+                instance.key(),
                 strength,
                 source,
             )),
@@ -630,6 +680,7 @@ fn parse_decimal_prefix_allow_zero(value: &[u8]) -> Option<(u32, &[u8])> {
 fn start_observation(
     line: u32,
     start: ParsedStart,
+    process_instance: ProcessInstanceKey,
     strength: ObservationStrength,
     source: LifecycleSource,
 ) -> LifecycleObservation {
@@ -640,6 +691,7 @@ fn start_observation(
         process: start.process.expect("parsed start has process"),
         uid: Some(start.uid),
         user: start.user,
+        process_instance,
         strength,
         source,
     }
@@ -649,6 +701,7 @@ fn death_observation(
     line: u32,
     death: ParsedDeath,
     uid: Option<u32>,
+    process_instance: ProcessInstanceKey,
     strength: ObservationStrength,
     source: LifecycleSource,
 ) -> LifecycleObservation {
@@ -659,6 +712,7 @@ fn death_observation(
         process: death.process,
         uid,
         user: death.user,
+        process_instance,
         strength,
         source,
     }

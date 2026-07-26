@@ -1,13 +1,19 @@
+use super::budget::{
+    aggregate_vec_usage, hash_map_usage, vec_deque_usage, ProblemMemoryAccount,
+    ProblemMemoryBudget, ProblemMemoryBudgetError, ProblemMemoryUsage,
+};
 use super::{IdentityQuality, ProcessInstanceKey};
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 pub const MAX_ACTIVE_PROCESS_INSTANCES: usize = 65_536;
 pub const MAX_RECENT_TERMINATED_INSTANCES: usize = 4_096;
+pub const MAX_TRACKED_PROCESS_NAME_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessIdentityError {
     ZeroPid,
     EmptyProcessName,
+    ProcessNameTooLong,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -31,6 +37,9 @@ impl<'a> ProcessIdentity<'a> {
         if process_name.trim().is_empty() {
             return Err(ProcessIdentityError::EmptyProcessName);
         }
+        if process_name.len() > MAX_TRACKED_PROCESS_NAME_BYTES {
+            return Err(ProcessIdentityError::ProcessNameTooLong);
+        }
         Ok(Self {
             pid,
             process_name,
@@ -50,6 +59,8 @@ pub enum ProcessEpochOrigin {
 pub enum ProcessTrackerError {
     KeySpaceExhausted,
     EpochSpaceExhausted,
+    MemoryBudget,
+    Allocation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,7 +98,7 @@ impl ProcessInstance {
 struct ActiveProcess {
     instance: ProcessInstance,
     pid: u32,
-    process_name: Box<str>,
+    process_name: String,
     uid: Option<u32>,
     user: Option<u32>,
     start_line: u32,
@@ -169,14 +180,17 @@ impl<'a> TerminatedProcessInstance<'a> {
 #[derive(Debug)]
 pub struct ProcessInstanceTracker {
     active: HashMap<u32, ActiveProcess>,
-    active_order: BTreeSet<(u32, u32, u32)>,
     recent_terminated: VecDeque<TerminatedProcess>,
+    process_name_capacity: usize,
     max_active_instances: usize,
     max_recent_terminated: usize,
     active_eviction_count: u64,
     recent_eviction_count: u64,
+    budget_drop_count: u64,
     next_key: u32,
     next_epoch: u64,
+    memory_budget: ProblemMemoryBudget,
+    memory: ProblemMemoryAccount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +201,7 @@ pub struct ProcessTrackerStats {
     max_recent_terminated: usize,
     active_eviction_count: u64,
     recent_eviction_count: u64,
+    budget_drop_count: u64,
 }
 
 impl ProcessTrackerStats {
@@ -214,8 +229,14 @@ impl ProcessTrackerStats {
         self.recent_eviction_count
     }
 
+    pub const fn budget_drop_count(self) -> u64 {
+        self.budget_drop_count
+    }
+
     pub const fn identity_coverage_limited(self) -> bool {
-        self.active_eviction_count != 0 || self.recent_eviction_count != 0
+        self.active_eviction_count != 0
+            || self.recent_eviction_count != 0
+            || self.budget_drop_count != 0
     }
 }
 
@@ -238,22 +259,38 @@ impl ProcessInstanceTracker {
         max_active_instances: usize,
         max_recent_terminated: usize,
     ) -> Result<Self, ProcessTrackerLimitsError> {
+        Self::with_limits_and_budget(
+            max_active_instances,
+            max_recent_terminated,
+            ProblemMemoryBudget::new(),
+        )
+    }
+
+    pub(crate) fn with_limits_and_budget(
+        max_active_instances: usize,
+        max_recent_terminated: usize,
+        memory_budget: ProblemMemoryBudget,
+    ) -> Result<Self, ProcessTrackerLimitsError> {
         if !(1..=MAX_ACTIVE_PROCESS_INSTANCES).contains(&max_active_instances) {
             return Err(ProcessTrackerLimitsError::InvalidActiveLimit);
         }
         if !(1..=MAX_RECENT_TERMINATED_INSTANCES).contains(&max_recent_terminated) {
             return Err(ProcessTrackerLimitsError::InvalidRecentLimit);
         }
+        let memory = memory_budget.account();
         Ok(Self {
             active: HashMap::new(),
-            active_order: BTreeSet::new(),
             recent_terminated: VecDeque::new(),
+            process_name_capacity: 0,
             max_active_instances,
             max_recent_terminated,
             active_eviction_count: 0,
             recent_eviction_count: 0,
+            budget_drop_count: 0,
             next_key: 1,
             next_epoch: 1,
+            memory_budget,
+            memory,
         })
     }
 
@@ -262,33 +299,39 @@ impl ProcessInstanceTracker {
         line: u32,
         identity: ProcessIdentity<'_>,
     ) -> Result<ProcessInstance, ProcessTrackerError> {
-        let matches_active = self
+        if let Some(active) = self
             .active
-            .get(&identity.pid)
-            .is_some_and(|active| active.matches(identity));
-        if matches_active {
-            let mut active = self
-                .remove_active(identity.pid)
-                .expect("matching active process must still exist");
+            .get_mut(&identity.pid)
+            .filter(|active| active.matches(identity))
+        {
             active.enrich(identity);
             active.last_touched_line = active.last_touched_line.max(line);
-            let instance = active.instance;
-            self.insert_active(identity.pid, active);
-            return Ok(instance);
+            return Ok(active.instance);
         }
 
-        let instance = self.allocate_instance(ProcessEpochOrigin::Provisional)?;
-        self.insert_active(
+        let (process_name, victim) = match self.prepare_active_insert(identity) {
+            Ok(prepared) => prepared,
+            Err(error) => return Err(self.record_retention_failure(error)),
+        };
+        let instance = match self.allocate_instance(ProcessEpochOrigin::Provisional) {
+            Ok(instance) => instance,
+            Err(error) => {
+                self.settle_memory();
+                return Err(error);
+            }
+        };
+        self.commit_active_insert(
             identity.pid,
             ActiveProcess {
                 instance,
                 pid: identity.pid,
-                process_name: identity.process_name.into(),
+                process_name,
                 uid: identity.uid,
                 user: identity.user,
                 start_line: line,
                 last_touched_line: line,
             },
+            victim,
         );
         Ok(instance)
     }
@@ -298,18 +341,29 @@ impl ProcessInstanceTracker {
         line: u32,
         identity: ProcessIdentity<'_>,
     ) -> Result<ProcessInstance, ProcessTrackerError> {
-        let instance = self.allocate_instance(ProcessEpochOrigin::ExplicitStart)?;
-        self.insert_active(
+        let (process_name, victim) = match self.prepare_active_insert(identity) {
+            Ok(prepared) => prepared,
+            Err(error) => return Err(self.record_retention_failure(error)),
+        };
+        let instance = match self.allocate_instance(ProcessEpochOrigin::ExplicitStart) {
+            Ok(instance) => instance,
+            Err(error) => {
+                self.settle_memory();
+                return Err(error);
+            }
+        };
+        self.commit_active_insert(
             identity.pid,
             ActiveProcess {
                 instance,
                 pid: identity.pid,
-                process_name: identity.process_name.into(),
+                process_name,
                 uid: identity.uid,
                 user: identity.user,
                 start_line: line,
                 last_touched_line: line,
             },
+            victim,
         );
         Ok(instance)
     }
@@ -323,16 +377,40 @@ impl ProcessInstanceTracker {
             .active
             .get(&identity.pid)
             .is_some_and(|active| active.matches(identity));
-        let mut process = if matching_active {
-            self.remove_active(identity.pid)
-                .expect("matching active process must still exist")
+        let prepared_name_bytes = (!matching_active).then_some(identity.process_name.len());
+        if let Err(error) = self.prepare_death_retention(prepared_name_bytes) {
+            return Err(self.record_retention_failure(error));
+        }
+        let prepared_name = if matching_active {
+            None
         } else {
-            self.remove_active(identity.pid);
-            let instance = self.allocate_instance(ProcessEpochOrigin::Provisional)?;
+            match self.prepare_name(identity.process_name) {
+                Ok(name) => Some(name),
+                Err(error) => {
+                    self.settle_memory();
+                    return Err(self.record_retention_failure(error));
+                }
+            }
+        };
+        let new_instance = if matching_active {
+            None
+        } else {
+            match self.allocate_instance(ProcessEpochOrigin::Provisional) {
+                Ok(instance) => Some(instance),
+                Err(error) => {
+                    self.settle_memory();
+                    return Err(error);
+                }
+            }
+        };
+        let removed_active = self.remove_active(identity.pid);
+        let mut process = if matching_active {
+            removed_active.expect("matching active process must still exist")
+        } else {
             ActiveProcess {
-                instance,
+                instance: new_instance.expect("a new death identity allocates an instance"),
                 pid: identity.pid,
-                process_name: identity.process_name.into(),
+                process_name: prepared_name.expect("a new death identity prepares its name"),
                 uid: identity.uid,
                 user: identity.user,
                 start_line: line,
@@ -342,14 +420,22 @@ impl ProcessInstanceTracker {
         process.enrich(identity);
         process.last_touched_line = process.last_touched_line.max(line);
         let instance = process.instance;
+        if self.recent_terminated.len() == self.max_recent_terminated {
+            if let Some(evicted) = self.recent_terminated.pop_front() {
+                self.process_name_capacity = self
+                    .process_name_capacity
+                    .saturating_sub(evicted.process.process_name.capacity());
+                self.recent_eviction_count = self.recent_eviction_count.saturating_add(1);
+            }
+        }
+        self.process_name_capacity = self
+            .process_name_capacity
+            .saturating_add(process.process_name.capacity());
         self.recent_terminated.push_back(TerminatedProcess {
             process,
             death_line: line,
         });
-        while self.recent_terminated.len() > self.max_recent_terminated {
-            self.recent_terminated.pop_front();
-            self.recent_eviction_count = self.recent_eviction_count.saturating_add(1);
-        }
+        self.settle_memory();
         Ok(instance)
     }
 
@@ -380,7 +466,7 @@ impl ProcessInstanceTracker {
             .iter()
             .rev()
             .find(|terminated| {
-                terminated.process.process_name.as_ref() == process_name
+                terminated.process.process_name.as_str() == process_name
                     && terminated.process.uid == Some(uid)
                     && optional_field_matches(terminated.process.user, user)
             })
@@ -395,31 +481,164 @@ impl ProcessInstanceTracker {
             max_recent_terminated: self.max_recent_terminated,
             active_eviction_count: self.active_eviction_count,
             recent_eviction_count: self.recent_eviction_count,
+            budget_drop_count: self.budget_drop_count,
         }
     }
 
-    fn insert_active(&mut self, pid: u32, active: ActiveProcess) {
+    pub(crate) fn reset(&mut self) {
+        self.active = HashMap::new();
+        self.recent_terminated = VecDeque::new();
+        self.process_name_capacity = 0;
+        self.active_eviction_count = 0;
+        self.recent_eviction_count = 0;
+        self.budget_drop_count = 0;
+        self.next_key = 1;
+        self.next_epoch = 1;
+        self.memory.release();
+        self.memory_budget.clear_limit_state();
+    }
+
+    fn prepare_active_insert(
+        &mut self,
+        identity: ProcessIdentity<'_>,
+    ) -> Result<(String, Option<u32>), ProcessTrackerError> {
+        let replacing = self.active.contains_key(&identity.pid);
+        let victim = (!replacing && self.active.len() >= self.max_active_instances)
+            .then(|| self.oldest_active_pid())
+            .flatten();
+        let map_additional = usize::from(!replacing && victim.is_none());
+        let projected_active_capacity =
+            projected_hash_capacity(self.active.len(), self.active.capacity(), map_additional)
+                .ok_or(ProcessTrackerError::MemoryBudget)?;
+        let preparation_name_capacity = self
+            .process_name_capacity
+            .checked_add(identity.process_name.len())
+            .ok_or(ProcessTrackerError::MemoryBudget)?;
+        let projection = tracker_memory_usage(
+            projected_active_capacity,
+            self.recent_terminated.capacity(),
+            preparation_name_capacity,
+            self.active
+                .len()
+                .saturating_add(self.recent_terminated.len())
+                .saturating_add(1),
+        )
+        .map_err(|_| ProcessTrackerError::MemoryBudget)?;
+        if self.memory.try_set_usage(projection).is_err() {
+            return Err(ProcessTrackerError::MemoryBudget);
+        }
+        if map_additional != 0 && self.active.try_reserve(1).is_err() {
+            self.settle_memory();
+            return Err(ProcessTrackerError::Allocation);
+        }
+        match self.prepare_name(identity.process_name) {
+            Ok(name) => Ok((name, victim)),
+            Err(error) => {
+                self.settle_memory();
+                Err(error)
+            }
+        }
+    }
+
+    fn commit_active_insert(&mut self, pid: u32, active: ActiveProcess, victim: Option<u32>) {
         debug_assert_eq!(pid, active.pid);
         self.remove_active(pid);
-        self.active_order.insert(active_order_key(pid, &active));
-        self.active.insert(pid, active);
-        while self.active.len() > self.max_active_instances {
-            let oldest = self
-                .active_order
-                .iter()
-                .next()
-                .copied()
-                .expect("an over-capacity active map must have an order entry");
-            self.active_order.remove(&oldest);
-            self.active.remove(&oldest.2);
-            self.active_eviction_count = self.active_eviction_count.saturating_add(1);
+        if let Some(victim) = victim {
+            if self.remove_active(victim).is_some() {
+                self.active_eviction_count = self.active_eviction_count.saturating_add(1);
+            }
         }
+        self.process_name_capacity = self
+            .process_name_capacity
+            .saturating_add(active.process_name.capacity());
+        self.active.insert(pid, active);
+        self.settle_memory();
     }
 
     fn remove_active(&mut self, pid: u32) -> Option<ActiveProcess> {
         let active = self.active.remove(&pid)?;
-        self.active_order.remove(&active_order_key(pid, &active));
+        self.process_name_capacity = self
+            .process_name_capacity
+            .saturating_sub(active.process_name.capacity());
         Some(active)
+    }
+
+    fn oldest_active_pid(&self) -> Option<u32> {
+        self.active
+            .iter()
+            .min_by_key(|(pid, active)| (active.last_touched_line, active.instance.key.0, **pid))
+            .map(|(pid, _)| *pid)
+    }
+
+    fn prepare_name(&self, value: &str) -> Result<String, ProcessTrackerError> {
+        let mut prepared = String::new();
+        prepared
+            .try_reserve_exact(value.len())
+            .map_err(|_| ProcessTrackerError::Allocation)?;
+        prepared.push_str(value);
+        Ok(prepared)
+    }
+
+    fn prepare_death_retention(
+        &mut self,
+        prepared_name_bytes: Option<usize>,
+    ) -> Result<(), ProcessTrackerError> {
+        let needs_growth = self.recent_terminated.len() < self.max_recent_terminated;
+        let projected_recent_capacity = if needs_growth {
+            projected_vec_capacity(
+                self.recent_terminated.len(),
+                self.recent_terminated.capacity(),
+                1,
+            )
+            .ok_or(ProcessTrackerError::MemoryBudget)?
+        } else {
+            self.recent_terminated.capacity()
+        };
+        let preparation_name_capacity = self
+            .process_name_capacity
+            .checked_add(prepared_name_bytes.unwrap_or(0))
+            .ok_or(ProcessTrackerError::MemoryBudget)?;
+        let projection = tracker_memory_usage(
+            self.active.capacity(),
+            projected_recent_capacity,
+            preparation_name_capacity,
+            self.active
+                .len()
+                .saturating_add(self.recent_terminated.len())
+                .saturating_add(usize::from(prepared_name_bytes.is_some())),
+        )
+        .map_err(|_| ProcessTrackerError::MemoryBudget)?;
+        self.memory
+            .try_set_usage(projection)
+            .map_err(|_| ProcessTrackerError::MemoryBudget)?;
+        if needs_growth && self.recent_terminated.try_reserve_exact(1).is_err() {
+            self.settle_memory();
+            return Err(ProcessTrackerError::Allocation);
+        }
+        Ok(())
+    }
+
+    fn record_retention_failure(&mut self, error: ProcessTrackerError) -> ProcessTrackerError {
+        self.budget_drop_count = self.budget_drop_count.saturating_add(1);
+        error
+    }
+
+    fn settle_memory(&mut self) {
+        let Ok(usage) = tracker_memory_usage(
+            self.active.capacity(),
+            self.recent_terminated.capacity(),
+            self.process_name_capacity,
+            self.active
+                .len()
+                .saturating_add(self.recent_terminated.len()),
+        ) else {
+            return;
+        };
+        if usage.charged_bytes <= self.memory.usage().charged_bytes {
+            self.memory.settle_precharged(usage);
+        } else {
+            let _ = self.memory.try_set_usage(usage);
+        }
     }
 
     fn allocate_instance(
@@ -444,13 +663,44 @@ impl ProcessInstanceTracker {
     }
 }
 
-fn active_order_key(pid: u32, active: &ActiveProcess) -> (u32, u32, u32) {
-    (active.last_touched_line, active.instance.key.0, pid)
+fn tracker_memory_usage(
+    active_capacity: usize,
+    recent_capacity: usize,
+    process_name_capacity: usize,
+    process_name_allocations: usize,
+) -> Result<ProblemMemoryUsage, ProblemMemoryBudgetError> {
+    hash_map_usage::<u32, ActiveProcess>(active_capacity)?
+        .checked_add(vec_deque_usage::<TerminatedProcess>(recent_capacity)?)?
+        .checked_add(aggregate_vec_usage::<u8>(
+            process_name_capacity,
+            process_name_allocations,
+        )?)
+}
+
+fn projected_hash_capacity(len: usize, capacity: usize, additional: usize) -> Option<usize> {
+    let required = len.checked_add(additional)?;
+    if required <= capacity {
+        Some(capacity)
+    } else {
+        required
+            .checked_next_power_of_two()?
+            .checked_mul(2)
+            .map(|capacity| capacity.max(4))
+    }
+}
+
+fn projected_vec_capacity(len: usize, capacity: usize, additional: usize) -> Option<usize> {
+    let required = len.checked_add(additional)?;
+    if required <= capacity {
+        Some(capacity)
+    } else {
+        required.checked_next_power_of_two()
+    }
 }
 
 impl ActiveProcess {
     fn matches(&self, identity: ProcessIdentity<'_>) -> bool {
-        self.process_name.as_ref() == identity.process_name
+        self.process_name.as_str() == identity.process_name
             && optional_field_matches(self.uid, identity.uid)
             && optional_field_matches(self.user, identity.user)
     }
@@ -687,5 +937,45 @@ mod tests {
         assert_eq!(tracker.stats().recent_terminated(), 2);
         assert_eq!(tracker.stats().recent_eviction_count(), 1);
         assert!(tracker.stats().identity_coverage_limited());
+    }
+
+    #[test]
+    fn public_identity_rejects_names_that_could_bypass_the_tracker_budget() {
+        let oversized = "x".repeat(MAX_TRACKED_PROCESS_NAME_BYTES + 1);
+        assert!(matches!(
+            ProcessIdentity::new(1, &oversized, None, None),
+            Err(ProcessIdentityError::ProcessNameTooLong)
+        ));
+    }
+
+    #[test]
+    fn identity_storm_is_budgeted_and_reset_reclaims_all_tracker_heap() {
+        let budget = ProblemMemoryBudget::with_limit_bytes(4 * 1024).unwrap();
+        let mut tracker =
+            ProcessInstanceTracker::with_limits_and_budget(100, 10, budget.clone()).unwrap();
+        let mut denied = false;
+        for pid in 1..=100 {
+            let name = format!("com.example.process{pid:03}.{}", "x".repeat(96));
+            let identity = ProcessIdentity::new(pid, &name, Some(10_000 + pid), Some(0)).unwrap();
+            match tracker.observe_start(pid, identity) {
+                Ok(_) => {}
+                Err(ProcessTrackerError::MemoryBudget) => {
+                    denied = true;
+                    break;
+                }
+                Err(error) => panic!("unexpected tracker error: {error:?}"),
+            }
+        }
+
+        assert!(denied);
+        assert!(tracker.stats().budget_drop_count() > 0);
+        assert!(tracker.stats().identity_coverage_limited());
+        assert!(budget.stats().charged_bytes <= budget.stats().limit_bytes);
+        assert!(budget.stats().retained_heap_bytes <= budget.stats().charged_bytes);
+
+        tracker.reset();
+        assert_eq!(budget.stats().charged_bytes, 0);
+        assert_eq!(budget.stats().retained_heap_bytes, 0);
+        assert!(!budget.stats().limited);
     }
 }
