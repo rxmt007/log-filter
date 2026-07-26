@@ -1,0 +1,39 @@
+--------- beginning of main
+07-26 12:00:00.000   10   10 I ExampleApp: fixture booted
+07-26 12:00:01.000  111  111 E AndroidRuntime: FATAL EXCEPTION: main
+07-26 12:00:01.001  111  111 E AndroidRuntime: Process: com.example.alpha, PID: 111
+07-26 12:00:01.002  111  111 E AndroidRuntime: java.lang.IllegalStateException: synthetic first message
+07-26 12:00:01.003  111  111 E AndroidRuntime:     at com.example.alpha.Worker.run(Worker.kt:41)
+07-26 12:00:01.004   10   10 I ExampleApp: ordinary boundary
+07-26 12:00:02.000  112  112 E AndroidRuntime: FATAL EXCEPTION: worker
+07-26 12:00:02.001  112  112 E AndroidRuntime: Process: com.example.alpha, PID: 112
+07-26 12:00:02.002  112  112 E AndroidRuntime: java.lang.IllegalStateException: synthetic second message
+07-26 12:00:02.003  112  112 E AndroidRuntime:     at com.example.alpha.Worker.run(Worker.kt:99)
+07-26 12:00:02.004   10   10 I ExampleApp: ordinary boundary
+07-26 12:00:03.000  121  121 E AndroidRuntime: FATAL EXCEPTION: main
+07-26 12:00:03.001  121  121 E AndroidRuntime: Process: com.example.memory, PID: 121
+07-26 12:00:03.002  121  121 E AndroidRuntime: java.lang.OutOfMemoryError: Failed to allocate a synthetic buffer
+07-26 12:00:03.003  121  121 E AndroidRuntime:     at com.example.memory.Cache.fill(Cache.kt:7)
+07-26 12:00:03.004   10   10 I ExampleApp: ordinary boundary
+--------- beginning of system
+07-26 12:01:00.000  100  101 E ActivityManager: ANR in com.example.unresponsive
+07-26 12:01:00.001  100  101 E ActivityManager: PID: 210
+07-26 12:01:00.002  100  101 E ActivityManager: Reason: Input dispatching timed out (synthetic window)
+07-26 12:01:00.003  100  101 E ActivityManager: ANR in com.example.unfinished
+--------- beginning of events
+07-26 12:01:00.004  100  100 I am_anr: [210,com.example.unresponsive,0,Input dispatching timed out]
+07-26 12:02:00.000  100  100 I am_proc_start: [0,301,10301,com.example.worker,activity,com.example/.Worker]
+07-26 12:02:01.000  100  100 I am_proc_died: [0,301,com.example.worker]
+07-26 12:02:02.000  100  100 I am_proc_start: [0,302,10301,com.example.worker,activity,com.example/.Worker]
+--------- beginning of main
+07-26 12:03:00.000  900  900 I lmkd: Kill 'com.example.background' (401), uid 10401, oom_score_adj 900 to free 42000kB rss, 0kB swap; reason: low watermark
+--------- beginning of crash
+07-26 12:04:00.000   99   99 F DEBUG: *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+07-26 12:04:00.001   99   99 F DEBUG: pid: 501, tid: 502, name: worker  >>> com.example.native <<<
+07-26 12:04:00.002   99   99 F DEBUG: signal 11 (SIGSEGV), code 2 (SEGV_ACCERR), fault addr 0x1
+07-26 12:04:00.003   99   99 F DEBUG: backtrace:
+07-26 12:04:00.004   99   99 F DEBUG: #00 pc 0000000000001234 /system/lib64/libfixture.so (synthetic_abort+24)
+--------- beginning of events
+07-26 12:04:00.005  100  100 I am_crash: [501,com.example.native,0,Native crash,signal 11,libfixture.so,0]
+--------- beginning of kernel
+07-26 12:05:00.000    0    0 E kernel: Out of memory: Killed process 601 (com.example.kernelvictim) total-vm:42000kB anon-rss:7000kB

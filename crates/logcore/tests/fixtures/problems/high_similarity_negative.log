@@ -1,0 +1,22 @@
+--------- beginning of main
+07-26 13:00:00.000  111  111 E ExampleRuntime: FATAL EXCEPTION: main
+07-26 13:00:00.001  111  111 E AndroidRuntime: Fatal exception: main
+07-26 13:00:00.002  111  111 E AndroidRuntime: FATAL EXCEPTION:
+07-26 13:00:00.003  111  111 E AndroidRuntime: Process: com.example.nearmiss, PID: 111
+07-26 13:00:00.004  111  111 E ExampleRuntime: java.lang.OutOfMemoryError: quoted application text
+07-26 13:00:00.005  111  111 W art: OutOfMemoryError threshold is being monitored
+07-26 13:00:00.006  100  100 W ActivityManager: ANR investigation for com.example.nearmiss
+07-26 13:00:00.007  100  100 W InputDispatcher: Application is not responding yet
+07-26 13:00:00.008  100  100 I am_anr: [222,com.example.nearmiss,0,Input dispatching timed out]
+07-26 13:00:00.009   99   99 F DEBUG: *** *** *** *** *** near miss *** *** *** *** ***
+07-26 13:00:00.010   99   99 F DEBUG: pid: 333, tid: 334, name: worker  >>> com.example.nearmiss <<<
+07-26 13:00:00.011   99   99 F DEBUG: signal pending for diagnostics
+07-26 13:00:00.012  900  900 I lmkd: Selecting process 444 with oom_score_adj 900
+07-26 13:00:00.013  900  900 I lmkd: pressure 80, skip killing because swap is available
+07-26 13:00:00.014  100  100 I am_proc_start: [0,555,10555,com.example.nearmiss,activity,com.example/.Main]
+07-26 13:00:00.015  100  100 I am_proc_died: [0,555,com.example.nearmiss]
+07-26 13:00:00.016  100  100 I am_kill: [555,com.example.nearmiss,900,synthetic request only]
+--------- beginning of kernel
+07-26 13:00:01.000    0    0 W kernel: Out of memory pressure is rising
+07-26 13:00:01.001    0    0 W kernel: Killed process is a phrase in documentation
+07-26 13:00:01.002    0    0 W lowmemorykiller: Selecting 'com.example.nearmiss' (666), adj 900
