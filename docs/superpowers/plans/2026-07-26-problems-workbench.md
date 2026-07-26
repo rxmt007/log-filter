@@ -6,9 +6,14 @@
 
 **设计依据:** `docs/superpowers/specs/2026-07-26-logfilter-problems-workbench-design.md`
 
-**状态说明（2026-07-26）:** 本轮只对能由现有源码和定向测试直接证明的细项标记 `[x]`；
-复合条目任一条件缺证据就保持未完成。验证全集、10GiB 性能闸门、视觉/可访问性验收、
-独立评审与提交项均未据此宣称完成。
+**状态说明（2026-07-26）:** 核心引擎、有界 IPC、TableScope、底部 Problems 工作台、
+上下文与原文导出已经实现，并完成 960×720 / 1180×720 视觉检查和独立 Standards/Spec
+终审。终审发现的来源越权、OOM 误升级、context/filter 竞态、边界语义、详情审计字段及
+键盘翻页竞态已修复。Java、ANR、native、lifecycle、memory 五个规则族已各补 10 个确定
+正例和 10 个高相似负例，并以 canonical public snapshot 的 BLAKE3 golden 固定输出；
+但 §19.2 要求的 raw/prefixed/interleaved 变体及 Java OOM/kernel OOM 独立矩阵、§19.1
+可逐字段人工审阅的完整 golden 仍未闭环。未完成项继续保持未勾选，尤其是这些 corpus
+缺口、standalone 吞吐和扫描期窗口 p99 性能硬门槛；在关闭前不得宣称 MVP 全部验收。
 
 **总体架构:** `crates/logcore/src/problems/` 是深模块,隐藏候选分类、多行状态机、证据关联、fingerprint、group 更新和内存上限。`Session` 只负责按稳定完整行顺序推进和提供有界查询。Tauri 只负责 generation 校验、调度、DTO 和事件。前端以唯一 `TableScope` 驱动主表,Problems 只保存分页元数据,原始日志继续通过 `get_rows(..., count≤512)` 窗口读取。
 
@@ -948,9 +953,9 @@ interface TableScopeController {
 
 - [ ] 记录机器、文件大小、行数、release 命令、冷/暖缓存各 3 次与中位数、前后数字和 retained heap/RSS 口径。
 - [ ] 运行完整 positive/negative/mixed/incremental corpus。
-- [ ] 运行验证全集。
-- [ ] 做隐私扫描,确认 fixtures/docs 无真实路径、姓名、设备标识和内网信息。
-- [ ] 独立终审者检查:
+- [x] 运行验证全集。
+- [x] 做隐私扫描,确认 fixtures/docs 无真实路径、姓名、设备标识和内网信息。
+- [x] 独立终审者检查:
   - 是否消费未稳定尾行。
   - Stop 是否封口且不可 Resume,Pause 是否保持可恢复。
   - source provenance 是否被夸大,伪造 EventLog/kernel 文本是否越权升级。
@@ -963,8 +968,8 @@ interface TableScopeController {
   - facts 是否暗含根因判断。
   - filter 是否在 context 期间被修改,filter input/result revision 是否混淆。
   - 10GiB 报告是否同时覆盖吞吐、内存和锁停顿。
-- [ ] 修复终审问题后重新跑验证全集。
-- [ ] Commit: `docs: record problems workbench architecture and benchmark`
+- [x] 修复终审问题后重新跑验证全集。
+- [x] Commit: `docs: record problems workbench architecture and benchmark`
 
 ## 范围外
 

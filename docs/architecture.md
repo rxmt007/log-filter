@@ -23,7 +23,8 @@
 ┌────────────────────────┴─────────────────────────────────┐
 │ src-tauri/ 薄命令层                                        │
 │   state.rs   Session/分析代次、流运行时、Problems 游标注册表  │
-│   commands.rs 命令实现 + 后台任务编排(索引/分析/流/导出)      │
+│   commands.rs 通用命令 + 后台任务编排(索引/流/导出)           │
+│   problems.rs Problems 查询、快照与进度编排                  │
 │   dto.rs     camelCase 序列化边界                           │
 └────────────────────────┬─────────────────────────────────┘
                          │ 普通 Rust 函数调用
@@ -158,6 +159,9 @@ error_scan_lines + encoding + problem_engine + problem_scan_lines + problem prov
 - **四个视图** `RowsView::{All, Filtered, Bookmarks, Errors}`。`get_rows_for_view`
   按视图把 view_idx 映射回源行号再解析;Filtered 未激活时自动退化为 All(前端因此可以
   永远请求 filtered 视图)。返回 `(1-based 行号, LogEntry)`。
+- **连续窗口只定位一次**:All（含未激活 Filtered 的退化路径）通过
+  `Indexer::for_each_line_span` 定位一次 checkpoint 后前向扫描整窗，避免 200 行窗口
+  重复做 200 次 checkpoint 查找和单元素 `Vec` 分配。稀疏视图仍按紧凑源行索引映射。
 - **默认过滤不物化**:`FilterSpec` 非激活时 `filtered` 保持空、`filter_active=false`,
   `filtered_count()` 直接返回 `total_lines()`——不为"全命中"生成 3 亿元素数组。
 - **索引前沿**:`indexed_frontier()` 在索引未完成时返回 `indexer.cursor()`,
@@ -276,13 +280,18 @@ minimum grammar、多行边界、字段一致性、来源可信度和关联唯�
   facts，也不能被表述成已确认原因。
 
 来源可信度是事实的一部分。`InputCoverage` 描述 static / adb-live、请求的 buffer 位集和
-捕获范围完整性；`SourceSpanIndex` 与 `BufferProvenanceTracker` 只提升能够由输入适配器
-或标准 divider 证明的来源。形似 EventLog 或 kernel 的普通文本不会自动获得
+捕获范围完整性；只有输入适配器显式写入的 `SourceSpanIndex` 才能把逐行来源提升为
+`Known`。单独出现的标准 divider 仍只是普通文本，不能自行证明后续区间的来源；
+形似 EventLog 或 kernel 的普通文本不会自动获得
 Known(events/kernel) 权限，来源不足的记录不能越权成为提交级事实。
 
 Problems 只消费 `Session::stable_lines()` 内的完整行。`scan_problems_step` 单次最多推进
-4096 个物理行；事件风暴中达到 128 条实际 candidate/pending-detail 行时提前结束当前
-临界区。static 输入追上最终稳定前沿后才 `finish_problem_input`，growing 输入在 Pause
+4096 个物理行；多行批次在接受下一行前检查 512KiB 原始跨度，事件风暴中达到 128 条实际
+candidate/pending-detail 行时也在下一行前结束当前临界区。为保证进度，单个原子物理行
+可独占一步并超过 512KiB（全局物理行上限仍为 1MiB），因此 512KiB 是多行切片上限而非
+任意输入下的锁时长保证。三个切片条件都只依赖输入字节与行序，不会用墙钟截止改变最终
+结果。static 输入追上最终稳定前沿后才
+`finish_problem_input`，growing 输入在 Pause
 时不 finish，在确认 Stop/EOF 并 seal 后才闭合 pending。截断/轮转会清空 Problems、
 provenance 与增量游标；encoding 改变保留同一输入 session，但递增
 `analysisGeneration`、重置 Problems 并从稳定行 0 重扫。
@@ -307,18 +316,20 @@ overhead 计费。provisional finalize 的临时 `Vec` 另由 4096 项/4MiB 工�
 | 文件 | 职责 |
 |---|---|
 | `src/state.rs` | 全局 `AppState`:会话锁、会话/分析/数据集 revisions、任务代号、流运行时与 Problems cursor registry |
-| `src/commands.rs` | Tauri 命令 + 后台任务编排(索引/Problems/过滤/搜索/流式/导出/切分) |
+| `src/commands.rs` | 通用 Tauri 命令 + 后台任务编排(索引/过滤/搜索/流式/导出/切分)，Problems 原文导出只做范围解析后的通用导出适配 |
+| `src/problems.rs` | Problems 状态/分组/发生记录/详情/快照释放命令，以及有界快照分页和进度调度 |
 | `src/dto.rs` | 序列化边界:camelCase DTO 与 logcore 类型互转(配置转换会走 `normalized()`) |
 | `src/lib.rs` | Tauri Builder:注册插件(opener/dialog)、`manage(AppState)`、命令表 |
 | `src/main.rs` | 入口,调 `lib::run()` |
 
-关键常量(`commands.rs`):
+关键常量(`commands.rs` 与 `problems.rs`):
 
 | 常量 | 值 | 用途 |
 |---|---|---|
 | `INDEX_BUDGET` | 1 MiB | 每步索引预算(步间释放锁) |
 | `INDEX_PROGRESS_STRIDE` | 8 MiB | 索引进度事件的累计字节节流阈值 |
 | `SCAN_CHUNK_LINES` | 4096 | 过滤/搜索分块扫描的块大小 |
+| `PROBLEM_SCAN_CHUNK_LINES` | 4096 | Problems 每个独立扫描步骤的行数上限 |
 | `PROBLEM_CATCH_UP_STEPS_PER_INDEX` | 32 | 每个静态索引片后最多执行的独立 Problems 追赶步骤 |
 | `PROBLEM_PROGRESS_STRIDE` | 65 536 | Problems progress 的行数节流阈值 |
 | `PROBLEM_SNAPSHOT_RECORDS_PER_LOCK` | 4096 | 冻结 Problems 快照时每个 Session 锁段最多处理的记录数 |
@@ -516,6 +527,8 @@ Problems 的派生身份是
 `Indexing → CatchingUpProblems → FinishPending → Finished`；实时抓取则在每次稳定前沿
 增长后增量扫描，Pause 只暂停输入，Stop/EOF 确认后才 seal 与 finish。每一步都在 Session
 锁内按 analysis token 校验，随后释放锁、yield 并在需要时发送 counters-only progress。
+这些事务集中在 `src-tauri/src/problems.rs`；通用 `commands.rs` 只在索引/流生命周期边界
+调用其有界推进接口，不复制 recognizer 或分页语义。
 
 group/occurrence 查询先冻结快照再分页。快照固定排序或冻结 group 的 occurrence prefix，
 因此扫描 revision 后续增长不会把新项混入旧分页；用户刷新才创建新快照。详情只返回紧凑
@@ -760,17 +773,19 @@ pnpm typecheck && pnpm lint && pnpm test
 | `filter` | 级别掩码(全选保留 raw 行/空掩码)、markedOnly、pid/tid/tag 合取、include+exclude、`\|` 多值正则、非法正则报错 |
 | `search` | 子串/正则/大小写折叠、元字符字面量化、Unicode、环绕导航 |
 | `session` | 视图取行与行号、稳定前沿、Problems 分块/封口/重置、过滤不物化默认结果、截断重建、增量过滤、书签、minimap、导出原语等价预言及合成大日志窗口延迟 |
-| `problems` | 候选门控、多行 recognizer、来源权限、进程实例、时间分段、关联边界、指纹 golden、共享预算/风暴限制、快照分页；另有 mixed positive 与高相似 negative golden corpus |
+| `problems` | 候选门控、多行 recognizer、来源权限、进程实例、时间分段、关联边界、指纹 golden、共享预算/风暴限制、快照分页；另有 mixed positive、高相似 negative，以及 Java/ANR/native/lifecycle/memory 各 10 正例 + 10 负例的基础矩阵 corpus；矩阵用 canonical public snapshot 的 BLAKE3 golden 检测整体变化，完整可逐字段审阅的 per-kind golden 仍是验收缺口 |
 | `adb` | devices 解析、设备选择、命令构造(含 `-T`)、spec 拒绝 shell 注入、尾部时间戳提取、预设归一化 |
 | `bookmarks` / `config` / `split` / `encoding` / `export` / `mmap_source` | 各自的往返/归一化/边界(切分行对齐、超长行独占分片、进度回调;配置钳制与兼容迁移;编码映射) |
 
 ### 9.2 src-tauri 单测
 
-- `commands.rs`:view 字符串解析、512 钳制、Problems checked rows/detail/context export、
-  snapshot 生命周期、analysis generation、进度节流、buffers 解析、流式会话清理(prune)、
+- `commands.rs`:view 字符串解析、512 钳制、Problems checked rows/context export、
+  analysis generation、buffers 解析、流式会话清理(prune)、
   **`run_chunked_export` 等价性 ×3**(Filtered/All/Range 输出字节与旧 `export_view`/
   `export_range` oracle 完全一致,9000 行跨批)、导出期间换会话中止、
   **取消导出删除半成品**、`reset_stream_session_file` 先释放 mmap 再截断。
+- `problems.rs`:状态/分组/发生记录/详情、snapshot 生命周期、游标回滚、analysis token
+  校验、批量快照构建与进度节流。
 - `state.rs`:毒化锁恢复、任务代号、analysis 双代次校验、Problems snapshot/cursor 的
   TTL/LRU/单次消费/篡改拒绝及有界退役表。
 - `dto.rs`:事件 camelCase 序列化、紧凑 Problems group/occurrence/fact DTO、

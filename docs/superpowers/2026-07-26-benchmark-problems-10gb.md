@@ -78,6 +78,28 @@ cargo run --release -p logcore --example bench -- \
 交错调度，但 encoding/profile 改变后的从零重分析更接近此口径；因此 standalone 失败
 不能被 production 热页吞吐掩盖。
 
+## 终审后窗口与锁预算首修复测
+
+独立终审后做了两项不改变事件语义的性能首修：
+
+- All 连续窗口从“每行重新定位 checkpoint”改为一次定位后前向扫描整个窗口。
+- `scan_problems_step` 在 4096 行/128 detail 行之外增加确定性的 512KiB 多行切片上限；
+  接受下一行前若会越界就释放 Session 锁，不使用墙钟截止。单个原子物理行可独占一步，
+  因此这不是任意输入下的锁时长保证。
+
+最终 512KiB 版本各做一轮同 corpus spot check（用于确认方向，不替代冷/暖各三次）：
+
+| 口径 | index | Problems / combined | Problems max | 窗口 median / p99 | 判定 |
+|---|---:|---:|---:|---:|---|
+| production | 25.71s | 8.5M/s / 34.17s | 2.38ms | 2.716 / 33.118ms | combined/锁通过，p99 失败 |
+| sequential | 25.1s | 2.49M/s / 53.68s | 21.60ms | 5.515 / 59.003ms | 吞吐/锁/p99 失败 |
+
+窗口批量化把这两轮的最小服务时间降到 0.211ms / 0.136ms，production median 也降至
+2.716ms；但随机冷页和调度尖峰仍使 p99 远超 5ms。把字节预算继续缩到 256KiB 的探索轮
+次出现 2.07M/s、40.00ms max，没有稳定改善缺页尖峰且增加调度开销，因此未保留。结论是：
+下一步应拆分锁等待与锁内服务时间，并做有界 sequential read-ahead；不能继续靠缩小行块
+或更换采样口径宣称过门槛。
+
 ## 事件风暴与内存
 
 0.015GiB deterministic storm corpus 的一次 release 结果：
@@ -102,13 +124,40 @@ cargo run --release -p logcore --example bench -- \
 中位数 32.78s，仍低于 37s 硬门槛；但扫描期间的随机跨文件窗口 p99 明显高于完成后窗口
 基线，不能把两者当成同一口径。
 
+| 版本/口径 | index | index + Problems | 内存口径 |
+|---|---:|---:|---|
+| 历史无 Problems（2026-07-06） | 20.6s | 不适用 | 私有内存峰值约 1.4GiB |
+| 当前 production 中位数 | 23.92s | 32.78s | Problems retained 0.10MiB / high-water 0.13MiB |
+
+这张表只用于展示功能加入前后的已知数据，**不是同一二进制、同一系统内存采样方式的严格
+before/after 实验**。Problems 在历史版本中不存在，因此没有可比较的 Problems retained
+值；历史“私有内存”也不能与当前 Problems 自身账本直接相减。合并前仍需在可控机器上用
+同一采样工具分别跑固定点与当前分支，才能给出可信的进程内存增量。
+
+## 补充系统级内存采样
+
+在允许读取 macOS `time -l` 统计的环境中，另跑了一次同一 10GiB production 命令：
+
+```sh
+/usr/bin/time -l cargo run --release -p logcore --example bench -- \
+  10 /tmp/logfilter-problems-10gb.log \
+  --problems-only --assert-contracts --schedule=production
+```
+
+该次运行报告 `maximum resident set size = 5,737,496,576 bytes`（5.343GiB）和
+`peak memory footprint = 33,791,872 bytes`（32.23MiB）。最大 RSS 包含顺序触达 10GiB
+mmap 后的驻留文件页，不能解释为 Problems heap；32.23MiB footprint 也不是历史报告的
+“私有内存”同一口径。本次额外运行受缓存状态影响，index + Problems 为 55.15s、窗口
+p99 31.582ms，故不混入上面的三次中位数，只作为系统统计可得性和内存量纲记录。
+
 ## 测量限制
 
 - 管理环境不能可靠执行系统级 page-cache purge，因而无法声称完成了“受控冷缓存 3 次 +
   受控暖缓存 3 次”。以上是同 corpus 的三次重复 production 与三次重复 sequential，
   缓存状态未被人为控制。
-- `/usr/bin/time -l` 在当前受限环境无法读取完整系统统计，因此没有给出可信的进程 RSS。
-  报告中的内存是 Problems 自身账本的 charged/retained/high-water，不等同于进程 RSS。
+- 已补一轮系统级 RSS/footprint，但尚无固定点的同工具对照，也没有冷/暖各三次，因此不能
+  用它声称 Problems 的进程内存增量已经验收。报告中的 charged/retained/high-water 仍只
+  是 Problems 自身账本，不等同于进程 RSS。
 - 单次 `--assert-contracts` 的 PASS/FAIL 只是该次可适用门槛；最终判定按三次中位数，并且
   production 与 standalone 使用各自正确的门槛。
 
