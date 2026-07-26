@@ -1,10 +1,19 @@
 mod anr;
 mod java;
+mod kernel_oom;
+mod lmk;
 mod native;
+mod process;
 
 pub(super) use anr::AnrRecognizer;
 pub(super) use java::JavaRecognizer;
+pub(super) use kernel_oom::{KernelOomOccurrence, KernelOomRecognizer};
+pub(super) use lmk::{LmkMechanism, LmkOccurrence, LmkRecognizer};
 pub(super) use native::NativeRecognizer;
+pub(super) use process::{
+    parse_zygote_signal_exit, LifecycleOccurrence, LifecycleRecognizer, LifecycleRecognizerError,
+    LifecycleRelation, LifecycleTime,
+};
 
 use super::engine::{ObservedLine, RecognizedProblem};
 
