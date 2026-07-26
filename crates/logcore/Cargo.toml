@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/rxmt007/log-filter"
 
 [dependencies]
+blake3 = "=1.8.2"
 encoding_rs = "0.8"
 memmap2 = "0.9"
 memchr = "2"
