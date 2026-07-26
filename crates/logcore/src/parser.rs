@@ -136,9 +136,45 @@ pub fn level_byte_of_line(line: &[u8]) -> Option<u8> {
     threadtime_level_byte(line).or_else(|| time_level_byte(line))
 }
 
+/// 零分配借用 ASCII tag,用于在解码与完整字段解析前做保守候选预筛。
+///
+/// 仅返回与 `parse_line_ref` 同样成立的 threadtime/time envelope；非 ASCII tag
+/// 返回 `None`,让调用方回退到完整解析而不是猜测。
+pub fn tag_bytes_of_line(line: &[u8]) -> Option<&[u8]> {
+    threadtime_tag_bytes(line).or_else(|| time_tag_bytes(line))
+}
+
 fn ascii_tokens(line: &[u8]) -> impl Iterator<Item = &[u8]> {
     line.split(|b| b.is_ascii_whitespace())
         .filter(|token| !token.is_empty())
+}
+
+fn threadtime_tag_bytes(line: &[u8]) -> Option<&[u8]> {
+    let mut cursor = 0;
+    let _date = next_ascii_token(line, &mut cursor)?;
+    let _time = next_ascii_token(line, &mut cursor)?;
+    let pid = next_ascii_token(line, &mut cursor)?;
+    let tid = next_ascii_token(line, &mut cursor)?;
+    let level = next_ascii_token(line, &mut cursor)?;
+    if !pid.iter().all(u8::is_ascii_digit)
+        || !tid.iter().all(u8::is_ascii_digit)
+        || level.len() != 1
+        || !b"VDIWEF".contains(&level[0])
+    {
+        return None;
+    }
+    let tail = trim_ascii_start(&line[cursor..]);
+    if tail.is_empty() {
+        return None;
+    }
+    let tag = if let Some(colon) = memchr::memchr(b':', tail) {
+        trim_ascii_end(&tail[..colon])
+    } else if let Some(ws) = tail.iter().position(|byte| byte.is_ascii_whitespace()) {
+        &tail[..ws]
+    } else {
+        tail
+    };
+    (!tag.is_empty() && tag.is_ascii()).then_some(tag)
 }
 
 fn threadtime_level_byte(line: &[u8]) -> Option<u8> {
@@ -156,6 +192,42 @@ fn threadtime_level_byte(line: &[u8]) -> Option<u8> {
         return None;
     }
     Some(level[0])
+}
+
+fn time_tag_bytes(line: &[u8]) -> Option<&[u8]> {
+    let mut cursor = 0;
+    let _date = next_ascii_token(line, &mut cursor)?;
+    let _time = next_ascii_token(line, &mut cursor)?;
+    let rest = trim_ascii_start(&line[cursor..]);
+    let level = *rest.first()?;
+    if !b"VDIWEF".contains(&level) || rest.get(1) != Some(&b'/') {
+        return None;
+    }
+    let after = &rest[2..];
+    let open = memchr::memchr(b'(', after)?;
+    let close = memchr::memchr(b')', after)?;
+    if close < open {
+        return None;
+    }
+    let tag = &after[..open];
+    (!tag.is_empty() && tag.is_ascii()).then_some(tag)
+}
+
+fn next_ascii_token<'a>(bytes: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
+    while bytes
+        .get(*cursor)
+        .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
+        *cursor += 1;
+    }
+    let start = *cursor;
+    while bytes
+        .get(*cursor)
+        .is_some_and(|byte| !byte.is_ascii_whitespace())
+    {
+        *cursor += 1;
+    }
+    (start != *cursor).then_some(&bytes[start..*cursor])
 }
 
 fn time_level_byte(line: &[u8]) -> Option<u8> {
@@ -189,6 +261,17 @@ fn rest_after_ascii_tokens(line: &[u8], n: usize) -> Option<&[u8]> {
 fn trim_ascii_start(mut bytes: &[u8]) -> &[u8] {
     while let [first, rest @ ..] = bytes {
         if first.is_ascii_whitespace() {
+            bytes = rest;
+        } else {
+            break;
+        }
+    }
+    bytes
+}
+
+fn trim_ascii_end(mut bytes: &[u8]) -> &[u8] {
+    while let [rest @ .., last] = bytes {
+        if last.is_ascii_whitespace() {
             bytes = rest;
         } else {
             break;
@@ -326,6 +409,28 @@ mod tests {
                 .map(|b| (b as char).to_string())
                 .unwrap_or_default();
             assert_eq!(got, expected, "line: {line:?}");
+        }
+    }
+
+    #[test]
+    fn borrowed_ascii_tag_matches_the_full_parser_without_decoding() {
+        for line in [
+            b"04-20 12:06:02.125   146   179 D BatteryService: update start".as_slice(),
+            b"04-20 12:06:02.125   146   179 E NoColonTag message".as_slice(),
+            b"04-17 09:01:18.910 D/LightsService(  139): BKL : 106".as_slice(),
+            b"--------- beginning of main".as_slice(),
+            b"01-01 00:00:00.000 \xff invalid".as_slice(),
+        ] {
+            let decoded = String::from_utf8_lossy(line);
+            assert_eq!(
+                tag_bytes_of_line(line),
+                parse_line_ref(&decoded)
+                    .tag
+                    .is_ascii()
+                    .then(|| parse_line_ref(&decoded).tag.as_bytes())
+                    .filter(|tag| !tag.is_empty()),
+                "line: {line:?}"
+            );
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::parser::ParsedLine;
+use crate::parser::{tag_bytes_of_line, ParsedLine};
 
 /// 廉价候选类别位集。分类只决定“哪些确定性 parser 值得看这一行”，不提交 Problem。
 #[repr(transparent)]
@@ -147,6 +147,40 @@ pub fn classify_candidate(line: &ParsedLine<'_>, raw_bytes: &[u8]) -> CandidateK
     }
 
     kinds
+}
+
+/// 解码和完整字段解析前的保守字节闸门。
+///
+/// `false` 只表示该行不可能自行打开平台故障候选；多行 recognizer 尚未闭合时,
+/// Session 仍会绕过此闸门并提交完整行。ASCII-compatible 的受支持本地编码可直接
+/// 读取 Android 平台 tag；无法证明 envelope/tag 时只对严格 raw 起始语法返回 true。
+pub fn might_be_problem_candidate(raw_bytes: &[u8]) -> bool {
+    if let Some(tag) = tag_bytes_of_line(raw_bytes) {
+        return matches!(
+            tag,
+            b"AndroidRuntime"
+                | b"art"
+                | b"dalvikvm"
+                | b"ActivityManager"
+                | b"am_crash"
+                | b"am_anr"
+                | b"am_proc_start"
+                | b"am_proc_died"
+                | b"am_kill"
+                | b"Zygote"
+                | b"libc"
+                | b"DEBUG"
+                | b"debuggerd"
+                | b"lmkd"
+                | b"lowmemorykiller"
+                | b"kernel"
+        );
+    }
+
+    let raw = trim_ascii_start(raw_bytes);
+    is_tombstone_separator(raw)
+        || is_kernel_oom_text(raw)
+        || contains_ascii(raw, b"lowmemorykiller: Killing '")
 }
 
 fn starts_with_payload(bytes: &[u8], prefix: &[u8]) -> bool {
@@ -496,5 +530,41 @@ mod tests {
             ),
             CandidateKinds::NATIVE_CRASH
         );
+    }
+
+    #[test]
+    fn byte_gate_never_rejects_a_supported_candidate_start() {
+        for raw in [
+            "07-26 10:00:00.000  1  1 E AndroidRuntime: FATAL EXCEPTION: main",
+            "07-26 10:00:00.000  1  1 E ActivityManager: ANR in com.example.app",
+            "07-26 10:00:00.000  1  1 I am_crash: [1,com.example.app,0,x,y,z,1]",
+            "07-26 10:00:00.000  1  1 I am_anr: [0,1,com.example.app,0,reason]",
+            "07-26 10:00:00.000  1  1 F libc: Fatal signal 11 (SIGSEGV)",
+            "07-26 10:00:00.000  1  1 I lmkd: Kill 'com.example.app' (1), uid 1",
+            "07-26 10:00:00.000  1  1 E kernel: Out of memory: Killed process 1 (app)",
+            "*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***",
+            "lowmemorykiller: Killing 'com.example.app' (1), adj 900",
+        ] {
+            let parsed = crate::parser::parse_line_ref(raw);
+            assert!(
+                !classify_candidate(&parsed, raw.as_bytes()).is_empty(),
+                "fixture must be a real classifier candidate: {raw}"
+            );
+            assert!(
+                might_be_problem_candidate(raw.as_bytes()),
+                "byte gate rejected: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_gate_skips_common_non_platform_tags_but_keeps_candidate_tags_conservatively() {
+        assert!(!might_be_problem_candidate(
+            b"07-26 10:00:00.000  1  1 I ExampleApp: ordinary output"
+        ));
+        assert!(might_be_problem_candidate(
+            b"07-26 10:00:00.000  1  1 I ActivityManager: ordinary platform chatter"
+        ));
+        assert!(!might_be_problem_candidate(b"ordinary raw output"));
     }
 }

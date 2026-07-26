@@ -3,8 +3,28 @@
 use super::PackedLogTimestamp;
 
 pub fn parse_log_timestamp(date: &str, time: &str) -> Option<PackedLogTimestamp> {
-    let date = date.as_bytes();
-    let time = time.as_bytes();
+    parse_log_timestamp_bytes(date.as_bytes(), time.as_bytes())
+}
+
+/// 从完整原始行前两个 ASCII token 解析 Android 时间戳,无需先解码正文。
+pub fn parse_log_timestamp_prefix(raw: &[u8]) -> Option<PackedLogTimestamp> {
+    let raw = trim_ascii_start(raw);
+    let date = raw.get(..5)?;
+    if !raw.get(5)?.is_ascii_whitespace() {
+        return None;
+    }
+    let remainder = trim_ascii_start(&raw[5..]);
+    let time = remainder.get(..12)?;
+    if remainder
+        .get(12)
+        .is_some_and(|byte| !byte.is_ascii_whitespace())
+    {
+        return None;
+    }
+    parse_log_timestamp_bytes(date, time)
+}
+
+fn parse_log_timestamp_bytes(date: &[u8], time: &[u8]) -> Option<PackedLogTimestamp> {
     if date.len() != 5
         || time.len() != 12
         || date[2] != b'-'
@@ -45,6 +65,17 @@ fn parse_three_digits(bytes: &[u8], start: usize) -> Option<u16> {
         return None;
     }
     Some(u16::from(hundreds - b'0') * 100 + u16::from(tens - b'0') * 10 + u16::from(ones - b'0'))
+}
+
+fn trim_ascii_start(mut bytes: &[u8]) -> &[u8] {
+    while let [first, rest @ ..] = bytes {
+        if first.is_ascii_whitespace() {
+            bytes = rest;
+        } else {
+            break;
+        }
+    }
+    bytes
 }
 
 fn days_in_month(month: u8) -> Option<u8> {
@@ -216,6 +247,24 @@ mod tests {
             ("07-26", "09:08:60.006"),
         ] {
             assert_eq!(parse_log_timestamp(date, time), None, "{date} {time}");
+        }
+    }
+
+    #[test]
+    fn byte_prefix_parser_matches_the_string_parser_without_decoding_the_line() {
+        for raw in [
+            b"07-26 09:08:07.006  1  1 I Tag: value".as_slice(),
+            b"07-26 09:08:07.006 D/Tag(  1): value".as_slice(),
+            b"--------- beginning of main".as_slice(),
+            b"07-26 invalid \xff".as_slice(),
+        ] {
+            let decoded = String::from_utf8_lossy(raw);
+            let mut tokens = decoded.split_whitespace();
+            let expected = tokens
+                .next()
+                .zip(tokens.next())
+                .and_then(|(date, time)| parse_log_timestamp(date, time));
+            assert_eq!(parse_log_timestamp_prefix(raw), expected, "raw: {raw:?}");
         }
     }
 

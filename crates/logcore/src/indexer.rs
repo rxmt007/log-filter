@@ -116,19 +116,35 @@ impl Indexer {
         frontier: usize,
         mut f: impl FnMut(usize, usize, usize),
     ) {
+        self.for_each_line_span_while(bytes, start, end, frontier, |line, span_start, span_end| {
+            f(line, span_start, span_end);
+            true
+        });
+    }
+
+    /// `for_each_line_span` 的可中止版本。回调返回 false 时,当前行仍算已访问；
+    /// 返回值是第一条未访问行,调用方可把它作为下一批起点。
+    pub fn for_each_line_span_while(
+        &self,
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+        frontier: usize,
+        mut f: impl FnMut(usize, usize, usize) -> bool,
+    ) -> usize {
         let end = end.min(self.total_lines);
         if start >= end {
-            return;
+            return start.min(end);
         }
         let frontier = frontier.min(bytes.len());
         let Some(checkpoint) = self.checkpoint_before_or_at(start) else {
-            return;
+            return start;
         };
         let mut line = checkpoint.line;
         let mut offset = checkpoint.offset as usize;
         while line < start {
             let Some(next) = next_line_start(bytes, offset) else {
-                return;
+                return line;
             };
             offset = next;
             line += 1;
@@ -144,10 +160,14 @@ impl Indexer {
             } else {
                 frontier
             };
-            f(line, line_start, line_end.min(frontier));
+            let keep_scanning = f(line, line_start, line_end.min(frontier));
             offset = line_end;
             line += 1;
+            if !keep_scanning {
+                break;
+            }
         }
+        line
     }
 
     fn checkpoint_before_or_at(&self, line: usize) -> Option<LineCheckpoint> {
@@ -358,5 +378,25 @@ mod tests {
             ix.line_spans(bytes, 2, 6, bytes.len()),
             vec![(8, 10), (10, 16), (16, 19), (19, 25)]
         );
+    }
+
+    #[test]
+    fn controllable_span_scan_reports_the_first_unvisited_line() {
+        let bytes = b"zero\none\ntwo\nthree\n";
+        let mut indexer = Indexer::new();
+        indexer.step(bytes, bytes.len());
+        let mut visited = Vec::new();
+        let next = indexer.for_each_line_span_while(
+            bytes,
+            0,
+            indexer.total_lines(),
+            bytes.len(),
+            |line, _, _| {
+                visited.push(line);
+                line < 1
+            },
+        );
+        assert_eq!(visited, vec![0, 1]);
+        assert_eq!(next, 2);
     }
 }

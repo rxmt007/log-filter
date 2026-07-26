@@ -766,6 +766,35 @@ impl ProblemEngine {
         self.index.release_snapshot(snapshot)
     }
 
+    pub(crate) fn requires_full_line(&self) -> bool {
+        self.java.has_pending()
+            || self.anr.has_pending()
+            || self.native.has_pending()
+            || self.kernel_oom.pending_count() != 0
+            || self.lmk.pending_count() != 0
+    }
+
+    /// Advance timestamp/correlation state for a line proven by the byte gate not to
+    /// contain a candidate start. This keeps every physical line in watermark and
+    /// timestamp-segment semantics without decoding or fully parsing ordinary text.
+    pub(crate) fn observe_non_candidate(
+        &mut self,
+        line: u32,
+        timestamp: Option<PackedLogTimestamp>,
+    ) -> ProblemDelta {
+        self.observe_timestamp_value(timestamp);
+        if self.provisional.next_finalize_after_line().is_none()
+            && self.recent.next_expiry_line().is_none()
+        {
+            return ProblemDelta::default();
+        }
+        self.begin_correlation_work(MAX_CORRELATION_WORK_UNITS_PER_OBSERVE);
+        let mut delta = ProblemDelta::default();
+        self.advance_correlation(u64::from(line), &mut delta);
+        self.finish_correlation_work();
+        delta
+    }
+
     pub fn observe(&mut self, line: ObservedLine<'_>) -> ProblemDelta {
         self.begin_correlation_work(MAX_CORRELATION_WORK_UNITS_PER_OBSERVE);
         let candidates = classify_candidate(&line.parsed, line.raw);
@@ -1692,6 +1721,13 @@ impl ProblemEngine {
         line: &ObservedLine<'_>,
     ) -> (PackedLogTimestamp, Option<LifecycleTime>) {
         let parsed = parse_log_timestamp(line.parsed.date, line.parsed.time);
+        self.observe_timestamp_value(parsed)
+    }
+
+    fn observe_timestamp_value(
+        &mut self,
+        parsed: Option<PackedLogTimestamp>,
+    ) -> (PackedLogTimestamp, Option<LifecycleTime>) {
         let Some(current) = self.timestamps.observe(parsed) else {
             self.timestamp_origin = None;
             return (PackedLogTimestamp::UNKNOWN, None);
@@ -2536,6 +2572,26 @@ mod tests {
         assert!(engine.recent_clocks.is_empty());
         assert!(engine.provisional.is_empty());
         assert!(engine.recent.is_empty());
+    }
+
+    #[test]
+    fn ordinary_fast_path_preserves_timestamp_boundaries_and_pending_bypass() {
+        let mut engine = ProblemEngine::new();
+        assert!(!engine.requires_full_line());
+
+        let first = super::super::timestamp::parse_log_timestamp("07-26", "12:00:01.000");
+        engine.observe_non_candidate(0, first);
+        assert!(engine.timestamp_origin.is_some());
+        engine.observe_non_candidate(1, None);
+        assert!(engine.timestamp_origin.is_none());
+
+        feed_with_provenance(
+            &mut engine,
+            2,
+            "07-26 12:00:02.000  42  42 E AndroidRuntime: FATAL EXCEPTION: main",
+            LineProvenance::Known(crate::problems::LogBuffer::Main),
+        );
+        assert!(engine.requires_full_line());
     }
 
     #[test]

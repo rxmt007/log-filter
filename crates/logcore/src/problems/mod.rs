@@ -17,6 +17,7 @@ pub use budget::{
     ProblemMemoryBudget, ProblemMemoryBudgetError, ProblemMemoryStats,
     DEFAULT_PROBLEM_MEMORY_BUDGET_BYTES,
 };
+pub(crate) use classifier::might_be_problem_candidate;
 pub use classifier::{classify_candidate, CandidateKinds};
 pub use correlation::{
     CompactCorrelationPayload, CorrelationLimitsError, CorrelationSequenceExhausted,
@@ -67,6 +68,7 @@ pub use provenance::{
     BufferSet, CaptureOrigin, EvidenceAdmission, EvidenceFormat, InputCoverage, LineProvenance,
     LogBuffer, RangeCompleteness, SourceSpan, SourceSpanError, SourceSpanIndex,
 };
+pub(crate) use timestamp::parse_log_timestamp_prefix;
 pub use timestamp::{
     parse_log_timestamp, SegmentedTimestamp, TimestampSegmentId, TimestampSegmentTracker,
 };

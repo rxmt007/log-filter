@@ -7,10 +7,11 @@ use crate::mmap_source::MmapSource;
 use crate::model::LogEntry;
 use crate::parser::parse_line_ref;
 use crate::problems::{
-    BufferProvenanceTracker, GroupId, GroupPage, GroupQuery, GroupSnapshotCapture, GroupSortRecord,
-    InputCoverage, ObservationRef, OccurrencePage, PageSpec, ProblemEngine, ProblemEvent,
-    ProblemEventId, ProblemGroupSummary, ProblemMemoryStats, ProblemStats, QuerySnapshotId,
-    RangeCompleteness, SnapshotError, SourceSpan, SourceSpanError, SourceSpanIndex,
+    might_be_problem_candidate, parse_log_timestamp_prefix, BufferProvenanceTracker, GroupId,
+    GroupPage, GroupQuery, GroupSnapshotCapture, GroupSortRecord, InputCoverage, ObservationRef,
+    OccurrencePage, PageSpec, ProblemEngine, ProblemEvent, ProblemEventId, ProblemGroupSummary,
+    ProblemMemoryStats, ProblemStats, QuerySnapshotId, RangeCompleteness, SnapshotError,
+    SourceSpan, SourceSpanError, SourceSpanIndex,
 };
 use crate::search::{
     next_match, SearchDirection, SearchError, SearchMatcher, SearchSpec, SearchSummary,
@@ -24,6 +25,7 @@ use std::path::PathBuf;
 /// 导出分批行数:每批用批量原语拷进临时缓冲再写盘,界定内存占用。
 const EXPORT_CHUNK_LINES: usize = 4096;
 const PROBLEM_SCAN_MAX_LINES: usize = 4096;
+const PROBLEM_SCAN_MAX_DETAIL_LINES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowsView {
@@ -446,6 +448,7 @@ impl Session {
         let mut stored_occurrences = 0usize;
         let mut dropped_occurrences = 0usize;
         let mut failed_commits = 0usize;
+        let scanned_end;
 
         {
             let source_bytes = self.source.bytes();
@@ -455,7 +458,8 @@ impl Session {
             let source_spans = &self.problem_source_spans;
             let buffer_tracker = &mut self.problem_buffer_tracker;
             let engine = &mut self.problem_engine;
-            indexer.for_each_line_span(
+            let mut detail_lines = 0usize;
+            scanned_end = indexer.for_each_line_span_while(
                 source_bytes,
                 start,
                 end,
@@ -463,16 +467,23 @@ impl Session {
                 |line, span_start, span_end| {
                     let Ok(line) = u32::try_from(line) else {
                         failed_commits = failed_commits.saturating_add(1);
-                        return;
+                        return true;
                     };
                     let raw = &source_bytes[span_start..span_end];
-                    let text = encoding.decode(raw);
-                    let parsed = parse_line_ref(&text);
                     let provenance =
                         buffer_tracker.observe_stable_line(raw, source_spans.provenance_at(line));
-                    let delta = engine.observe(crate::problems::ObservedLine::new(
-                        line, raw, parsed, provenance, coverage,
-                    ));
+                    let needs_detail =
+                        engine.requires_full_line() || might_be_problem_candidate(raw);
+                    let delta = if needs_detail {
+                        detail_lines = detail_lines.saturating_add(1);
+                        let text = encoding.decode(raw);
+                        let parsed = parse_line_ref(&text);
+                        engine.observe(crate::problems::ObservedLine::new(
+                            line, raw, parsed, provenance, coverage,
+                        ))
+                    } else {
+                        engine.observe_non_candidate(line, parse_log_timestamp_prefix(raw))
+                    };
                     committed_occurrences =
                         committed_occurrences.saturating_add(usize::from(delta.committed()));
                     stored_occurrences =
@@ -480,18 +491,19 @@ impl Session {
                     dropped_occurrences =
                         dropped_occurrences.saturating_add(usize::from(delta.dropped()));
                     failed_commits = failed_commits.saturating_add(usize::from(delta.failed()));
+                    detail_lines < PROBLEM_SCAN_MAX_DETAIL_LINES
                 },
             );
         }
-        self.problem_scan_lines = end;
+        self.problem_scan_lines = scanned_end;
         ProblemScanStep {
-            scanned_lines: end,
+            scanned_lines: scanned_end,
             stable_lines,
             committed_occurrences,
             stored_occurrences,
             dropped_occurrences,
             failed_commits,
-            caught_up: end >= stable_lines,
+            caught_up: scanned_end >= stable_lines,
             finished: false,
         }
     }
