@@ -88,6 +88,10 @@ impl ProblemIndexLimits {
 pub struct GroupId(u32);
 
 impl GroupId {
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
     pub const fn raw(self) -> u32 {
         self.0
     }
@@ -277,6 +281,14 @@ impl From<ProblemEventError> for ProblemIndexError {
 pub struct QuerySnapshotId(u64);
 
 impl QuerySnapshotId {
+    pub const fn from_raw(raw: u64) -> Option<Self> {
+        if raw == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
+    }
+
     pub const fn raw(self) -> u64 {
         self.0
     }
@@ -1067,6 +1079,13 @@ mod tests {
         assert_eq!(limits.max_snapshots, 8);
         assert_eq!(limits.snapshot_ttl, Duration::from_secs(5 * 60));
         assert_eq!(limits.max_snapshot_id_bytes, 16 * 1024 * 1024);
+    }
+
+    #[test]
+    fn opaque_ids_have_checked_command_boundary_constructors() {
+        assert_eq!(GroupId::from_raw(42).raw(), 42);
+        assert_eq!(QuerySnapshotId::from_raw(0), None);
+        assert_eq!(QuerySnapshotId::from_raw(9).unwrap().raw(), 9);
     }
 
     #[test]
