@@ -29,6 +29,12 @@ pub struct Status {
     pub total_bytes: u64,
     pub indexing: bool,
     pub generation: u64,
+    pub analysis_generation: u64,
+    pub filter_input_revision: u64,
+    pub applied_filter_input_revision: u64,
+    pub filter_result_revision: u64,
+    pub decode_revision: u64,
+    pub source_data_revision: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -82,10 +88,39 @@ pub struct StreamAppendDto {
 #[serde(rename_all = "camelCase")]
 pub struct StreamControlDto {
     pub status: Status,
+    pub lifecycle: StreamLifecycleDto,
     pub running: bool,
     pub paused: bool,
+    pub error: Option<String>,
     pub device_serial: Option<String>,
     pub session_path: Option<String>,
+}
+
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "kebab-case")]
+pub enum StreamLifecycleDto {
+    Stopped,
+    Starting,
+    Running,
+    Pausing,
+    Paused,
+    Finishing,
+    ControlError,
+}
+
+impl From<crate::state::StreamLifecycle> for StreamLifecycleDto {
+    fn from(value: crate::state::StreamLifecycle) -> Self {
+        use crate::state::StreamLifecycle;
+        match value {
+            StreamLifecycle::Stopped => Self::Stopped,
+            StreamLifecycle::Starting => Self::Starting,
+            StreamLifecycle::Running => Self::Running,
+            StreamLifecycle::Pausing => Self::Pausing,
+            StreamLifecycle::Paused => Self::Paused,
+            StreamLifecycle::Finishing => Self::Finishing,
+            StreamLifecycle::ControlError => Self::ControlError,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -220,6 +255,7 @@ impl From<SearchSpecDto> for logcore::search::SearchSpec {
 pub struct SearchResult {
     pub count: usize,
     pub first_line: Option<u64>,
+    pub request_id: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -227,6 +263,8 @@ pub struct SearchResult {
 pub struct FilterDoneDto {
     pub filtered_lines: usize,
     pub generation: u64,
+    pub filter_input_revision: u64,
+    pub filter_result_revision: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -237,6 +275,7 @@ pub struct SearchProgressDto {
     pub first_line: Option<u64>,
     pub done: bool,
     pub generation: u64,
+    pub request_id: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -301,25 +340,87 @@ mod problem_dtos {
     }
 
     impl ProblemStatsDto {
-        /// Adds the bounded engine/session counters which intentionally do not live
-        /// in the compact persisted index statistics.
-        pub const fn from_compact(
-            stats: logcore::problems::ProblemStats,
-            provisional_occurrence_count: u32,
-            dropped_recent_observation_count: u64,
-            correlation_limited: bool,
-        ) -> Self {
+        pub const fn from_compact(stats: logcore::problems::ProblemStats) -> Self {
             Self {
                 observed_occurrence_count: stats.observed_occurrence_count,
                 stored_occurrence_count: stats.stored_occurrence_count,
                 dropped_occurrence_count: stats.dropped_occurrence_count,
-                provisional_occurrence_count,
+                provisional_occurrence_count: stats.provisional_occurrence_count,
                 stored_group_count: stats.stored_group_count,
                 ungrouped_dropped_occurrence_count: stats.ungrouped_dropped_occurrence_count,
-                dropped_recent_observation_count,
+                dropped_recent_observation_count: stats.dropped_recent_observation_count,
                 revision: stats.revision,
-                limited: stats.limited || correlation_limited,
-                correlation_limited,
+                limited: stats.limited || stats.correlation_limited,
+                correlation_limited: stats.correlation_limited,
+            }
+        }
+    }
+
+    #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum CaptureOriginDto {
+        StaticFile,
+        AdbLive,
+    }
+
+    #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum RangeCompletenessDto {
+        Unknown,
+        Bounded,
+        StartTruncated,
+        EndTruncated,
+    }
+
+    #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum LogBufferDto {
+        Main,
+        System,
+        Events,
+        Crash,
+        Radio,
+        Kernel,
+    }
+
+    #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct InputCoverageDto {
+        pub origin: CaptureOriginDto,
+        pub requested_buffers: Option<Vec<LogBufferDto>>,
+        pub range_completeness: RangeCompletenessDto,
+    }
+
+    impl From<logcore::problems::InputCoverage> for InputCoverageDto {
+        fn from(value: logcore::problems::InputCoverage) -> Self {
+            use logcore::problems::{CaptureOrigin, LogBuffer, RangeCompleteness};
+            let origin = match value.origin() {
+                CaptureOrigin::StaticFile => CaptureOriginDto::StaticFile,
+                CaptureOrigin::AdbLive => CaptureOriginDto::AdbLive,
+            };
+            let requested_buffers = value.requested_buffers().map(|buffers| {
+                [
+                    (LogBuffer::Main, LogBufferDto::Main),
+                    (LogBuffer::System, LogBufferDto::System),
+                    (LogBuffer::Events, LogBufferDto::Events),
+                    (LogBuffer::Crash, LogBufferDto::Crash),
+                    (LogBuffer::Radio, LogBufferDto::Radio),
+                    (LogBuffer::Kernel, LogBufferDto::Kernel),
+                ]
+                .into_iter()
+                .filter_map(|(buffer, dto)| buffers.contains(buffer).then_some(dto))
+                .collect()
+            });
+            let range_completeness = match value.range_completeness() {
+                RangeCompleteness::Unknown => RangeCompletenessDto::Unknown,
+                RangeCompleteness::Bounded => RangeCompletenessDto::Bounded,
+                RangeCompleteness::StartTruncated => RangeCompletenessDto::StartTruncated,
+                RangeCompleteness::EndTruncated => RangeCompletenessDto::EndTruncated,
+            };
+            Self {
+                origin,
+                requested_buffers,
+                range_completeness,
             }
         }
     }
@@ -332,6 +433,7 @@ mod problem_dtos {
         pub stable_lines: u64,
         pub scanning: bool,
         pub finished: bool,
+        pub coverage: InputCoverageDto,
         pub stats: ProblemStatsDto,
     }
 
@@ -357,30 +459,29 @@ mod problem_dtos {
     }
 
     #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(deny_unknown_fields)]
     #[serde(rename_all = "camelCase")]
     pub struct ProblemGroupQueryRequest {
         pub expected_analysis_token: AnalysisTokenDto,
         #[serde(default)]
         pub kind: Option<ProblemKindDto>,
         #[serde(default)]
-        pub sort: ProblemGroupSortDto,
+        pub sort: Option<ProblemGroupSortDto>,
         #[serde(default)]
-        pub query_snapshot_id: Option<u64>,
-        #[serde(default)]
-        pub offset: Option<usize>,
+        pub cursor: Option<String>,
         #[serde(default)]
         pub limit: Option<usize>,
     }
 
     #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(deny_unknown_fields)]
     #[serde(rename_all = "camelCase")]
     pub struct ProblemOccurrenceQueryRequest {
         pub expected_analysis_token: AnalysisTokenDto,
-        pub group_id: u32,
         #[serde(default)]
-        pub query_snapshot_id: Option<u64>,
+        pub group_id: Option<u32>,
         #[serde(default)]
-        pub offset: Option<usize>,
+        pub cursor: Option<String>,
         #[serde(default)]
         pub limit: Option<usize>,
     }
@@ -393,9 +494,10 @@ mod problem_dtos {
     }
 
     #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(deny_unknown_fields)]
     #[serde(rename_all = "camelCase")]
     pub struct ProblemReleaseSnapshotRequest {
-        pub query_snapshot_id: u64,
+        pub snapshot_handle: String,
         pub expected_analysis_token: AnalysisTokenDto,
     }
 
@@ -464,6 +566,10 @@ mod problem_dtos {
         pub fingerprint_version: u16,
         pub signature_quality: SignatureQualityDto,
         pub identity_quality: IdentityQualityDto,
+        pub process_summary: String,
+        pub process_summary_truncated: bool,
+        pub signature_summary: String,
+        pub signature_summary_truncated: bool,
         /// A fixed-size BLAKE3-128 display value. The frontend must not interpret it.
         pub fingerprint: String,
         pub observed_occurrence_count: u64,
@@ -486,6 +592,10 @@ mod problem_dtos {
                 fingerprint_version: value.key.fingerprint_version(),
                 signature_quality: value.key.signature_quality().into(),
                 identity_quality: value.key.identity_quality().into(),
+                process_summary: value.process_summary.as_str().to_string(),
+                process_summary_truncated: value.process_summary.truncated(),
+                signature_summary: value.signature_summary.as_str().to_string(),
+                signature_summary_truncated: value.signature_summary.truncated(),
                 fingerprint: value.key.fingerprint().to_hex(),
                 observed_occurrence_count: value.observed_occurrence_count,
                 stored_occurrence_count: value.stored_occurrence_count,
@@ -505,11 +615,11 @@ mod problem_dtos {
     #[serde(rename_all = "camelCase")]
     pub struct ProblemGroupPageDto {
         pub analysis_token: AnalysisTokenDto,
-        pub query_snapshot_id: u64,
+        pub snapshot_handle: String,
         pub revision: u64,
         pub total: u64,
         pub items: Vec<ProblemGroupSummaryDto>,
-        pub next_offset: Option<u64>,
+        pub next_cursor: Option<String>,
     }
 
     impl ProblemGroupPageDto {
@@ -519,14 +629,16 @@ mod problem_dtos {
         pub fn from_compact(
             analysis_token: AnalysisTokenDto,
             page: logcore::problems::GroupPage,
+            snapshot_handle: String,
+            next_cursor: Option<String>,
         ) -> Self {
             Self {
                 analysis_token,
-                query_snapshot_id: page.snapshot_id.raw(),
+                snapshot_handle,
                 revision: page.revision,
                 total: usize_to_u64(page.total),
                 items: page.items.into_iter().map(Into::into).collect(),
-                next_offset: page.next_offset.map(usize_to_u64),
+                next_cursor,
             }
         }
     }
@@ -609,11 +721,11 @@ mod problem_dtos {
     #[serde(rename_all = "camelCase")]
     pub struct ProblemOccurrencePageDto {
         pub analysis_token: AnalysisTokenDto,
-        pub query_snapshot_id: u64,
+        pub snapshot_handle: String,
         pub revision: u64,
         pub total: u64,
         pub items: Vec<ProblemOccurrenceDto>,
-        pub next_offset: Option<u64>,
+        pub next_cursor: Option<String>,
     }
 
     impl ProblemOccurrencePageDto {
@@ -622,6 +734,8 @@ mod problem_dtos {
         pub fn try_from_compact(
             analysis_token: AnalysisTokenDto,
             page: logcore::problems::OccurrencePage,
+            snapshot_handle: String,
+            next_cursor: Option<String>,
             mut event_by_id: impl FnMut(
                 logcore::problems::ProblemEventId,
             ) -> Option<logcore::problems::ProblemEvent>,
@@ -635,11 +749,11 @@ mod problem_dtos {
             }
             Ok(Self {
                 analysis_token,
-                query_snapshot_id: page.snapshot_id.raw(),
+                snapshot_handle,
                 revision: page.revision,
                 total: usize_to_u64(page.total),
                 items,
-                next_offset: page.next_offset.map(usize_to_u64),
+                next_cursor,
             })
         }
     }
@@ -897,6 +1011,7 @@ mod problem_dtos {
     pub struct ProblemsProgressDto {
         pub scanned_lines: u64,
         pub stable_lines: u64,
+        pub coverage: InputCoverageDto,
         pub observed_occurrence_count: u64,
         pub stored_occurrence_count: u64,
         pub dropped_occurrence_count: u64,
@@ -1023,6 +1138,74 @@ mod problem_dtos {
 
 #[allow(unused_imports)]
 pub use problem_dtos::*;
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckedRowsRequest {
+    pub view: String,
+    pub start: usize,
+    pub count: usize,
+    pub expected_analysis_token: AnalysisTokenDto,
+    #[serde(default)]
+    pub expected_filter_result_revision: Option<u64>,
+    pub request_nonce: u64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum CheckedRowsDto {
+    Ok {
+        analysis_token: AnalysisTokenDto,
+        request_nonce: u64,
+        decode_revision: u64,
+        source_data_revision: u64,
+        filter_result_revision: u64,
+        rows: Vec<Row>,
+    },
+    StaleFilterResult {
+        analysis_token: AnalysisTokenDto,
+        request_nonce: u64,
+        actual_filter_result_revision: u64,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineMappingBiasDto {
+    Exact,
+    Nearest,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LineMappingRequest {
+    pub line_no: u64,
+    pub bias: LineMappingBiasDto,
+    pub expected_analysis_token: AnalysisTokenDto,
+    pub expected_filter_result_revision: u64,
+    pub request_nonce: u64,
+}
+
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineMappingStatusDto {
+    Ok,
+    StaleFilterResult,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LineMappingResponseDto {
+    pub status: LineMappingStatusDto,
+    pub analysis_token: AnalysisTokenDto,
+    pub filter_result_revision: u64,
+    pub request_nonce: u64,
+    pub target: Option<NavigationTargetDto>,
+}
 
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -1278,11 +1461,18 @@ mod tests {
         let payload = FilterDoneDto {
             filtered_lines: 12,
             generation: 7,
+            filter_input_revision: 4,
+            filter_result_revision: 9,
         };
 
         assert_eq!(
             serde_json::to_value(payload).unwrap(),
-            json!({"filteredLines": 12, "generation": 7})
+            json!({
+                "filteredLines": 12,
+                "generation": 7,
+                "filterInputRevision": 4,
+                "filterResultRevision": 9
+            })
         );
     }
 
@@ -1294,6 +1484,7 @@ mod tests {
             first_line: Some(42),
             done: true,
             generation: 9,
+            request_id: 12,
         };
 
         assert_eq!(
@@ -1303,7 +1494,8 @@ mod tests {
                 "matches": 3,
                 "firstLine": 42,
                 "done": true,
-                "generation": 9
+                "generation": 9,
+                "requestId": 12
             })
         );
     }
@@ -1322,6 +1514,12 @@ mod tests {
                 total_bytes: 128,
                 indexing: false,
                 generation: 4,
+                analysis_generation: 5,
+                filter_input_revision: 6,
+                applied_filter_input_revision: 6,
+                filter_result_revision: 7,
+                decode_revision: 8,
+                source_data_revision: 9,
             },
             device_serial: "usb".to_string(),
         };
@@ -1339,7 +1537,13 @@ mod tests {
                     "indexedBytes": 128,
                     "totalBytes": 128,
                     "indexing": false,
-                    "generation": 4
+                    "generation": 4,
+                    "analysisGeneration": 5,
+                    "filterInputRevision": 6,
+                    "appliedFilterInputRevision": 6,
+                    "filterResultRevision": 7,
+                    "decodeRevision": 8,
+                    "sourceDataRevision": 9
                 },
                 "deviceSerial": "usb"
             })
@@ -1437,6 +1641,11 @@ mod tests {
                 stable_lines: 8_192,
                 scanning: true,
                 finished: false,
+                coverage: InputCoverageDto {
+                    origin: CaptureOriginDto::AdbLive,
+                    requested_buffers: Some(vec![LogBufferDto::Main, LogBufferDto::Events]),
+                    range_completeness: RangeCompletenessDto::StartTruncated,
+                },
                 stats: stats.clone(),
             })
             .unwrap(),
@@ -1449,6 +1658,11 @@ mod tests {
                 "stableLines": 8_192,
                 "scanning": true,
                 "finished": false,
+                "coverage": {
+                    "origin": "adb-live",
+                    "requestedBuffers": ["main", "events"],
+                    "rangeCompleteness": "start-truncated"
+                },
                 "stats": {
                     "observedOccurrenceCount": 11,
                     "storedOccurrenceCount": 9,
@@ -1468,6 +1682,11 @@ mod tests {
             serde_json::to_value(ProblemsProgressDto {
                 scanned_lines: 4_096,
                 stable_lines: 8_192,
+                coverage: InputCoverageDto {
+                    origin: CaptureOriginDto::AdbLive,
+                    requested_buffers: Some(vec![LogBufferDto::Main, LogBufferDto::Events]),
+                    range_completeness: RangeCompletenessDto::StartTruncated,
+                },
                 observed_occurrence_count: 11,
                 stored_occurrence_count: 9,
                 dropped_occurrence_count: 2,
@@ -1486,6 +1705,11 @@ mod tests {
             json!({
                 "scannedLines": 4_096,
                 "stableLines": 8_192,
+                "coverage": {
+                    "origin": "adb-live",
+                    "requestedBuffers": ["main", "events"],
+                    "rangeCompleteness": "start-truncated"
+                },
                 "observedOccurrenceCount": 11,
                 "storedOccurrenceCount": 9,
                 "droppedOccurrenceCount": 2,
@@ -1552,8 +1776,35 @@ mod tests {
     }
 
     #[test]
-    fn problem_query_requests_bind_pagination_to_analysis_and_snapshot() {
+    fn problem_query_requests_use_opaque_cursor_without_editable_position() {
         let groups: ProblemGroupQueryRequest = serde_json::from_value(json!({
+            "expectedAnalysisToken": {
+                "sessionGeneration": 9,
+                "analysisGeneration": 2
+            },
+            "kind": "anr",
+            "sort": "count-desc",
+            "cursor": null,
+            "limit": 100
+        }))
+        .unwrap();
+        assert_eq!(groups.kind, Some(ProblemKindDto::Anr));
+        assert_eq!(groups.sort, Some(ProblemGroupSortDto::CountDesc));
+        assert_eq!(groups.cursor, None);
+
+        let occurrences: ProblemOccurrenceQueryRequest = serde_json::from_value(json!({
+            "expectedAnalysisToken": {
+                "sessionGeneration": 9,
+                "analysisGeneration": 2
+            },
+            "groupId": 3,
+            "cursor": null
+        }))
+        .unwrap();
+        assert_eq!(occurrences.group_id, Some(3));
+        assert_eq!(occurrences.cursor, None);
+
+        assert!(serde_json::from_value::<ProblemGroupQueryRequest>(json!({
             "expectedAnalysisToken": {
                 "sessionGeneration": 9,
                 "analysisGeneration": 2
@@ -1564,22 +1815,7 @@ mod tests {
             "offset": 100,
             "limit": 100
         }))
-        .unwrap();
-        assert_eq!(groups.kind, Some(ProblemKindDto::Anr));
-        assert_eq!(groups.sort, ProblemGroupSortDto::CountDesc);
-        assert_eq!(groups.query_snapshot_id, Some(17));
-
-        let occurrences: ProblemOccurrenceQueryRequest = serde_json::from_value(json!({
-            "expectedAnalysisToken": {
-                "sessionGeneration": 9,
-                "analysisGeneration": 2
-            },
-            "groupId": 3,
-            "querySnapshotId": null
-        }))
-        .unwrap();
-        assert_eq!(occurrences.group_id, 3);
-        assert_eq!(occurrences.offset, None);
+        .is_err());
         assert_eq!(occurrences.limit, None);
 
         let detail: ProblemDetailRequest = serde_json::from_value(json!({
@@ -1657,6 +1893,8 @@ mod tests {
                 analysis_generation: 1,
             },
             page,
+            "ph1-opaque".to_string(),
+            Some("pc1-opaque".to_string()),
         );
 
         assert_eq!(dto.items.len(), 1);
@@ -1669,7 +1907,8 @@ mod tests {
         assert_eq!(group.signature_quality, SignatureQualityDto::TypeOnly);
         assert_eq!(group.identity_quality, IdentityQualityDto::KnownProcess);
         assert_eq!(dto.analysis_token.session_generation, 1);
-        assert_eq!(dto.query_snapshot_id, snapshot.raw());
+        assert_eq!(dto.snapshot_handle, "ph1-opaque");
+        assert_eq!(dto.next_cursor.as_deref(), Some("pc1-opaque"));
     }
 
     #[test]
