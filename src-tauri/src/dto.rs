@@ -335,7 +335,7 @@ mod problem_dtos {
         pub stats: ProblemStatsDto,
     }
 
-    #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+    #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
     #[serde(rename_all = "kebab-case")]
     pub enum ProblemKindDto {
         JavaCrash,
@@ -346,6 +346,57 @@ mod problem_dtos {
         SignalExit,
         LmkKill,
         KernelOomKill,
+    }
+
+    #[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum ProblemGroupSortDto {
+        #[default]
+        LastSeenDesc,
+        CountDesc,
+    }
+
+    #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ProblemGroupQueryRequest {
+        pub expected_analysis_token: AnalysisTokenDto,
+        #[serde(default)]
+        pub kind: Option<ProblemKindDto>,
+        #[serde(default)]
+        pub sort: ProblemGroupSortDto,
+        #[serde(default)]
+        pub query_snapshot_id: Option<u64>,
+        #[serde(default)]
+        pub offset: Option<usize>,
+        #[serde(default)]
+        pub limit: Option<usize>,
+    }
+
+    #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ProblemOccurrenceQueryRequest {
+        pub expected_analysis_token: AnalysisTokenDto,
+        pub group_id: u32,
+        #[serde(default)]
+        pub query_snapshot_id: Option<u64>,
+        #[serde(default)]
+        pub offset: Option<usize>,
+        #[serde(default)]
+        pub limit: Option<usize>,
+    }
+
+    #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ProblemDetailRequest {
+        pub event_id: u32,
+        pub expected_analysis_token: AnalysisTokenDto,
+    }
+
+    #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ProblemReleaseSnapshotRequest {
+        pub query_snapshot_id: u64,
+        pub expected_analysis_token: AnalysisTokenDto,
     }
 
     impl From<logcore::problems::ProblemKind> for ProblemKindDto {
@@ -1498,6 +1549,48 @@ mod tests {
             "path": "/tmp/problem.log"
         }))
         .is_err());
+    }
+
+    #[test]
+    fn problem_query_requests_bind_pagination_to_analysis_and_snapshot() {
+        let groups: ProblemGroupQueryRequest = serde_json::from_value(json!({
+            "expectedAnalysisToken": {
+                "sessionGeneration": 9,
+                "analysisGeneration": 2
+            },
+            "kind": "anr",
+            "sort": "count-desc",
+            "querySnapshotId": 17,
+            "offset": 100,
+            "limit": 100
+        }))
+        .unwrap();
+        assert_eq!(groups.kind, Some(ProblemKindDto::Anr));
+        assert_eq!(groups.sort, ProblemGroupSortDto::CountDesc);
+        assert_eq!(groups.query_snapshot_id, Some(17));
+
+        let occurrences: ProblemOccurrenceQueryRequest = serde_json::from_value(json!({
+            "expectedAnalysisToken": {
+                "sessionGeneration": 9,
+                "analysisGeneration": 2
+            },
+            "groupId": 3,
+            "querySnapshotId": null
+        }))
+        .unwrap();
+        assert_eq!(occurrences.group_id, 3);
+        assert_eq!(occurrences.offset, None);
+        assert_eq!(occurrences.limit, None);
+
+        let detail: ProblemDetailRequest = serde_json::from_value(json!({
+            "eventId": 7,
+            "expectedAnalysisToken": {
+                "sessionGeneration": 9,
+                "analysisGeneration": 2
+            }
+        }))
+        .unwrap();
+        assert_eq!(detail.event_id, 7);
     }
 
     #[test]
