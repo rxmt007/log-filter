@@ -40,7 +40,7 @@ public final class MainActivity extends Activity {
             };
 
     private enum DemoAction {
-        ERROR_ONLY(R.string.action_error_only, false),
+        ERROR_FATAL_ONLY(R.string.action_error_fatal_only, false),
         JAVA_CRASH(R.string.action_java_crash, true),
         JAVA_OOM(R.string.action_java_oom, true),
         ANR(R.string.action_anr, true),
@@ -191,8 +191,8 @@ public final class MainActivity extends Activity {
 
     private void executeAction(DemoAction action, Button sourceButton) {
         switch (action) {
-            case ERROR_ONLY:
-                emitNegativeControlErrors();
+            case ERROR_FATAL_ONLY:
+                emitNegativeControlLogs();
                 statusView.setText(R.string.status_error_logged);
                 return;
             case JAVA_CRASH:
@@ -213,14 +213,18 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void emitNegativeControlErrors() {
-        for (int index = 1; index <= 5; index++) {
+    private void emitNegativeControlLogs() {
+        for (int index = 1; index <= 3; index++) {
             Log.e(
                     TAG,
                     "Negative control "
                             + index
-                            + "/5: simulated component failure; app remains healthy");
+                            + "/3 (E): simulated component failure; app remains healthy");
         }
+        Log.println(
+                Log.ASSERT,
+                TAG,
+                "Negative control 1/1 (F): fatal-priority text without a process crash");
     }
 
     private void startJavaOom() {

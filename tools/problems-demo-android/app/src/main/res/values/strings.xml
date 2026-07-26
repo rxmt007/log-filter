@@ -3,13 +3,13 @@
     <string name="app_name">LogFilter 故障演示</string>
     <string name="screen_title">LogFilter Problems 故障演示</string>
     <string name="screen_subtitle">方向键选择，OK 键执行；破坏性动作需要在 5 秒内再次确认。</string>
-    <string name="status_ready">请选择一个动作。普通 E 日志用于验证“错误级别 ≠ 故障事件”。</string>
+    <string name="status_ready">请选择一个动作。普通 E/F 日志用于验证“日志级别 ≠ 故障事件”。</string>
     <string name="status_armed">已选择“%1$s”。5 秒内再次按 OK 确认。</string>
     <string name="status_cancelled">确认已超时，未执行异常。</string>
     <string name="status_running">正在触发“%1$s”…</string>
-    <string name="status_error_logged">已输出 5 条普通 E 日志；应用保持运行，Problems 不应新增事件。</string>
+    <string name="status_error_logged">已输出 3 条 E 和 1 条 F 日志；应用保持运行，Problems 不应新增事件。</string>
     <string name="status_anr_recovered">主线程阻塞结束；如果系统已判定超时，应出现一条 ANR 事件。</string>
-    <string name="action_error_only">普通 E 日志（负对照）</string>
+    <string name="action_error_fatal_only">普通 E/F 日志（负对照）</string>
     <string name="action_java_crash">Java/Kotlin 崩溃</string>
     <string name="action_java_oom">Java OOM</string>
     <string name="action_anr">ANR（阻塞主线程 30 秒）</string>

@@ -14,7 +14,7 @@ LogFilter Problems 面板。应用不尝试判断根因，也不会伪造系统�
 
 | 按钮 | 预期平台现象 | Problems 预期分类 |
 | --- | --- | --- |
-| 普通 E 日志（负对照） | 输出多条 `Log.e`，应用继续运行 | 不应产生故障事件 |
+| 普通 E/F 日志（负对照） | 输出多条 `Log.e` 和一条 ASSERT/F 级文本，应用继续运行 | 不应产生故障事件 |
 | Java/Kotlin 崩溃 | 主线程抛出未捕获异常 | Java/Kotlin |
 | Java OOM | 应用进程持续分配 Java 堆直到未捕获 OOM | Java OOM |
 | ANR | 前台显式广播的 Receiver 在主线程中阻塞 30 秒 | ANR |
@@ -56,6 +56,7 @@ adb shell am start \
 adb uninstall com.example.logfilterproblemdemo
 ```
 
-为了覆盖进程生命周期和 native crash 的更多平台事实，抓取时建议同时包含
-`main`、`system`、`events` 和 `crash` buffer。只抓 `main` 时，部分事件可能没有
-足够来源信息，Problems 会按设计保持为空而不是猜测。
+建议先用同时包含 `main`、`system`、`crash` 和 `events` buffer 的命令开始抓取，
+再启动 Demo 并逐项触发。触发后等待系统写入相关日志，最后停止抓取，让尾部尚未
+闭合的多行事件完成定稿。只抓 `main` 时，部分事件可能没有足够来源信息，
+Problems 会按设计保持为空而不是猜测。
