@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="400" viewBox="0 0 660 400">
+  <defs>
+    <linearGradient id="background" x1="330" y1="0" x2="330" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F5F7FA"/>
+    </linearGradient>
+    <filter id="arrow-shadow" x="-30%" y="-60%" width="160%" height="220%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <rect width="660" height="400" fill="url(#background)"/>
+
+  <path
+    d="M278 190H380M354 164L380 190L354 216"
+    fill="none"
+    stroke="#4B83C3"
+    stroke-opacity="0.18"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#arrow-shadow)"
+  />
+  <path
+    d="M278 190H380M354 164L380 190L354 216"
+    fill="none"
+    stroke="#4B83C3"
+    stroke-width="8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
