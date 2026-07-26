@@ -45,6 +45,7 @@ fn status_from(session: &logcore::session::Session, generation: u64) -> Status {
         // stableLines DTO 在 Task 10/11 贯通前，现有 totalLines 继续作为前端可见 rowCount；
         // 诊断用“已发现行首数”只保留在 Session::total_lines。
         total_lines: session.stable_lines(),
+        stable_lines: session.stable_lines(),
         filtered_lines: session.filtered_count(),
         bookmark_lines: session.bookmark_count(),
         error_lines: session.error_count(),
@@ -58,6 +59,7 @@ fn status_from(session: &logcore::session::Session, generation: u64) -> Status {
 fn empty_status(generation: u64) -> Status {
     Status {
         total_lines: 0,
+        stable_lines: 0,
         filtered_lines: 0,
         bookmark_lines: 0,
         error_lines: 0,

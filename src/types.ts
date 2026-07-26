@@ -12,6 +12,7 @@ export interface Row {
 
 export interface Status {
   totalLines: number;
+  stableLines: number;
   filteredLines: number;
   bookmarkLines: number;
   errorLines: number;
@@ -132,6 +133,33 @@ export type ProblemKind =
   | "signal-exit"
   | "lmk-kill"
   | "kernel-oom-kill";
+
+export interface LineRange {
+  startLine: number;
+  endLine: number;
+}
+
+export interface ProblemOccurrenceRef extends LineRange {
+  eventId: number;
+  groupId: number;
+  anchorLine: number;
+}
+
+export interface TableReturnPoint {
+  viewportLine: number;
+  selectedLine: number | null;
+  filterInputRevision: number;
+}
+
+export type TableScope =
+  | { kind: "results"; view: "filtered" }
+  | {
+      kind: "problem-context";
+      occurrence: ProblemOccurrenceRef;
+      eventRange: LineRange;
+      contextRange: LineRange;
+      returnPoint: TableReturnPoint;
+    };
 
 export type RowsView = "all" | "filtered" | "bookmarks" | "errors";
 

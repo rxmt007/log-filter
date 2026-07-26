@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatRowForClipboard, normalizeColumns } from "@/lib/table";
-import type { Row, TableColumnConfig } from "@/types";
+import {
+  formatRowForClipboard,
+  normalizeColumns,
+  resolveTableDataset,
+} from "@/lib/table";
+import type { Row, Status, TableColumnConfig, TableScope } from "@/types";
 
 const row: Row = {
   lineNo: 42,
@@ -42,5 +46,97 @@ describe("table helpers", () => {
     expect(formatRowForClipboard(row, columns)).toBe(
       "42  04-20  12:06:02.125  E  330  Payment  SocketTimeoutException",
     );
+  });
+});
+
+const tableStatus: Status = {
+  totalLines: 1_000,
+  stableLines: 999,
+  filteredLines: 20,
+  bookmarkLines: 0,
+  errorLines: 0,
+  indexedBytes: 10_000,
+  totalBytes: 20_000,
+  indexing: true,
+  generation: 7,
+};
+
+describe("table scope datasets", () => {
+  it("keeps the existing result dataset semantics", () => {
+    expect(
+      resolveTableDataset(
+        { kind: "results", view: "filtered" },
+        tableStatus,
+        7,
+        3,
+        5,
+        11,
+      ),
+    ).toEqual({
+      rowsView: "filtered",
+      rowCount: 20,
+      cacheKey: "results:7:3:5",
+      minimapVisible: true,
+      sourceDataRevision: 11,
+    });
+  });
+
+  it("uses only stable all rows for temporary problem context", () => {
+    const scope: TableScope = {
+      kind: "problem-context",
+      occurrence: {
+        eventId: 4,
+        groupId: 2,
+        startLine: 480,
+        endLine: 510,
+        anchorLine: 490,
+      },
+      eventRange: { startLine: 480, endLine: 510 },
+      contextRange: { startLine: 430, endLine: 560 },
+      returnPoint: {
+        viewportLine: 120,
+        selectedLine: 125,
+        filterInputRevision: 4,
+      },
+    };
+
+    expect(resolveTableDataset(scope, tableStatus, 7, 3, 5, 11)).toEqual({
+      rowsView: "all",
+      rowCount: 999,
+      cacheKey: "all:7:3",
+      minimapVisible: false,
+      sourceDataRevision: 11,
+    });
+  });
+
+  it("does not invalidate decoded all-row history for filter or append revisions", () => {
+    const scope: TableScope = {
+      kind: "problem-context",
+      occurrence: {
+        eventId: 4,
+        groupId: 2,
+        startLine: 480,
+        endLine: 510,
+        anchorLine: 490,
+      },
+      eventRange: { startLine: 480, endLine: 510 },
+      contextRange: { startLine: 430, endLine: 560 },
+      returnPoint: {
+        viewportLine: 120,
+        selectedLine: null,
+        filterInputRevision: 4,
+      },
+    };
+    const before = resolveTableDataset(scope, tableStatus, 7, 3, 5, 11);
+    const after = resolveTableDataset(
+      scope,
+      { ...tableStatus, stableLines: 1_050 },
+      7,
+      3,
+      99,
+      12,
+    );
+    expect(after.cacheKey).toBe(before.cacheKey);
+    expect(after.rowCount).toBe(1_050);
   });
 });

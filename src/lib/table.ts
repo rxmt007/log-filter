@@ -1,4 +1,4 @@
-import type { Row, TableColumnConfig } from "@/types";
+import type { Row, RowsView, Status, TableColumnConfig, TableScope } from "@/types";
 
 export type ColumnId =
   "bookmark" | "lineNo" | "date" | "time" | "level" | "pid" | "tid" | "tag" | "message";
@@ -91,4 +91,38 @@ export function formatRowForClipboard(row: Row, columns: ColumnState[]) {
     .map((column) => cellTextForClipboard(column, row))
     .filter((value): value is string => value != null && value.length > 0)
     .join("  ");
+}
+
+export interface TableDataset {
+  rowsView: RowsView;
+  rowCount: number;
+  cacheKey: string;
+  minimapVisible: boolean;
+  sourceDataRevision: number;
+}
+
+export function resolveTableDataset(
+  scope: TableScope,
+  status: Status,
+  sessionGeneration: number,
+  decodeRevision: number,
+  filterResultRevision: number,
+  sourceDataRevision: number,
+): TableDataset {
+  if (scope.kind === "problem-context") {
+    return {
+      rowsView: "all",
+      rowCount: status.stableLines,
+      cacheKey: `all:${sessionGeneration}:${decodeRevision}`,
+      minimapVisible: false,
+      sourceDataRevision,
+    };
+  }
+  return {
+    rowsView: scope.view,
+    rowCount: status.filteredLines,
+    cacheKey: `results:${sessionGeneration}:${decodeRevision}:${filterResultRevision}`,
+    minimapVisible: true,
+    sourceDataRevision,
+  };
 }

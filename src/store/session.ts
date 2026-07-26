@@ -113,6 +113,7 @@ export const DEFAULT_FILTER: FilterSpec = {
 
 const EMPTY: Status = {
   totalLines: 0,
+  stableLines: 0,
   filteredLines: 0,
   bookmarkLines: 0,
   errorLines: 0,

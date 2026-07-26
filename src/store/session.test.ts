@@ -3,6 +3,7 @@ import { DEFAULT_FILTER, LEVEL_BITS, useSession } from "@/store/session";
 
 const status = {
   totalLines: 100,
+  stableLines: 100,
   filteredLines: 100,
   bookmarkLines: 0,
   errorLines: 0,

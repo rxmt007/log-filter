@@ -4,6 +4,7 @@ import type { StreamAppend } from "@/types";
 
 const status = {
   totalLines: 0,
+  stableLines: 0,
   filteredLines: 0,
   bookmarkLines: 0,
   errorLines: 0,
@@ -20,6 +21,7 @@ function append(filteredLines: number, appendedBytes: number): StreamAppend {
     status: {
       ...status,
       totalLines: filteredLines,
+      stableLines: filteredLines,
       filteredLines,
       indexedBytes: filteredLines * 10,
       totalBytes: filteredLines * 10,

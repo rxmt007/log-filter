@@ -21,6 +21,7 @@ pub struct Row {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub total_lines: usize,
+    pub stable_lines: usize,
     pub filtered_lines: usize,
     pub bookmark_lines: usize,
     pub error_lines: usize,
@@ -558,6 +559,7 @@ mod tests {
             appended_bytes: 128,
             status: Status {
                 total_lines: 2,
+                stable_lines: 2,
                 filtered_lines: 2,
                 bookmark_lines: 0,
                 error_lines: 1,
@@ -575,6 +577,7 @@ mod tests {
                 "appendedBytes": 128,
                 "status": {
                     "totalLines": 2,
+                    "stableLines": 2,
                     "filteredLines": 2,
                     "bookmarkLines": 0,
                     "errorLines": 1,
