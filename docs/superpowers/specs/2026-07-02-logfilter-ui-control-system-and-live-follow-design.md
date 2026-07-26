@@ -182,6 +182,7 @@
 默认预设:
 
 - `logcat -v threadtime -b main`
+- `logcat -v threadtime -b main -b system -b crash -b events`
 - `logcat -v threadtime -b system`
 - `logcat -v threadtime -b radio`
 - `logcat -v threadtime -b events`
@@ -193,7 +194,10 @@
 - 必须是 `logcat`。
 - 格式必须使用 `-v threadtime`。
 - buffer 仅允许 `main` / `system` / `radio` / `events` / `crash`。
-- 如果未写 `-b`,默认 `main`。
+- 可重复使用 `-b`;重复 buffer 去重并保留首次出现顺序。
+- 如果未写 `-b`,归一化为确定的 `main` + `system` + `crash`,不依赖不同 Android
+  版本的隐式默认值。
+- 不接受 `-b all`;需要多 buffer 时使用显式列表,使抓取覆盖范围可记录、可解释。
 - 不执行任意 shell,不支持管道、重定向、`shell`、`&&` 等复合命令。
 
 解析结果:
@@ -212,17 +216,20 @@
 current_command = "logcat -v threadtime -b main"
 command_presets = [
   "logcat -v threadtime -b main",
+  "logcat -v threadtime -b main -b system -b crash -b events",
   "logcat -v threadtime -b radio",
 ]
 ```
 
 迁移规则:
 
-1. 读取旧配置时,如果存在 `commandBuffers`,用第一个 buffer 生成 `current_command`。
+1. 读取旧配置时,如果存在 `commandBuffers`,把其中所有合法 buffer 按原顺序去重后生成
+   一条 `current_command`。
 2. 旧 `commandBuffers` 中合法 buffer 转成对应默认命令,合并进 `command_presets`。
 3. 默认预设始终可用,即使用户配置缺失。
 4. 保存新配置时写入 `current_command` 和 `command_presets`。
-5. 可保留 `commandBuffers` 兼容读取,但新 UI 不再直接编辑它。
+5. 可保留 `commandBuffers` 兼容读取,并让它与 `current_command` 中的完整 buffer 列表同步；
+   新 UI 不再直接编辑它。
 
 ## 7. Tail-Follow 状态机
 
@@ -306,6 +313,14 @@ adb 开始抓取后:
 - 直接停止/替换当前文件会话,创建新的 adb 会话。
 - 最近文件列表保留,不会因切 adb 被清空。
 
+### 9.4 清空实时抓取
+
+- Clear 表示清空当前屏幕与当前会话的派生结果,不是 Stop 的别名。
+- 正在抓取时,后端先受控终止并 join 旧 reader,提取已落盘日志的最后时间戳,安全重建空
+  Session 后以相同设备、buffers 和 `-T` 时间戳自动续抓。
+- 已停止或暂停时,Clear 只重建空 Session 并保持 Stopped,不会自行开始抓取。
+- 不允许在仍有 reader 写入或 Session mmap 存活时截断会话文件。
+
 ## 10. 架构约束
 
 1. `logcore` 仍不依赖 Tauri / UI。
@@ -324,8 +339,8 @@ adb 开始抓取后:
   - 非 home 路径保留绝对路径开头。
   - 长路径中间省略,文件名保留。
 - 命令解析:
-  - 默认命令可解析出 buffer。
-  - 未写 `-b` 时默认 `main`。
+  - 默认命令可解析出完整 buffer 列表。
+  - 未写 `-b` 时归一化为 `main` + `system` + `crash`。
   - 非法 buffer 被拒绝。
   - 非 `logcat` / 非 `threadtime` / 复合 shell 命令被拒绝。
 - 命令预设:

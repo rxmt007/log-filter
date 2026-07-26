@@ -535,10 +535,7 @@
 }
 
 .lf-problems-pane > h2,
-.lf-problems-detail-heading h2,
-.lf-problems-facets h3,
-.lf-problems-facts h3,
-.lf-problems-hints h3 {
+.lf-problems-detail-heading h2 {
   margin: 0;
   color: var(--lf-text);
   font-weight: 650;
@@ -672,7 +669,7 @@
   font-size: 11px;
 }
 
-.lf-problems-group-note > :first-child {
+.lf-problems-fingerprint {
   overflow: hidden;
   color: var(--lf-text);
   font-family: var(--lf-mono);
@@ -687,8 +684,7 @@
   gap: 5px;
 }
 
-.lf-problems-actions button,
-.lf-problems-fact button {
+.lf-problems-actions button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -701,102 +697,13 @@
   cursor: pointer;
 }
 
-.lf-problems-actions button:hover,
-.lf-problems-fact button:hover {
+.lf-problems-actions button:hover {
   background: var(--lf-hover);
 }
 
 .lf-problems-actions svg {
   width: 12px;
   height: 12px;
-}
-
-.lf-problems-facts,
-.lf-problems-hints {
-  padding-top: 10px;
-}
-
-.lf-problems-facets {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding-top: 9px;
-}
-
-.lf-problems-facets section {
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--lf-border);
-  border-radius: 6px;
-  background: var(--lf-panel-2);
-}
-
-.lf-problems-facets h3,
-.lf-problems-facts h3,
-.lf-problems-hints h3 {
-  margin-bottom: 6px;
-  font-size: 12px;
-}
-
-.lf-problems-facets ul,
-.lf-problems-facets p {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--lf-text-dim);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.lf-problems-facets p {
-  padding-left: 0;
-}
-
-.lf-problems-fact {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 0;
-  color: var(--lf-text);
-  font-size: 11.5px;
-}
-
-.lf-problems-fact-body {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.lf-problems-fact-body > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lf-problems-fact-meta {
-  color: var(--lf-text-dim);
-  font-family: var(--lf-mono);
-  font-size: 10px;
-}
-
-.lf-problems-truncated {
-  margin: 5px 0 0;
-  color: var(--lf-text-dim);
-  font-size: 11px;
-}
-
-.lf-problems-hints {
-  margin-top: 9px;
-  border-top: 1px solid var(--lf-border);
-}
-
-.lf-problems-hints ul {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--lf-text-dim);
-  font-size: 11.5px;
-  line-height: 1.55;
 }
 
 @media (max-width: 1050px) {

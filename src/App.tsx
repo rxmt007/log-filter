@@ -279,17 +279,6 @@ export default function App() {
     [tableController],
   );
 
-  const locateFact = useCallback(
-    (lineNo: number) => {
-      const occurrence = useProblems.getState().detail?.occurrence;
-      if (occurrence) {
-        tableController.openProblemContext(occurrence);
-      }
-      void tableController.navigateToSourceLine(lineNo, "problem-anchor");
-    },
-    [tableController],
-  );
-
   const exportProblem = useCallback((occurrence: ProblemOccurrence) => {
     const analysisToken = useProblems.getState().analysisToken;
     if (!analysisToken) return;
@@ -316,7 +305,6 @@ export default function App() {
         </div>
         <ProblemsDock
           {...problemsBindings}
-          onLocateFact={locateFact}
           onLocateOccurrence={locateProblem}
           onOpenContext={(occurrence) => tableController.openProblemContext(occurrence)}
           onExportOccurrence={exportProblem}

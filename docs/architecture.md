@@ -197,9 +197,10 @@ error_scan_lines + encoding + problem_engine + problem_scan_lines + problem prov
 
 ### 2.9 adb
 
-- `LogcatSpec::parse`:只接受 `logcat -v threadtime [-b <buffer>]`,buffer 限
-  main/system/radio/events/crash,单个 `-b`;含 `| & ; > <` 的复合 shell 命令直接拒绝
-  (防注入)。`normalized()` 输出规范形式。
+- `LogcatSpec::parse`:只接受 `logcat -v threadtime [-b <buffer>]...`,buffer 限
+  main/system/radio/events/crash；重复 `-b` 去重并保持首次顺序，未写 `-b` 时显式归一化为
+  main + system + crash。`-b all` 不进入受控命令集合，避免覆盖范围随设备变化；含
+  `| & ; > <` 的复合 shell 命令直接拒绝(防注入)。`normalized()` 输出规范形式。
 - `build_logcat_command(adb_path, serial, buffers, since)`:构造
   `adb -s <serial> logcat -v threadtime -b <buf>... [-T <time>]`;buffers 去重,空则 main。
 - `adb_command(path)`:**所有 adb 子进程必须经此创建**——Windows 下加
@@ -471,10 +472,12 @@ Problems 的派生身份是
    前端对 `stream:append` 做 75ms 批处理(§7.4),后端不再额外节流。
 5. **pause / resume**:pause 杀流保留 `last_request`;resume 读会话文件尾部 64KB,
    `last_log_timestamp` 提取最后时间戳,带 `-T <time>` 重启流续抓(尾部无可解析时间戳则
-   全量重放)。**stop** 停流保留 last_request;**clear** 停流后
+   全量重放)。**stop** 停流保留 last_request。**clear** 若正在抓取,先保存请求意图,
+   以 Forget 受控终止并 join reader,从完整尾部提取 `-T` 时间戳,再由
    `reset_stream_session_file`:**先置锁内会话为 None(释放 mmap)再截断文件**
    (顺序不可变:Windows 截断带活动映射的文件报 ERROR_USER_MAPPED_FILE,Unix 并发读旧
-   mmap 会 SIGBUS),删书签侧车,重建 Session 换代号,回填 last_request 的会话代号。
+   mmap 会 SIGBUS),删书签侧车,重建 Session 换代号并自动续抓。非运行状态 Clear
+   只重建空 Session,保持 Stopped。任何路径都禁止在活 reader 上截断。
 
 ### 5.3 过滤 / 搜索(`set_filter` / `search` + 分块扫描)
 
@@ -550,7 +553,7 @@ facts 和源行引用，主日志文本仍由 `get_rows` 读取。Problems 导�
 | `pause_logcat` | — → `StreamControlDto` | 停流,保留请求,paused=true |
 | `resume_logcat` | — → `StreamControlDto` | 尾部时间戳 `-T` 续抓,阻塞池 |
 | `stop_logcat` | — → `StreamControlDto` | 停流 |
-| `clear_logcat` | — → `StreamControlDto` | 停流 + 截断会话文件重建 |
+| `clear_logcat` | — → `StreamControlDto` | 清空会话；运行中带尾时间戳自动续抓，非运行时保持停止 |
 | `get_status` | — → `Status` | 状态快照 |
 | `get_rows` | `view, start, count` → `Vec<Row>` | **count 硬上限 512**;view ∈ all/filtered/bookmarks/errors;未知 view / 无会话返回空 |
 | `get_rows_checked` | `CheckedRowsRequest` → `CheckedRowsDto` | 同一窗口读取，但强制校验 analysis token、decode revision 与 filtered result revision |
@@ -709,10 +712,12 @@ ProblemContextScope。该切换不改 `FilterSpec`，上下文继续按 200 行�
 return point，返回时按当前 filter result revision 重新映射。event range 与 anchor 只是
 主表上的区间/定位高亮，不会复制一份日志正文到 Problems store。
 
-`ProblemsDock` 将可定位的“检测到的事实”和 `problemHints.ts` 的“排查提示（非结论）”
-分区展示。前者来自后端 `FactCode/ObservationRef`，后者只是按 `ProblemKind` 查询的静态
-检查清单。导出对话框只提交 event id、analysis token、mode 与 radius，支持事件原始范围
-或 ±50 行上下文；导出内容不插入 facts/hints。
+`ProblemsDock` 当前只展示 group 签名/进程摘要、事件范围、定位/上下文/导出入口、
+fingerprint 与“同组不等于同一根因”说明。OutcomeFlags、boundary/coverage、可定位的
+`FactCode/ObservationRef` 和 `problemHints.ts` 静态清单暂留在后端/前端契约中，等待后续
+“进一步分析”能力重新组织后再展示；届时仍须严格区分日志事实与非结论提示。导出对话框
+只提交 event id、analysis token、mode 与 radius，支持事件原始范围或 ±50 行上下文；
+导出内容不插入 facts/hints。
 
 ---
 
@@ -780,7 +785,8 @@ pnpm typecheck && pnpm lint && pnpm test
 ### 9.2 src-tauri 单测
 
 - `commands.rs`:view 字符串解析、512 钳制、Problems checked rows/context export、
-  analysis generation、buffers 解析、流式会话清理(prune)、
+  analysis generation、buffers 解析、流式会话清理(prune)、Clear 的运行中续抓意图与
+  非运行保持停止、
   **`run_chunked_export` 等价性 ×3**(Filtered/All/Range 输出字节与旧 `export_view`/
   `export_range` oracle 完全一致,9000 行跨批)、导出期间换会话中止、
   **取消导出删除半成品**、`reset_stream_session_file` 先释放 mmap 再截断。
@@ -795,7 +801,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 `lib/highlight`、`lib/logcatCommand`、`lib/minimap`、`lib/recent`、`lib/rowCache`
 (LRU/纪元语义)、`lib/sourceDisplay`、`lib/streamAppend`(75ms 合并批)、`lib/table`,
-`store/session`，以及 Problems snapshot 分页、虚拟列表、事实/提示穷尽映射、TableScope
+`store/session`，以及 Problems snapshot 分页、虚拟列表、摘要/操作/指纹呈现、TableScope
 定位/返回、临时上下文、导出入口与底部 dock 交互组件。
 
 ---

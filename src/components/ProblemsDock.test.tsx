@@ -137,32 +137,39 @@ describe("ProblemsDock", () => {
     });
   });
 
-  it("explains that a caught-up live tail finishes its open tail when capture stops", () => {
-    useProblems.getState().acceptStatus({
-      ...status,
-      scannedLines: 1_000,
-      scanning: false,
-      finished: false,
-      coverage: {
-        origin: "adb-live",
-        requestedBuffers: ["crash"],
-        rangeCompleteness: "start-truncated",
-      },
-      stats: {
-        ...status.stats,
-        observedOccurrenceCount: 0,
-        storedOccurrenceCount: 0,
-        provisionalOccurrenceCount: 0,
-        limited: false,
-        correlationLimited: false,
-      },
-    });
+  it.each([
+    { scanning: true, scannedLines: 900, label: "仍在扫描" },
+    { scanning: false, scannedLines: 1_000, label: "已追上当前日志" },
+  ])(
+    "explains incremental analysis and tail finalization while live capture is $label",
+    ({ scanning, scannedLines }) => {
+      useProblems.getState().acceptStatus({
+        ...status,
+        scannedLines,
+        scanning,
+        finished: false,
+        coverage: {
+          origin: "adb-live",
+          requestedBuffers: ["crash"],
+          rangeCompleteness: "start-truncated",
+        },
+        stats: {
+          ...status.stats,
+          observedOccurrenceCount: 0,
+          storedOccurrenceCount: 0,
+          provisionalOccurrenceCount: 0,
+          limited: false,
+          correlationLimited: false,
+        },
+      });
 
-    render(<ProblemsDock />);
+      render(<ProblemsDock />);
 
-    expect(screen.getByText(/已追上当前日志 · 持续监听/)).toBeInTheDocument();
-    expect(screen.getByText(/停止抓取后完成尾部分析/)).toBeInTheDocument();
-  });
+      expect(
+        screen.getByText(/实时抓取期间持续增量分析；停止抓取后仅定稿尾部未闭合事件/),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("surfaces provisional live occurrences without claiming they are expandable", () => {
     useProblems.getState().acceptStatus({
@@ -189,7 +196,7 @@ describe("ProblemsDock", () => {
 
     expect(screen.getByRole("button", { name: "Problems，0 · 待定 1" })).toBeInTheDocument();
     expect(screen.getByText(/1 项待定稿/)).toBeInTheDocument();
-    expect(screen.getByText(/停止抓取后完成定稿/)).toBeInTheDocument();
+    expect(screen.getByText(/停止抓取后仅定稿尾部未闭合事件/)).toBeInTheDocument();
     expect(screen.queryByText(/停止抓取后可展开/)).not.toBeInTheDocument();
   });
 
@@ -217,26 +224,32 @@ describe("ProblemsDock", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it("separates located facts from static non-conclusive hints", async () => {
+  it("keeps event actions, fingerprint, and the non-root-cause boundary only", () => {
     seedOpenDock();
-    const onLocateFact = vi.fn();
-    render(<ProblemsDock onLocateFact={onLocateFact} />);
+    render(<ProblemsDock />);
+    const detailPane = within(screen.getByRole("region", { name: "事件详情" }));
 
-    expect(screen.getByRole("heading", { name: "检测到的事实" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "日志记录的结局" })).toBeInTheDocument();
-    expect(screen.getByText("同一进程实例的结束得到日志佐证")).toBeInTheDocument();
-    expect(screen.getByText("检测器在安全上限处截断了事件证据")).toBeInTheDocument();
+    expect(detailPane.getByRole("heading", { name: "Java/Kotlin 崩溃" })).toBeInTheDocument();
+    expect(detailPane.getByText(/事件 #8 · 第 910–930 行 · PID 42/)).toBeInTheDocument();
+    expect(detailPane.getByRole("button", { name: "定位事件" })).toBeInTheDocument();
+    expect(detailPane.getByRole("button", { name: "查看上下文" })).toBeInTheDocument();
+    expect(detailPane.getByRole("button", { name: "导出原始日志" })).toBeInTheDocument();
     expect(
-      screen.getAllByText(/aosp\.java-uncaught\.v1 · 主证据 · AOSP 文本 · 已证明来源：main/)
-        .length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "排查提示（非结论）" })).toBeInTheDocument();
-    expect(screen.getByText("仅展示 2/9 条关键证据，可查看事件范围")).toBeInTheDocument();
-    expect(screen.getByText("容量限制：检出 7 项，可展开 5 项，未保存 2 项。")).toBeInTheDocument();
-    expect(screen.getByText("同组仅表示事件指纹相同，不代表根因相同。")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "定位到第 914 行" }));
-    expect(onLocateFact).toHaveBeenCalledWith(914);
+      detailPane.getByText("IllegalStateException · MainActivity.onCreate"),
+    ).toBeInTheDocument();
+    expect(detailPane.getByText("进程 com.example.app")).toBeInTheDocument();
+    expect(detailPane.getByText("指纹 java-crash:example")).toBeInTheDocument();
+    expect(
+      detailPane.getByText("同组仅表示事件指纹相同，不代表根因相同。"),
+    ).toBeInTheDocument();
+    expect(
+      detailPane.queryByRole("heading", { name: "日志记录的结局" }),
+    ).not.toBeInTheDocument();
+    expect(detailPane.queryByRole("heading", { name: "边界与覆盖" })).not.toBeInTheDocument();
+    expect(detailPane.queryByRole("heading", { name: "检测到的事实" })).not.toBeInTheDocument();
+    expect(
+      detailPane.queryByRole("heading", { name: "排查提示（非结论）" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/根因是|确定为|已导致/)).not.toBeInTheDocument();
   });
 

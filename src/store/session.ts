@@ -227,6 +227,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   currentCommand: "logcat -v threadtime -b main",
   commandPresets: [
     "logcat -v threadtime -b main",
+    "logcat -v threadtime -b main -b system -b crash -b events",
     "logcat -v threadtime -b system",
     "logcat -v threadtime -b radio",
     "logcat -v threadtime -b events",

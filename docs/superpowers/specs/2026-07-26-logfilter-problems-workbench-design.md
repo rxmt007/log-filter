@@ -917,7 +917,10 @@ Indexing
 - pause 进入 `Paused`,保留 pending state;只有 Paused 可 resume。
 - resume 回到 `Growing`,继续从已有扫描游标消费新增稳定行。
 - stop 且 stdout EOF 后进入 `Sealed` 并 finish;sealed session 不可 resume。
-- Stop 后重新开始采集创建新 session/generation,不能续写 sealed input。Clear 可复用文件路径配置,但不恢复 sealed input 的扫描身份。
+- Stop 后重新开始采集创建新 session/generation,不能续写 sealed input。运行中 Clear
+  会先受控终止并 join reader,清空后用相同抓取请求和尾时间戳自动续抓；它复用文件路径
+  配置,但必须创建新 session/generation,不得恢复旧输入的扫描身份。非运行状态 Clear
+  保持 Stopped。
 - clear/truncation 重置 Problems 与全部派生游标。
 - live 启动时把 `requestedBuffers` 作为 `InputCoverage` 传入 Session;若 transport 没有逐行 buffer identity,不得凭请求集合给每行标 `Known`。
 
@@ -1050,13 +1053,15 @@ StatusBar
 
 右栏:
 
-- group 标题、fingerprint 和“同组不等于同一根因”
+- group 签名/进程摘要、fingerprint 和“同组不等于同一根因”
 - occurrence 分页列表
 - event id、pid、start/end/anchor
-- OutcomeFlags、boundary/coverage
-- “检测到的事实”;每项显示 FactCode 对应文案、rule/source quality,点击定位自己的 `ObservationRef.line`
-- “排查提示(非结论)”
 - 定位、上下文和导出动作
+
+当前阶段为配合后续“进一步分析”能力，右侧暂不展示 OutcomeFlags、boundary/coverage、
+“检测到的事实”和静态“排查提示”；相关紧凑后端数据与 IPC 契约继续保留。重新引入时
+必须仍按“日志事实 / 非结论提示”分区，不能把提示写成自动根因判断。这是相对最初设计
+稿的明确产品取舍，不影响事件定位、上下文读取、导出和指纹分组。
 
 面板折叠时只更新 summary badge,不请求 group/occurrence 页。展开后才加载首屏。
 
@@ -1192,7 +1197,7 @@ ProblemContextScope 使用 All 行序,现有 minimap 是 filtered 语义。上�
   `role="listbox"` + `aria-activedescendant`;行是不可聚焦的 `role="option"`,不能同时嵌套
   或伪装成原生 button。Enter/Space 触发行的主操作,导出等次级动作放在详情操作区。
 - 高度拖拽柄使用 horizontal separator 语义,提供 `aria-valuemin/max/now`;方向键每次 16px、PageUp/PageDown 每次 64px、Home/End 到动态边界。
-- facts/hints、ProblemKind 和选中态均不能只依赖颜色。
+- ProblemKind、指纹说明、操作入口和选中态均不能只依赖颜色。
 - 上下文进入/返回通过 polite live region 宣告,不强行抢走日志表焦点。扫描 progress 不逐批宣告,只宣告完成、limited、错误和“有新结果”。
 - 返回后恢复到触发 occurrence;虚拟项已卸载时回到面板标题/toggle。
 - Problems 与 Toolbar 共用单一 ExportDialog owner。Dialog 具有 initial focus、focus trap、Escape 关闭和关闭后 focus restore;触发 occurrence 已卸载时回到面板标题/toggle。
@@ -1300,7 +1305,7 @@ crates/logcore/tests/fixtures/problems/
 - search/行号/bookmark/follow-latest 只走 `navigateToSourceLine`。
 - 迟到的旧 session/generation/nonce 响应被丢弃。
 - minimap hidden rail 不可聚焦且零数据请求。
-- facts/hints 穷尽映射、固定空态文案和 Dialog focus restore。
+- 事件摘要/操作/指纹的固定呈现、固定空态文案和 Dialog focus restore。
 
 ## 20. 性能与内存目标
 

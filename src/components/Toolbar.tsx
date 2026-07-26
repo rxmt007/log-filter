@@ -192,13 +192,13 @@ export function Toolbar({ tableController }: ToolbarProps) {
       const commandPresets = normalizeCommandPresets([...presets, parsed.normalized]);
       const nextConfig = {
         ...appConfig,
-        commandBuffers: [parsed.buffer],
+        commandBuffers: parsed.buffers,
         currentCommand: parsed.normalized,
         commandPresets,
       };
       const saved = await saveAppConfig(nextConfig);
       setCommandDraft(parsed.normalized);
-      setLogcatBuffers([parsed.buffer]);
+      setLogcatBuffers(parsed.buffers);
       setAppConfig(saved);
       setCommandError("");
       return saved;
@@ -230,7 +230,7 @@ export function Toolbar({ tableController }: ToolbarProps) {
       const control = await startLogcat({
         deviceSerial: selectedDeviceSerial,
         command: parsed.normalized,
-        buffers: [parsed.buffer],
+        buffers: parsed.buffers,
       });
       beginSession(control.status, control.sessionPath, "adb");
       setStreamControl(control);

@@ -203,10 +203,14 @@ fn parse_buffers(buffers: &[String]) -> Result<Vec<logcore::adb::LogcatBuffer>, 
     if buffers.is_empty() {
         return Ok(vec![logcore::adb::LogcatBuffer::Main]);
     }
-    buffers
-        .iter()
-        .map(|buffer| logcore::adb::LogcatBuffer::try_from(buffer.as_str()))
-        .collect()
+    let mut parsed = Vec::new();
+    for buffer in buffers {
+        let buffer = logcore::adb::LogcatBuffer::try_from(buffer.as_str())?;
+        if !parsed.contains(&buffer) {
+            parsed.push(buffer);
+        }
+    }
+    Ok(parsed)
 }
 
 fn parse_logcat_request_buffers(
@@ -219,13 +223,13 @@ fn parse_logcat_request_buffers(
         .filter(|command| !command.trim().is_empty())
     {
         let spec = logcore::adb::LogcatSpec::parse(command)?;
-        return Ok(vec![spec.buffer]);
+        return Ok(spec.buffers);
     }
     if !request.buffers.is_empty() {
         return parse_buffers(&request.buffers);
     }
     let spec = logcore::adb::LogcatSpec::parse(&config.current_command)?;
-    Ok(vec![spec.buffer])
+    Ok(spec.buffers)
 }
 
 fn problem_buffer_set(buffers: &[logcore::adb::LogcatBuffer]) -> logcore::problems::BufferSet {
@@ -362,7 +366,7 @@ fn confirm_child_terminal(
 }
 
 /// 停止当前流式任务的语义模式,决定 `paused` 标记与 `last_request` 的去留。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StreamStop {
     /// 挂起:保留 last_request,标记 paused,可 resume。
     Pause,
@@ -1474,6 +1478,80 @@ fn reset_stream_session_file(
     Ok(session_generation)
 }
 
+struct StreamClearPlan {
+    session_path: PathBuf,
+    problem_buffers: logcore::problems::BufferSet,
+    stop_mode: StreamStop,
+    restart_request: Option<StreamRequestState>,
+}
+
+fn plan_stream_clear(state: &AppState) -> Result<Option<StreamClearPlan>, String> {
+    let runtime = state.lock_stream();
+    let Some(request) = runtime.last_request.as_ref() else {
+        return Ok(None);
+    };
+    let problem_buffers = problem_buffer_set(&parse_buffers(&request.buffers)?);
+    let restart_request = (runtime.lifecycle == StreamLifecycle::Running).then(|| request.clone());
+    let stop_mode =
+        if restart_request.is_some() || runtime.lifecycle == StreamLifecycle::ControlError {
+            // Clear must join the current reader before replacing/truncating its
+            // mapped session. ControlError can only be abandoned through
+            // Forget, but must not be restarted automatically.
+            StreamStop::Forget
+        } else {
+            StreamStop::Stop
+        };
+    Ok(Some(StreamClearPlan {
+        session_path: request.session_path.clone(),
+        problem_buffers,
+        stop_mode,
+        restart_request,
+    }))
+}
+
+fn retarget_cleared_stream_request(
+    mut request: StreamRequestState,
+    session_generation: u64,
+    since_timestamp: Option<String>,
+) -> StreamRequestState {
+    request.session_generation = session_generation;
+    request.since_timestamp = since_timestamp;
+    request
+}
+
+fn settle_cleared_stream_without_restart(
+    state: &AppState,
+    session_generation: u64,
+) -> Result<Option<ProblemsProgressDto>, String> {
+    {
+        let Some(mut guard) = state.lock_session_if_current(session_generation) else {
+            return Err("session changed while finishing logcat clear".to_string());
+        };
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| "no active session after clearing logcat".to_string())?;
+        session
+            .seal_growing_input()
+            .map_err(|error| format!("failed to seal cleared logcat input: {error}"))?;
+    }
+    {
+        let mut runtime = state.lock_stream();
+        runtime.lifecycle = StreamLifecycle::Stopped;
+        runtime.control_error = None;
+        runtime.eof_confirmed = true;
+        runtime.orphan_child = None;
+        if let Some(request) = runtime.last_request.as_mut() {
+            request.session_generation = session_generation;
+        }
+    }
+    Ok(step_problem_analysis(
+        state,
+        session_generation,
+        state.current_analysis_generation(),
+        true,
+    ))
+}
+
 #[tauri::command]
 pub async fn clear_logcat(
     state: State<'_, AppState>,
@@ -1487,39 +1565,65 @@ pub async fn clear_logcat(
 
 fn clear_logcat_blocking(state: &AppState, app: AppHandle) -> Result<StreamControlDto, String> {
     let _control = state.lock_stream_control();
-    let session_request = {
-        let runtime = state.lock_stream();
-        runtime.last_request.as_ref().map(|request| {
-            let buffers = parse_buffers(&request.buffers)
-                .map(|buffers| problem_buffer_set(&buffers))
-                .unwrap_or(logcore::problems::BufferSet::MAIN);
-            (request.session_path.clone(), buffers)
-        })
+    let Some(clear_plan) = plan_stream_clear(state)? else {
+        return Ok(stream_status(state));
     };
-    // Configuration IO is staged before Stop mutates the current input.
-    let reset_plan = match session_request {
-        Some((path, buffers)) => {
-            let config = load_app_config(state)?;
-            Some((path, buffers, config_encoding(&config)))
-        }
-        None => None,
-    };
-    if let Err(error) = stop_stream_task(state, StreamStop::Stop) {
+    // Configuration IO is staged before terminating the current input. A
+    // failure leaves the live reader and its Session untouched.
+    let encoding = config_encoding(&load_app_config(state)?);
+    if let Err(error) = stop_stream_task(state, clear_plan.stop_mode) {
         emit_stream_control_error(&app, state, &error);
         return Err(error);
     }
-    if let Some((path, buffers, encoding)) = reset_plan {
-        let session_generation = match reset_stream_session_file(state, &path, encoding, buffers) {
-            Ok(generation) => generation,
+
+    // `stop_stream_task` has confirmed child termination and joined the reader,
+    // so the tail is complete and no writer can race the following truncation.
+    let since_timestamp = clear_plan.restart_request.as_ref().and_then(|_| {
+        read_session_tail(&clear_plan.session_path, 64 * 1024)
+            .as_deref()
+            .and_then(logcore::adb::last_log_timestamp)
+    });
+    let session_generation = match reset_stream_session_file(
+        state,
+        &clear_plan.session_path,
+        encoding,
+        clear_plan.problem_buffers,
+    ) {
+        Ok(generation) => generation,
+        Err(error) => {
+            publish_stream_error(state, error.clone(), true, None);
+            emit_stream_control_error(&app, state, &error);
+            return Err(error);
+        }
+    };
+
+    if let Some(request) = clear_plan.restart_request {
+        let request = retarget_cleared_stream_request(request, session_generation, since_timestamp);
+        {
+            let mut runtime = state.lock_stream();
+            runtime.lifecycle = StreamLifecycle::Starting;
+            runtime.control_error = None;
+            runtime.eof_confirmed = false;
+            runtime.orphan_child = None;
+            runtime.last_request = Some(request.clone());
+        }
+        if let Err(error) = spawn_logcat_stream(state.clone(), app.clone(), request) {
+            let _ = transition_stream_session(state, StreamStop::Stop);
+            publish_stream_error(state, error.clone(), true, None);
+            let _ = app.emit("stream:control", stream_status(state));
+            return Err(error);
+        }
+    } else {
+        match settle_cleared_stream_without_restart(state, session_generation) {
+            Ok(Some(progress)) => {
+                let _ = app.emit("problems:progress", progress);
+            }
+            Ok(None) => {}
             Err(error) => {
                 publish_stream_error(state, error.clone(), true, None);
                 emit_stream_control_error(&app, state, &error);
                 return Err(error);
             }
-        };
-        let mut runtime = state.lock_stream();
-        if let Some(request) = runtime.last_request.as_mut() {
-            request.session_generation = session_generation;
         }
     }
     Ok(stream_status(state))
@@ -3113,7 +3217,8 @@ mod tests {
 
     #[test]
     fn parses_logcat_buffers_and_rejects_unknown_values() {
-        let buffers = parse_buffers(&["main".to_string(), "crash".to_string()]).unwrap();
+        let buffers =
+            parse_buffers(&["main".to_string(), "crash".to_string(), "main".to_string()]).unwrap();
         assert_eq!(
             buffers,
             vec![
@@ -3130,6 +3235,34 @@ mod tests {
             vec![logcore::adb::LogcatBuffer::Main]
         );
         assert!(parse_buffers(&["kernel".to_string()]).is_err());
+    }
+
+    #[test]
+    fn parses_repeated_buffers_from_logcat_command_in_request() {
+        let config = logcore::config::AppConfig::default();
+        let request = StartLogcatRequest {
+            device_serial: None,
+            command: Some(
+                "logcat -v threadtime -b main -b system -b crash -b main -b events".to_string(),
+            ),
+            buffers: vec!["radio".to_string()],
+        };
+
+        let buffers = parse_logcat_request_buffers(&config, &request).unwrap();
+        assert_eq!(
+            buffers,
+            vec![
+                logcore::adb::LogcatBuffer::Main,
+                logcore::adb::LogcatBuffer::System,
+                logcore::adb::LogcatBuffer::Crash,
+                logcore::adb::LogcatBuffer::Events,
+            ]
+        );
+        let coverage = problem_buffer_set(&buffers);
+        assert!(coverage.contains(logcore::problems::LogBuffer::Main));
+        assert!(coverage.contains(logcore::problems::LogBuffer::System));
+        assert!(coverage.contains(logcore::problems::LogBuffer::Crash));
+        assert!(coverage.contains(logcore::problems::LogBuffer::Events));
     }
 
     #[test]
@@ -3477,5 +3610,152 @@ mod tests {
             guard.as_ref().unwrap().input_lifecycle(),
             Some(logcore::session::InputLifecycle::Growing)
         );
+    }
+
+    #[test]
+    fn clear_plan_restarts_a_running_capture_and_preserves_its_request() {
+        let state = AppState::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logcat-1.log");
+        {
+            let mut runtime = state.lock_stream();
+            runtime.lifecycle = StreamLifecycle::Running;
+            runtime.last_request = Some(StreamRequestState {
+                adb_path: PathBuf::from("adb"),
+                requested_serial: Some("test-device".to_string()),
+                buffers: vec!["main".to_string(), "crash".to_string()],
+                session_path: path.clone(),
+                session_generation: 7,
+                since_timestamp: None,
+            });
+        }
+
+        let plan = plan_stream_clear(&state).unwrap().unwrap();
+        assert_eq!(plan.stop_mode, StreamStop::Forget);
+        assert_eq!(plan.session_path, path);
+        assert!(plan
+            .problem_buffers
+            .contains(logcore::problems::LogBuffer::Main));
+        assert!(plan
+            .problem_buffers
+            .contains(logcore::problems::LogBuffer::Crash));
+        let restart = plan.restart_request.unwrap();
+        assert_eq!(restart.adb_path, PathBuf::from("adb"));
+        assert_eq!(restart.requested_serial.as_deref(), Some("test-device"));
+        assert_eq!(restart.buffers, vec!["main", "crash"]);
+        assert_eq!(restart.session_generation, 7);
+    }
+
+    #[test]
+    fn clear_plan_keeps_a_non_running_capture_stopped() {
+        let state = AppState::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logcat-1.log");
+        {
+            let mut runtime = state.lock_stream();
+            runtime.lifecycle = StreamLifecycle::Stopped;
+            runtime.last_request = Some(StreamRequestState {
+                adb_path: PathBuf::from("adb"),
+                requested_serial: None,
+                buffers: vec!["main".to_string()],
+                session_path: path.clone(),
+                session_generation: 4,
+                since_timestamp: None,
+            });
+        }
+
+        let plan = plan_stream_clear(&state).unwrap().unwrap();
+        assert_eq!(plan.stop_mode, StreamStop::Stop);
+        assert_eq!(plan.session_path, path);
+        assert!(plan.restart_request.is_none());
+    }
+
+    #[test]
+    fn clear_plan_can_recover_a_transport_control_error_without_restarting() {
+        let state = AppState::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logcat-1.log");
+        {
+            let mut runtime = state.lock_stream();
+            runtime.lifecycle = StreamLifecycle::ControlError;
+            runtime.control_error = Some("synthetic transport failure".to_string());
+            runtime.last_request = Some(StreamRequestState {
+                adb_path: PathBuf::from("adb"),
+                requested_serial: None,
+                buffers: vec!["main".to_string(), "crash".to_string()],
+                session_path: path,
+                session_generation: 4,
+                since_timestamp: None,
+            });
+        }
+
+        let plan = plan_stream_clear(&state).unwrap().unwrap();
+        assert_eq!(plan.stop_mode, StreamStop::Forget);
+        assert!(plan.restart_request.is_none());
+    }
+
+    #[test]
+    fn cleared_non_running_session_is_sealed_and_reports_a_finished_input() {
+        let state = AppState::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logcat-1.log");
+        let session_generation = reset_stream_session_file(
+            &state,
+            &path,
+            logcore::encoding::TextEncoding::Utf8,
+            logcore::problems::BufferSet::MAIN,
+        )
+        .unwrap();
+        {
+            let mut runtime = state.lock_stream();
+            runtime.lifecycle = StreamLifecycle::Stopped;
+            runtime.last_request = Some(StreamRequestState {
+                adb_path: PathBuf::from("adb"),
+                requested_serial: None,
+                buffers: vec!["main".to_string()],
+                session_path: path,
+                session_generation: 1,
+                since_timestamp: None,
+            });
+        }
+
+        settle_cleared_stream_without_restart(&state, session_generation).unwrap();
+
+        let guard = state.lock_session();
+        assert_eq!(
+            guard.as_ref().unwrap().input_lifecycle(),
+            Some(logcore::session::InputLifecycle::Sealed)
+        );
+        assert!(guard.as_ref().unwrap().problem_analysis_finished());
+        drop(guard);
+        let runtime = state.lock_stream();
+        assert_eq!(runtime.lifecycle, StreamLifecycle::Stopped);
+        assert_eq!(
+            runtime.last_request.as_ref().unwrap().session_generation,
+            session_generation
+        );
+    }
+
+    #[test]
+    fn clear_restart_request_uses_the_new_session_and_tail_timestamp() {
+        let request = StreamRequestState {
+            adb_path: PathBuf::from("adb"),
+            requested_serial: Some("test-device".to_string()),
+            buffers: vec!["main".to_string(), "system".to_string()],
+            session_path: PathBuf::from("capture.log"),
+            session_generation: 2,
+            since_timestamp: Some("04-20 12:05:00.000".to_string()),
+        };
+
+        let request =
+            retarget_cleared_stream_request(request, 9, Some("04-20 12:06:02.125".to_string()));
+
+        assert_eq!(request.session_generation, 9);
+        assert_eq!(
+            request.since_timestamp.as_deref(),
+            Some("04-20 12:06:02.125")
+        );
+        assert_eq!(request.requested_serial.as_deref(), Some("test-device"));
+        assert_eq!(request.buffers, vec!["main", "system"]);
     }
 }

@@ -30,8 +30,15 @@ pub enum LogcatBuffer {
     Crash,
 }
 
-pub const DEFAULT_LOGCAT_COMMANDS: [&str; 5] = [
+pub const IMPLICIT_LOGCAT_BUFFERS: [LogcatBuffer; 3] = [
+    LogcatBuffer::Main,
+    LogcatBuffer::System,
+    LogcatBuffer::Crash,
+];
+
+pub const DEFAULT_LOGCAT_COMMANDS: [&str; 6] = [
     "logcat -v threadtime -b main",
+    "logcat -v threadtime -b main -b system -b crash -b events",
     "logcat -v threadtime -b system",
     "logcat -v threadtime -b radio",
     "logcat -v threadtime -b events",
@@ -65,9 +72,9 @@ impl TryFrom<&str> for LogcatBuffer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogcatSpec {
-    pub buffer: LogcatBuffer,
+    pub buffers: Vec<LogcatBuffer>,
 }
 
 impl LogcatSpec {
@@ -85,9 +92,8 @@ impl LogcatSpec {
             return Err("command must start with logcat".to_string());
         }
 
-        let mut buffer = LogcatBuffer::Main;
+        let mut buffers = Vec::new();
         let mut saw_threadtime = false;
-        let mut saw_buffer = false;
         let mut index = 1;
         while index < tokens.len() {
             match tokens[index] {
@@ -102,14 +108,13 @@ impl LogcatSpec {
                     index += 2;
                 }
                 "-b" => {
-                    if saw_buffer {
-                        return Err("only one -b buffer is supported".to_string());
-                    }
                     let value = tokens
                         .get(index + 1)
                         .ok_or_else(|| "-b requires a buffer".to_string())?;
-                    buffer = LogcatBuffer::try_from(*value)?;
-                    saw_buffer = true;
+                    let buffer = LogcatBuffer::try_from(*value)?;
+                    if !buffers.contains(&buffer) {
+                        buffers.push(buffer);
+                    }
                     index += 2;
                 }
                 other => return Err(format!("unsupported logcat argument: {other}")),
@@ -118,11 +123,24 @@ impl LogcatSpec {
         if !saw_threadtime {
             return Err("only -v threadtime is supported".to_string());
         }
-        Ok(Self { buffer })
+        if buffers.is_empty() {
+            buffers.extend(IMPLICIT_LOGCAT_BUFFERS);
+        }
+        Ok(Self { buffers })
     }
 
     pub fn normalized(&self) -> String {
-        format!("logcat -v threadtime -b {}", self.buffer.as_arg())
+        let mut command = "logcat -v threadtime".to_string();
+        let buffers = if self.buffers.is_empty() {
+            IMPLICIT_LOGCAT_BUFFERS.to_vec()
+        } else {
+            normalized_buffers(&self.buffers)
+        };
+        for buffer in buffers {
+            command.push_str(" -b ");
+            command.push_str(buffer.as_arg());
+        }
+        command
     }
 }
 
@@ -508,14 +526,41 @@ emulator-5554 unauthorized
     }
 
     #[test]
-    fn parses_supported_threadtime_logcat_specs() {
+    fn parses_supported_threadtime_logcat_specs_with_ordered_unique_buffers() {
         let spec = LogcatSpec::parse("logcat -v threadtime -b radio").unwrap();
-        assert_eq!(spec.buffer, LogcatBuffer::Radio);
+        assert_eq!(spec.buffers, vec![LogcatBuffer::Radio]);
         assert_eq!(spec.normalized(), "logcat -v threadtime -b radio");
 
+        let combined =
+            LogcatSpec::parse("logcat -v threadtime -b main -b system -b crash -b main -b events")
+                .unwrap();
+        assert_eq!(
+            combined.buffers,
+            vec![
+                LogcatBuffer::Main,
+                LogcatBuffer::System,
+                LogcatBuffer::Crash,
+                LogcatBuffer::Events,
+            ]
+        );
+        assert_eq!(
+            combined.normalized(),
+            "logcat -v threadtime -b main -b system -b crash -b events"
+        );
+
         let default_buffer = LogcatSpec::parse("logcat -v threadtime").unwrap();
-        assert_eq!(default_buffer.buffer, LogcatBuffer::Main);
-        assert_eq!(default_buffer.normalized(), "logcat -v threadtime -b main");
+        assert_eq!(
+            default_buffer.buffers,
+            vec![
+                LogcatBuffer::Main,
+                LogcatBuffer::System,
+                LogcatBuffer::Crash,
+            ]
+        );
+        assert_eq!(
+            default_buffer.normalized(),
+            "logcat -v threadtime -b main -b system -b crash"
+        );
     }
 
     #[test]
@@ -540,6 +585,8 @@ emulator-5554 unauthorized
             "logcat -v threadtime -b kernel".to_string(),
         ];
         let presets = normalize_command_presets(custom);
+        assert!(presets
+            .contains(&"logcat -v threadtime -b main -b system -b crash -b events".to_string()));
         assert!(presets.contains(&"logcat -v threadtime -b main".to_string()));
         assert!(presets.contains(&"logcat -v threadtime -b radio".to_string()));
         assert_eq!(

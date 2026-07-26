@@ -17,16 +17,7 @@ import {
   MapPin,
   RefreshCw,
 } from "lucide-react";
-import {
-  problemBoundaryLabel,
-  problemEvidenceFormatLabel,
-  problemFactLabel,
-  problemKindLabel,
-  problemObservationRoleLabel,
-  problemOutcomeLabel,
-  problemProvenanceLabel,
-} from "@/lib/problems";
-import { problemHints } from "@/lib/problemHints";
+import { problemKindLabel } from "@/lib/problems";
 import { useProblems, type ProblemsSort } from "@/store/problems";
 import type { InputCoverage, ProblemKind, ProblemOccurrence } from "@/types";
 
@@ -313,7 +304,6 @@ interface ProblemsDockProps {
   onRetryDetail?: () => void;
   onSetKindFilter?: (kind: ProblemKind | null) => void;
   onSetSort?: (sort: ProblemsSort) => void;
-  onLocateFact?: (lineNo: number) => void;
   onLocateOccurrence?: (occurrence: ProblemOccurrence) => void;
   onOpenContext?: (occurrence: ProblemOccurrence) => void;
   onExportOccurrence?: (occurrence: ProblemOccurrence) => void;
@@ -332,7 +322,6 @@ export function ProblemsDock({
   onRetryDetail,
   onSetKindFilter,
   onSetSort,
-  onLocateFact,
   onLocateOccurrence,
   onOpenContext,
   onExportOccurrence,
@@ -484,11 +473,17 @@ export function ProblemsDock({
           ? `已分析 ${status.stableLines.toLocaleString()} 行`
           : status?.coverage.origin === "adb-live"
             ? provisional > 0
-              ? `已追上当前日志 · ${provisional.toLocaleString()} 项待定稿 · 停止抓取后完成定稿`
-              : "已追上当前日志 · 持续监听 · 停止抓取后完成尾部分析"
+              ? `已追上当前日志 · ${provisional.toLocaleString()} 项待定稿`
+              : "已追上当前日志 · 持续监听"
             : "等待日志分析";
+  const liveAnalysisNote =
+    status?.coverage.origin === "adb-live" && !status.finished
+      ? "实时抓取期间持续增量分析；停止抓取后仅定稿尾部未闭合事件"
+      : null;
   const coverageLabel = status
-    ? `${scanLabel} · ${coverageDescription(status.coverage)}`
+    ? `${scanLabel} · ${coverageDescription(status.coverage)}${
+        liveAnalysisNote ? ` · ${liveAnalysisNote}` : ""
+      }`
     : scanLabel;
 
   const toggle = (
@@ -695,7 +690,7 @@ export function ProblemsDock({
                   : status?.finished
                     ? "在已捕获范围内未检测到可展示的故障事件。"
                     : provisional > 0
-                      ? `当前分析共有 ${provisional.toLocaleString()} 项待定稿，仍在等待晚到关联证据；停止抓取后完成定稿，符合当前分类且保留详情的事件届时可展开。`
+                      ? `当前分析共有 ${provisional.toLocaleString()} 项待定稿，仍在等待晚到关联证据；尾部未闭合事件会在停止抓取后定稿，符合当前分类且保留详情的事件届时可展开。`
                       : "在已捕获范围内暂未检测到可展示的故障事件。"}
             </p>
           )}
@@ -781,7 +776,11 @@ export function ProblemsDock({
           ) : null}
         </div>
 
-        <div className="lf-problems-pane lf-problems-detail">
+        <div
+          className="lf-problems-pane lf-problems-detail"
+          role="region"
+          aria-label="事件详情"
+        >
           {detailError ? (
             <p className="lf-problems-state" role="alert">
               读取事件详情失败：{detailError}
@@ -820,80 +819,37 @@ export function ProblemsDock({
               </div>
               {selectedGroup ? (
                 <div className="lf-problems-group-note">
-                  <span title={selectedGroup.fingerprint}>指纹 {selectedGroup.fingerprint}</span>
+                  <span
+                    title={
+                      selectedGroup.signatureSummaryTruncated
+                        ? selectedGroup.signatureSummary
+                        : undefined
+                    }
+                  >
+                    {selectedGroup.signatureSummary.trim() || problemKindLabel(selectedGroup.kind)}
+                  </span>
+                  {selectedGroup.processSummary.trim() ? (
+                    <span
+                      title={
+                        selectedGroup.processSummaryTruncated
+                          ? selectedGroup.processSummary
+                          : undefined
+                      }
+                    >
+                      进程 {selectedGroup.processSummary}
+                    </span>
+                  ) : null}
+                  <span className="lf-problems-fingerprint" title={selectedGroup.fingerprint}>
+                    指纹 {selectedGroup.fingerprint}
+                  </span>
                   <span>同组仅表示事件指纹相同，不代表根因相同。</span>
                 </div>
               ) : null}
-
-              <div className="lf-problems-facets">
-                <section>
-                  <h3>日志记录的结局</h3>
-                  {occurrence.outcomeFlags.length > 0 ? (
-                    <ul>
-                      {occurrence.outcomeFlags.map((flag) => (
-                        <li key={flag}>{problemOutcomeLabel(flag)}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>结局未知；日志中没有可用于确认结束状态的事实。</p>
-                  )}
-                </section>
-                <section>
-                  <h3>边界与覆盖</h3>
-                  <ul>
-                    {occurrence.boundaryFlags.map((flag) => (
-                      <li key={flag}>{problemBoundaryLabel(flag)}</li>
-                    ))}
-                    <li>{status ? coverageDescription(status.coverage) : "输入覆盖范围未知"}</li>
-                  </ul>
-                </section>
-              </div>
-
-              <section className="lf-problems-facts">
-                <h3>检测到的事实</h3>
-                {detail.facts.map((fact, index) => (
-                  <div
-                    className="lf-problems-fact"
-                    key={`${fact.sourceLine}-${fact.code}-${index}`}
-                  >
-                    <span className="lf-problems-fact-body">
-                      <span>{problemFactLabel(fact.code)}</span>
-                      <span className="lf-problems-fact-meta">
-                        {fact.ruleId} · {problemObservationRoleLabel(fact.role)} ·{" "}
-                        {problemEvidenceFormatLabel(fact.evidenceFormat)} ·{" "}
-                        {problemProvenanceLabel(fact.provenance)}
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`定位到第 ${fact.sourceLine} 行`}
-                      onClick={() => onLocateFact?.(fact.sourceLine)}
-                    >
-                      第 {fact.sourceLine.toLocaleString()} 行
-                    </button>
-                  </div>
-                ))}
-                {detail.factsTruncated ? (
-                  <p className="lf-problems-truncated">
-                    仅展示 {detail.facts.length}/{detail.observationTotal}{" "}
-                    条关键证据，可查看事件范围
-                  </p>
-                ) : null}
-              </section>
-
-              <section className="lf-problems-hints">
-                <h3>排查提示（非结论）</h3>
-                <ul>
-                  {problemHints(occurrence.kind).map((hint) => (
-                    <li key={hint}>{hint}</li>
-                  ))}
-                </ul>
-              </section>
             </>
           ) : (
             <p className="lf-problems-state">
               {selectedEventId == null
-                ? "选择一次发生记录查看事实与上下文。"
+                ? "选择一次发生记录查看事件信息与上下文。"
                 : detailLoading
                   ? "正在读取事件详情…"
                   : detailError

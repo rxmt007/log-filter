@@ -2,6 +2,7 @@ import type { LogcatBuffer } from "@/types";
 
 export const DEFAULT_LOGCAT_COMMANDS = [
   "logcat -v threadtime -b main",
+  "logcat -v threadtime -b main -b system -b crash -b events",
   "logcat -v threadtime -b system",
   "logcat -v threadtime -b radio",
   "logcat -v threadtime -b events",
@@ -9,9 +10,10 @@ export const DEFAULT_LOGCAT_COMMANDS = [
 ] as const;
 
 const LOGCAT_BUFFERS = new Set<LogcatBuffer>(["main", "system", "radio", "events", "crash"]);
+const IMPLICIT_LOGCAT_BUFFERS: LogcatBuffer[] = ["main", "system", "crash"];
 
 export type ParsedLogcatCommand =
-  { ok: true; buffer: LogcatBuffer; normalized: string } | { ok: false; error: string };
+  { ok: true; buffers: LogcatBuffer[]; normalized: string } | { ok: false; error: string };
 
 export function parseLogcatCommand(input: string): ParsedLogcatCommand {
   if (/[|&;<>]/.test(input)) {
@@ -23,8 +25,7 @@ export function parseLogcatCommand(input: string): ParsedLogcatCommand {
   }
 
   let sawThreadtime = false;
-  let sawBuffer = false;
-  let buffer: LogcatBuffer = "main";
+  const buffers: LogcatBuffer[] = [];
   for (let index = 1; index < tokens.length;) {
     const token = tokens[index];
     if (token === "-v") {
@@ -35,13 +36,11 @@ export function parseLogcatCommand(input: string): ParsedLogcatCommand {
       continue;
     }
     if (token === "-b") {
-      if (sawBuffer) return { ok: false, error: "仅支持一个 -b 缓冲区" };
       const value = tokens[index + 1] as LogcatBuffer | undefined;
       if (!value || !LOGCAT_BUFFERS.has(value)) {
         return { ok: false, error: "缓冲区仅支持 main/system/radio/events/crash" };
       }
-      buffer = value;
-      sawBuffer = true;
+      if (!buffers.includes(value)) buffers.push(value);
       index += 2;
       continue;
     }
@@ -49,7 +48,14 @@ export function parseLogcatCommand(input: string): ParsedLogcatCommand {
   }
 
   if (!sawThreadtime) return { ok: false, error: "仅支持 -v threadtime" };
-  return { ok: true, buffer, normalized: `logcat -v threadtime -b ${buffer}` };
+  const normalizedBuffers = buffers.length ? buffers : [...IMPLICIT_LOGCAT_BUFFERS];
+  return {
+    ok: true,
+    buffers: normalizedBuffers,
+    normalized: `logcat -v threadtime ${normalizedBuffers
+      .map((buffer) => `-b ${buffer}`)
+      .join(" ")}`,
+  };
 }
 
 export function normalizeCommandPresets(presets: string[]): string[] {

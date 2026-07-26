@@ -219,31 +219,35 @@ impl AppConfig {
         // current_command 选取规则(兼容早期仅有 command_buffers 的配置):
         // 1) current_command 能解析且不是"默认值 + 存在 legacy buffers"的组合 → 用它;
         //    (默认值 + legacy 并存,说明用户旧配置只设过 buffers,应尊重 buffers)
-        // 2) 否则取第一个 legacy buffer 组装命令;
-        // 3) 都没有 → 默认 main。
+        // 2) 否则把所有合法 legacy buffers 组装为一条多 buffer 命令;
+        // 3) 都没有 → 使用默认命令。
         let legacy_buffers = normalized_command_buffers(&self.command_buffers);
         let default_command = default_current_command();
         let selected_spec = LogcatSpec::parse(&self.current_command)
             .ok()
             .filter(|_| self.current_command != default_command || legacy_buffers.is_empty())
             .or_else(|| {
-                legacy_buffers
-                    .first()
-                    .copied()
-                    .map(|buffer| LogcatSpec { buffer })
+                (!legacy_buffers.is_empty()).then(|| LogcatSpec {
+                    buffers: legacy_buffers.clone(),
+                })
             })
-            .unwrap_or(LogcatSpec {
-                buffer: LogcatBuffer::Main,
+            .unwrap_or_else(|| {
+                LogcatSpec::parse(&default_command).expect("default logcat command")
             });
         self.current_command = selected_spec.normalized();
-        self.command_buffers = vec![selected_spec.buffer.as_arg().to_string()];
+        self.command_buffers = selected_spec
+            .buffers
+            .iter()
+            .map(|buffer| buffer.as_arg().to_string())
+            .collect();
         let mut presets = self.command_presets;
         presets.push(self.current_command.clone());
-        presets.extend(
-            legacy_buffers
-                .into_iter()
-                .map(|buffer| LogcatSpec { buffer }.normalized()),
-        );
+        presets.extend(legacy_buffers.into_iter().map(|buffer| {
+            LogcatSpec {
+                buffers: vec![buffer],
+            }
+            .normalized()
+        }));
         self.command_presets = normalize_command_presets(presets);
         self.window.width = self.window.width.clamp(960, 3840);
         self.window.height = self.window.height.clamp(560, 2160);
@@ -412,7 +416,12 @@ mod tests {
 
         let config = AppConfig {
             recent_files: files,
-            command_buffers: vec!["kernel".to_string(), "crash".to_string()],
+            command_buffers: vec![
+                "kernel".to_string(),
+                "crash".to_string(),
+                "events".to_string(),
+                "crash".to_string(),
+            ],
             window: WindowConfig {
                 width: 10,
                 height: 9999,
@@ -423,9 +432,33 @@ mod tests {
 
         assert_eq!(config.recent_files.len(), 10);
         assert_eq!(config.recent_files[1], PathBuf::from("/tmp/1.log"));
-        assert_eq!(config.command_buffers, vec!["crash"]);
+        assert_eq!(config.command_buffers, vec!["crash", "events"]);
+        assert_eq!(
+            config.current_command,
+            "logcat -v threadtime -b crash -b events"
+        );
         assert_eq!(config.window.width, 960);
         assert_eq!(config.window.height, 2160);
+    }
+
+    #[test]
+    fn normalizes_multi_buffer_current_command_without_losing_coverage() {
+        let config = AppConfig {
+            command_buffers: vec!["main".to_string()],
+            current_command: "logcat -v threadtime -b main -b system -b crash -b main -b events"
+                .to_string(),
+            ..Default::default()
+        }
+        .normalized();
+
+        assert_eq!(
+            config.current_command,
+            "logcat -v threadtime -b main -b system -b crash -b events"
+        );
+        assert_eq!(
+            config.command_buffers,
+            vec!["main", "system", "crash", "events"]
+        );
     }
 
     #[test]

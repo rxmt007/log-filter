@@ -6,16 +6,25 @@ import {
 } from "@/lib/logcatCommand";
 
 describe("logcat command helpers", () => {
-  it("parses supported threadtime commands and defaults missing buffer to main", () => {
+  it("parses ordered unique buffers and applies the safe implicit set", () => {
     expect(parseLogcatCommand("logcat -v threadtime -b radio")).toEqual({
       ok: true,
-      buffer: "radio",
+      buffers: ["radio"],
       normalized: "logcat -v threadtime -b radio",
+    });
+    expect(
+      parseLogcatCommand(
+        "logcat -v threadtime -b main -b system -b crash -b main -b events",
+      ),
+    ).toEqual({
+      ok: true,
+      buffers: ["main", "system", "crash", "events"],
+      normalized: "logcat -v threadtime -b main -b system -b crash -b events",
     });
     expect(parseLogcatCommand("logcat -v threadtime")).toEqual({
       ok: true,
-      buffer: "main",
-      normalized: "logcat -v threadtime -b main",
+      buffers: ["main", "system", "crash"],
+      normalized: "logcat -v threadtime -b main -b system -b crash",
     });
   });
 
@@ -38,6 +47,9 @@ describe("logcat command helpers", () => {
       "logcat -v threadtime -b kernel",
     ]);
     expect(presets.slice(0, DEFAULT_LOGCAT_COMMANDS.length)).toEqual(DEFAULT_LOGCAT_COMMANDS);
+    expect(presets).toContain(
+      "logcat -v threadtime -b main -b system -b crash -b events",
+    );
     expect(presets.filter((item) => item === "logcat -v threadtime -b radio")).toHaveLength(1);
   });
 });

@@ -264,8 +264,13 @@ describe("useProblemsLive", () => {
         expectedAnalysisToken: token,
       }),
     );
-    expect(await screen.findByRole("heading", { name: "检测到的事实" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "排查提示（非结论）" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Java/Kotlin 崩溃" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "定位事件" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看上下文" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "导出原始日志" })).toBeInTheDocument();
+    expect(screen.getByText("同组仅表示事件指纹相同，不代表根因相同。")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "检测到的事实" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "排查提示（非结论）" })).not.toBeInTheDocument();
   });
 
   it("releases the prior occurrence snapshot before switching groups", async () => {
