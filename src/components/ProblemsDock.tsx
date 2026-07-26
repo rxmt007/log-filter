@@ -19,12 +19,24 @@ import {
 } from "lucide-react";
 import { problemFactLabel, problemKindLabel } from "@/lib/problems";
 import { problemHints } from "@/lib/problemHints";
-import { useProblems } from "@/store/problems";
-import type { InputCoverage, ProblemOccurrence } from "@/types";
+import { useProblems, type ProblemsSort } from "@/store/problems";
+import type { InputCoverage, ProblemKind, ProblemOccurrence } from "@/types";
 
 const MIN_PANEL_HEIGHT = 180;
 const MIN_MAIN_HEIGHT = 160;
 const LIST_ITEM_HEIGHT = 54;
+const GROUP_LIST_ITEM_HEIGHT = 66;
+
+const PROBLEM_KIND_FILTERS: Array<{ kind: ProblemKind; label: string }> = [
+  { kind: "java-crash", label: "Java/Kotlin" },
+  { kind: "java-oom", label: "Java OOM" },
+  { kind: "anr", label: "ANR" },
+  { kind: "native-crash", label: "Native" },
+  { kind: "process-restart", label: "进程重启" },
+  { kind: "signal-exit", label: "Signal" },
+  { kind: "lmk-kill", label: "LMK" },
+  { kind: "kernel-oom-kill", label: "Kernel OOM" },
+];
 
 const BUFFER_LABELS = {
   main: "main",
@@ -84,6 +96,7 @@ interface ProblemListboxProps<T> {
   getId: (item: T) => number;
   onChoose: (item: T) => void;
   onReachEnd?: () => void;
+  itemHeight?: number;
   children: (item: T) => ReactNode;
 }
 
@@ -96,6 +109,7 @@ function ProblemListbox<T>({
   getId,
   onChoose,
   onReachEnd,
+  itemHeight = LIST_ITEM_HEIGHT,
   children,
 }: ProblemListboxProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -106,7 +120,7 @@ function ProblemListbox<T>({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => LIST_ITEM_HEIGHT,
+    estimateSize: () => itemHeight,
     getItemKey: (index) => getId(items[index]),
     overscan: 6,
     initialRect: { width: 320, height: 240 },
@@ -172,7 +186,7 @@ function ProblemListbox<T>({
   const handleScroll = () => {
     const element = parentRef.current;
     if (!element || !onReachEnd) return;
-    if (element.scrollTop + element.clientHeight >= element.scrollHeight - LIST_ITEM_HEIGHT) {
+    if (element.scrollTop + element.clientHeight >= element.scrollHeight - itemHeight) {
       onReachEnd();
     }
   };
@@ -234,6 +248,8 @@ interface ProblemsDockProps {
   onRetryGroups?: () => void;
   onRetryOccurrences?: () => void;
   onRetryDetail?: () => void;
+  onSetKindFilter?: (kind: ProblemKind | null) => void;
+  onSetSort?: (sort: ProblemsSort) => void;
   onLocateFact?: (lineNo: number) => void;
   onLocateOccurrence?: (occurrence: ProblemOccurrence) => void;
   onOpenContext?: (occurrence: ProblemOccurrence) => void;
@@ -251,6 +267,8 @@ export function ProblemsDock({
   onRetryGroups,
   onRetryOccurrences,
   onRetryDetail,
+  onSetKindFilter,
+  onSetSort,
   onLocateFact,
   onLocateOccurrence,
   onOpenContext,
@@ -277,6 +295,10 @@ export function ProblemsDock({
   const occurrenceLoading = useProblems((state) => state.occurrenceLoading);
   const detailLoading = useProblems((state) => state.detailLoading);
   const setPanelHeight = useProblems((state) => state.setPanelHeight);
+  const kindFilters = useProblems((state) => state.kindFilters);
+  const sort = useProblems((state) => state.sort);
+  const setKindFilters = useProblems((state) => state.setKindFilters);
+  const setSort = useProblems((state) => state.setSort);
   const openRequestArmed = useRef(true);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
@@ -427,6 +449,7 @@ export function ProblemsDock({
 
   const occurrence = detail?.occurrence ?? null;
   const selectedGroup = groupPage?.items.find((group) => group.id === selectedGroupId) ?? null;
+  const selectedKind = kindFilters.length === 1 ? kindFilters[0] : null;
 
   return (
     <section
@@ -485,6 +508,52 @@ export function ProblemsDock({
         </div>
       ) : null}
 
+      <div className="lf-problems-toolbar">
+        <div className="lf-problems-kind-filters" role="group" aria-label="故障分类">
+          <button
+            type="button"
+            aria-label="全部故障"
+            aria-pressed={selectedKind == null}
+            onClick={() => {
+              if (onSetKindFilter) onSetKindFilter(null);
+              else setKindFilters([]);
+            }}
+          >
+            全部
+          </button>
+          {PROBLEM_KIND_FILTERS.map(({ kind, label }) => (
+            <button
+              type="button"
+              key={kind}
+              title={problemKindLabel(kind)}
+              aria-label={`仅看 ${problemKindLabel(kind)}`}
+              aria-pressed={selectedKind === kind}
+              onClick={() => {
+                if (onSetKindFilter) onSetKindFilter(kind);
+                else setKindFilters([kind]);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <label className="lf-problems-sort">
+          <span>排序</span>
+          <select
+            aria-label="分组排序"
+            value={sort}
+            onChange={(event) => {
+              const nextSort = event.currentTarget.value as ProblemsSort;
+              if (onSetSort) onSetSort(nextSort);
+              else setSort(nextSort);
+            }}
+          >
+            <option value="last-seen-desc">最近发生</option>
+            <option value="count-desc">重复次数</option>
+          </select>
+        </label>
+      </div>
+
       <div className="lf-problems-columns">
         <div className="lf-problems-pane lf-problems-groups">
           <h2>故障分组</h2>
@@ -507,6 +576,7 @@ export function ProblemsDock({
               items={groupPage.items}
               total={groupPage.total}
               selectedId={selectedGroupId}
+              itemHeight={GROUP_LIST_ITEM_HEIGHT}
               getId={(group) => group.id}
               onReachEnd={groupPage.nextCursor == null ? undefined : onLoadMoreGroups}
               onChoose={(group) => {
@@ -529,7 +599,10 @@ export function ProblemsDock({
                     <span title={group.processSummaryTruncated ? group.processSummary : undefined}>
                       {process ? `${process} · ${kindLabel}` : kindLabel}
                       {" · "}
-                      {group.storedOccurrenceCount.toLocaleString()} 次
+                      {group.observedOccurrenceCount.toLocaleString()} 次
+                      {group.storedOccurrenceCount < group.observedOccurrenceCount
+                        ? `（可展开 ${group.storedOccurrenceCount.toLocaleString()}）`
+                        : ""}
                     </span>
                     <span>
                       {group.firstTimestamp ?? `第 ${group.firstLine.toLocaleString()} 行`}

@@ -382,4 +382,65 @@ describe("useProblemsLive", () => {
     await waitFor(() => expect(client.getGroups).toHaveBeenCalledTimes(2));
     expect(useProblems.getState().groupPage?.snapshotHandle).toBe("snapshot-93");
   });
+
+  it("releases frozen pages before changing the category query", async () => {
+    const { client } = createClient();
+    vi.mocked(client.getGroups)
+      .mockResolvedValueOnce(page([group(1)], 91, null))
+      .mockResolvedValueOnce(page([group(2)], 94, null));
+    render(<Harness client={client} />);
+    await userEvent.click(screen.getByRole("button", { name: /Problems/ }));
+    await userEvent.click(await screen.findByRole("option", { name: /Java\/Kotlin 崩溃/ }));
+    await screen.findByRole("option", { name: /锚点 第 102 行/ });
+
+    await userEvent.click(screen.getByRole("button", { name: "仅看 ANR" }));
+
+    await waitFor(() => expect(client.releaseSnapshot).toHaveBeenCalledTimes(2));
+    expect(client.releaseSnapshot).toHaveBeenCalledWith({
+      snapshotHandle: "snapshot-91",
+      expectedAnalysisToken: token,
+    });
+    expect(client.releaseSnapshot).toHaveBeenCalledWith({
+      snapshotHandle: "snapshot-92",
+      expectedAnalysisToken: token,
+    });
+    await waitFor(() =>
+      expect(client.getGroups).toHaveBeenLastCalledWith({
+        expectedAnalysisToken: token,
+        cursor: null,
+        kind: "anr",
+        sort: "last-seen-desc",
+        limit: 100,
+      }),
+    );
+    const releaseOrder = vi.mocked(client.releaseSnapshot).mock.invocationCallOrder;
+    const groupQueryOrder = vi.mocked(client.getGroups).mock.invocationCallOrder[1];
+    expect(Math.max(...releaseOrder)).toBeLessThan(groupQueryOrder);
+  });
+
+  it("starts a new frozen query when the group ordering changes", async () => {
+    const { client } = createClient();
+    vi.mocked(client.getGroups)
+      .mockResolvedValueOnce(page([group(1)], 91, null))
+      .mockResolvedValueOnce(page([group(2)], 95, null));
+    render(<Harness client={client} />);
+    await userEvent.click(screen.getByRole("button", { name: /Problems/ }));
+    await screen.findByText("IllegalStateException · frame1");
+
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "分组排序" }),
+      "count-desc",
+    );
+
+    await waitFor(() =>
+      expect(client.getGroups).toHaveBeenLastCalledWith({
+        expectedAnalysisToken: token,
+        cursor: null,
+        kind: null,
+        sort: "count-desc",
+        limit: 100,
+      }),
+    );
+    expect(useProblems.getState().sort).toBe("count-desc");
+  });
 });

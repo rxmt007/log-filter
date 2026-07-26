@@ -8,7 +8,7 @@ import {
   releaseProblemSnapshot,
 } from "@/lib/ipc";
 import { problemsStatusFromProgress } from "@/lib/problems";
-import { useProblems } from "@/store/problems";
+import { useProblems, type ProblemsSort } from "@/store/problems";
 import { useSession } from "@/store/session";
 import type {
   AnalysisToken,
@@ -16,6 +16,7 @@ import type {
   ProblemDetailRequest,
   ProblemGroup,
   ProblemGroupQueryRequest,
+  ProblemKind,
   ProblemOccurrence,
   ProblemOccurrenceQueryRequest,
   ProblemPage,
@@ -98,6 +99,8 @@ export interface ProblemsLiveBindings {
   onRetryGroups: () => void;
   onRetryOccurrences: () => void;
   onRetryDetail: () => void;
+  onSetKindFilter: (kind: ProblemKind | null) => void;
+  onSetSort: (sort: ProblemsSort) => void;
 }
 
 export function useProblemsLive(client: ProblemsLiveClient = defaultClient): ProblemsLiveBindings {
@@ -323,6 +326,43 @@ export function useProblemsLive(client: ProblemsLiveClient = defaultClient): Pro
     [client],
   );
 
+  const replaceGroupQuery = useCallback(
+    (next: { kind?: ProblemKind | null; sort?: ProblemsSort }) => {
+      const state = useProblems.getState();
+      const token = state.analysisToken;
+      if (!token) return;
+      const currentKind = state.kindFilters.length === 1 ? state.kindFilters[0] : null;
+      if (next.kind !== undefined && next.kind === currentKind) return;
+      if (next.sort !== undefined && next.sort === state.sort) return;
+
+      const releases = [
+        snapshotRequest(state.groupPage),
+        snapshotRequest(state.occurrencePage),
+      ];
+      const transitionRequestId = ++groupRequestRef.current;
+      occurrenceRequestRef.current += 1;
+      detailRequestRef.current += 1;
+      if (next.kind !== undefined) {
+        useProblems.getState().setKindFilters(next.kind == null ? [] : [next.kind]);
+      } else if (next.sort !== undefined) {
+        useProblems.getState().setSort(next.sort);
+      }
+      useProblems.setState({ groupLoading: true, hasNewResults: false });
+
+      void Promise.all(releases.map(releaseSnapshot)).then(() => {
+        if (
+          transitionRequestId !== groupRequestRef.current ||
+          !isCurrentAnalysis(token)
+        ) {
+          return;
+        }
+        useProblems.setState({ groupLoading: false });
+        loadGroups(false);
+      });
+    },
+    [loadGroups, releaseSnapshot],
+  );
+
   const selectGroup = useCallback(
     (groupId: number) => {
       const previousSnapshot = snapshotRequest(useProblems.getState().occurrencePage);
@@ -455,5 +495,7 @@ export function useProblemsLive(client: ProblemsLiveClient = defaultClient): Pro
       const eventId = useProblems.getState().selectedEventId;
       if (eventId != null) loadDetail(eventId);
     },
+    onSetKindFilter: (kind) => replaceGroupQuery({ kind }),
+    onSetSort: (sort) => replaceGroupQuery({ sort }),
   };
 }

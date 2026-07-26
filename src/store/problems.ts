@@ -10,7 +10,7 @@ import type {
   ProblemsStatus,
 } from "@/types";
 
-type ProblemsSort = "last-seen-desc" | "count-desc";
+export type ProblemsSort = "last-seen-desc" | "count-desc";
 type ProblemsLoadError = string | null;
 
 interface ProblemsState {

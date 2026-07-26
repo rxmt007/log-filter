@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProblemsDock } from "@/components/ProblemsDock";
 import { useProblems } from "@/store/problems";
@@ -177,6 +177,44 @@ describe("ProblemsDock", () => {
     expect(screen.queryByText(/根因是|确定为|已导致/)).not.toBeInTheDocument();
   });
 
+  it("exposes a single fault-category filter and group ordering controls", async () => {
+    seedOpenDock();
+    const onSetKindFilter = vi.fn();
+    const onSetSort = vi.fn();
+    render(
+      <ProblemsDock onSetKindFilter={onSetKindFilter} onSetSort={onSetSort} />,
+    );
+
+    expect(screen.getByRole("group", { name: "故障分类" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "全部故障" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "分组排序" })).toHaveValue(
+      "last-seen-desc",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "仅看 ANR" }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "分组排序" }),
+      "count-desc",
+    );
+
+    expect(onSetKindFilter).toHaveBeenCalledWith("anr");
+    expect(onSetSort).toHaveBeenCalledWith("count-desc");
+  });
+
+  it("shows detected group count separately from the expandable retained count", () => {
+    seedOpenDock();
+    render(<ProblemsDock />);
+
+    expect(
+      screen.getByRole("option", {
+        name: /Java\/Kotlin 崩溃 · 5 次（可展开 4）/,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("offers locate, temporary context, and raw-log export actions", async () => {
     seedOpenDock();
     const onLocateOccurrence = vi.fn();
@@ -338,7 +376,9 @@ describe("ProblemsDock", () => {
 
     render(<ProblemsDock />);
 
-    const options = screen.getAllByRole("option");
+    const options = within(
+      screen.getByRole("listbox", { name: "故障分组" }),
+    ).getAllByRole("option");
     expect(options.length).toBeLessThan(100);
     expect(options[0]).toHaveAttribute("aria-setsize", "10000");
   });
