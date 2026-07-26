@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { sameAnalysisToken } from "@/lib/analysisToken";
 import type {
   AdbDevice,
   AnalysisToken,
@@ -166,13 +167,6 @@ function analysisTokenFor(status: Status): AnalysisToken {
     sessionGeneration: status.generation,
     analysisGeneration: status.analysisGeneration,
   };
-}
-
-function sameAnalysisToken(left: AnalysisToken, right: AnalysisToken) {
-  return (
-    left.sessionGeneration === right.sessionGeneration &&
-    left.analysisGeneration === right.analysisGeneration
-  );
 }
 
 function statusCanReplace(current: Status, next: Status) {
@@ -400,11 +394,15 @@ export const useSession = create<SessionState>()((set) => ({
       }
       const count = done.filteredLines;
       return {
-        selectedResultIndex:
-          s.selectedResultIndex != null && s.selectedResultIndex < count
-            ? s.selectedResultIndex
-            : null,
-        viewportResultIndex: count > 0 ? Math.min(s.viewportResultIndex, count - 1) : 0,
+        ...(s.tableScope.kind === "results"
+          ? {
+              selectedResultIndex:
+                s.selectedResultIndex != null && s.selectedResultIndex < count
+                  ? s.selectedResultIndex
+                  : null,
+              viewportResultIndex: count > 0 ? Math.min(s.viewportResultIndex, count - 1) : 0,
+            }
+          : {}),
         status: {
           ...s.status,
           filteredLines: count,

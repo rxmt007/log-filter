@@ -33,7 +33,7 @@ const occurrence: ProblemOccurrence = {
   timestamp: "07-26 12:00:00.000",
   pid: 4242,
   processInstanceId: 9,
-  evidenceFlags: ["managed-fatal"],
+  evidenceFlags: ["primary"],
   outcomeFlags: [],
   boundaryFlags: [],
 };

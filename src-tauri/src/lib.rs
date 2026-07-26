@@ -1,5 +1,6 @@
 mod commands;
 mod dto;
+mod problems;
 mod state;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -17,11 +18,11 @@ pub fn run() {
             commands::stop_logcat,
             commands::clear_logcat,
             commands::get_status,
-            commands::get_problems_status,
-            commands::get_problem_groups,
-            commands::get_problem_occurrences,
-            commands::get_problem_detail,
-            commands::release_problem_snapshot,
+            problems::get_problems_status,
+            problems::get_problem_groups,
+            problems::get_problem_occurrences,
+            problems::get_problem_detail,
+            problems::release_problem_snapshot,
             commands::get_rows,
             commands::get_rows_checked,
             commands::map_source_line,

@@ -170,6 +170,57 @@ impl Indexer {
         line
     }
 
+    /// Scan a contiguous prefix of `[start, end)`.
+    ///
+    /// Unlike `for_each_line_span_while`, returning `false` means the current
+    /// line was **not** accepted: it is returned as the next start and must not
+    /// have been processed by the callback. This lets callers enforce a byte
+    /// budget before touching the next line instead of overshooting it.
+    pub fn for_each_line_span_prefix(
+        &self,
+        bytes: &[u8],
+        start: usize,
+        end: usize,
+        frontier: usize,
+        mut accept: impl FnMut(usize, usize, usize) -> bool,
+    ) -> usize {
+        let end = end.min(self.total_lines);
+        if start >= end {
+            return start.min(end);
+        }
+        let frontier = frontier.min(bytes.len());
+        let Some(checkpoint) = self.checkpoint_before_or_at(start) else {
+            return start;
+        };
+        let mut line = checkpoint.line;
+        let mut offset = checkpoint.offset as usize;
+        while line < start {
+            let Some(next) = next_line_start(bytes, offset) else {
+                return line;
+            };
+            offset = next;
+            line += 1;
+        }
+
+        while line < end {
+            let line_start = offset;
+            let line_end = if line + 1 < self.total_lines {
+                match next_line_start(bytes, offset) {
+                    Some(next) => next,
+                    None => frontier,
+                }
+            } else {
+                frontier
+            };
+            if !accept(line, line_start, line_end.min(frontier)) {
+                break;
+            }
+            offset = line_end;
+            line += 1;
+        }
+        line
+    }
+
     fn checkpoint_before_or_at(&self, line: usize) -> Option<LineCheckpoint> {
         let idx = self
             .checkpoints
@@ -398,5 +449,30 @@ mod tests {
         );
         assert_eq!(visited, vec![0, 1]);
         assert_eq!(next, 2);
+    }
+
+    #[test]
+    fn prefix_span_scan_leaves_the_rejected_line_for_the_next_step() {
+        let bytes = b"one\ntwo\nthree\n";
+        let mut indexer = Indexer::new();
+        indexer.step(bytes, bytes.len());
+        let mut visited = Vec::new();
+
+        let next = indexer.for_each_line_span_prefix(
+            bytes,
+            0,
+            indexer.total_lines(),
+            bytes.len(),
+            |line, start, end| {
+                if line == 1 {
+                    return false;
+                }
+                visited.push((line, start, end));
+                true
+            },
+        );
+
+        assert_eq!(next, 1);
+        assert_eq!(visited, vec![(0, 0, 4)]);
     }
 }

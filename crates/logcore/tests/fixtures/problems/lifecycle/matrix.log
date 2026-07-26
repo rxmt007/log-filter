@@ -1,0 +1,61 @@
+# positive-case-01 user-prefixed restart baseline
+07-26 17:00:01.000  100  100 I am_proc_start: [0,401,10401,com.example.lifecycle.same,activity,com.example.lifecycle.same/.Main]
+07-26 17:00:01.100  100  100 I am_proc_died: [0,401,com.example.lifecycle.same]
+07-26 17:00:01.200  100  100 I am_proc_start: [0,402,10401,com.example.lifecycle.same,activity,com.example.lifecycle.same/.Main]
+# positive-case-02 same process remains in the restart group
+07-26 17:00:02.000 I/am_proc_start( 100): [0,411,10411,com.example.lifecycle.sameagain,activity,com.example.lifecycle.sameagain/.Main]
+07-26 17:00:02.100 I/am_proc_died( 100): [0,411,com.example.lifecycle.sameagain]
+07-26 17:00:02.200 I/am_proc_start( 100): [0,412,10411,com.example.lifecycle.sameagain,activity,com.example.lifecycle.sameagain/.Main]
+# positive-case-03 legacy no-user schema
+07-26 17:00:03.000  100  100 I am_proc_start: [421,10421,com.example.lifecycle.legacy,activity,com.example.lifecycle.legacy/.Main]
+07-26 17:00:03.100  100  100 I am_proc_died: [421,com.example.lifecycle.legacy]
+07-26 17:00:03.200  100  100 I am_proc_start: [422,10421,com.example.lifecycle.legacy,activity,com.example.lifecycle.legacy/.Main]
+# positive-case-04 modern death tail
+07-26 17:00:04.000 I/am_proc_start( 100): [0,431,10431,com.example.lifecycle.modern,activity,com.example.lifecycle.modern/.Main]
+07-26 17:00:04.100 I/am_proc_died( 100): [0,431,com.example.lifecycle.modern,900,15]
+07-26 17:00:04.200 I/am_proc_start( 100): [0,432,10431,com.example.lifecycle.modern,activity,com.example.lifecycle.modern/.Main]
+# positive-case-05 remote process
+07-26 17:00:05.000  100  100 I am_proc_start: [0,441,10441,com.example.lifecycle.remote:worker,service,com.example.lifecycle.remote/.Worker]
+07-26 17:00:05.100  100  100 I am_proc_died: [0,441,com.example.lifecycle.remote:worker]
+07-26 17:00:05.200  100  100 I am_proc_start: [0,442,10441,com.example.lifecycle.remote:worker,service,com.example.lifecycle.remote/.Worker]
+# positive-case-06 activity start
+07-26 17:00:06.000 I/am_proc_start( 100): [0,451,10451,com.example.lifecycle.activity,activity,com.example.lifecycle.activity/.Main]
+07-26 17:00:06.100 I/am_proc_died( 100): [0,451,com.example.lifecycle.activity]
+07-26 17:00:06.200 I/am_proc_start( 100): [0,452,10451,com.example.lifecycle.activity,activity,com.example.lifecycle.activity/.Main]
+# positive-case-07 service start
+07-26 17:00:07.000  100  100 I am_proc_start: [0,461,10461,com.example.lifecycle.service,service,com.example.lifecycle.service/.Worker]
+07-26 17:00:07.100  100  100 I am_proc_died: [0,461,com.example.lifecycle.service]
+07-26 17:00:07.200  100  100 I am_proc_start: [0,462,10461,com.example.lifecycle.service,service,com.example.lifecycle.service/.Worker]
+# positive-case-08 provider start
+07-26 17:00:08.000 I/am_proc_start( 100): [0,471,10471,com.example.lifecycle.provider,provider,com.example.lifecycle.provider/.Provider]
+07-26 17:00:08.100 I/am_proc_died( 100): [0,471,com.example.lifecycle.provider]
+07-26 17:00:08.200 I/am_proc_start( 100): [0,472,10471,com.example.lifecycle.provider,provider,com.example.lifecycle.provider/.Provider]
+# positive-case-09 broadcast start
+07-26 17:00:09.000  100  100 I am_proc_start: [0,481,10481,com.example.lifecycle.broadcast,broadcast,com.example.lifecycle.broadcast/.Receiver]
+07-26 17:00:09.100  100  100 I am_proc_died: [0,481,com.example.lifecycle.broadcast]
+07-26 17:00:09.200  100  100 I am_proc_start: [0,482,10481,com.example.lifecycle.broadcast,broadcast,com.example.lifecycle.broadcast/.Receiver]
+# positive-case-10 final restart
+07-26 17:00:10.000 I/am_proc_start( 100): [0,491,10491,com.example.lifecycle.final,activity,com.example.lifecycle.final/.Main]
+07-26 17:00:10.100 I/am_proc_died( 100): [0,491,com.example.lifecycle.final]
+07-26 17:00:10.200 I/am_proc_start( 100): [0,492,10491,com.example.lifecycle.final,activity,com.example.lifecycle.final/.Main]
+--------- beginning of events
+# negative-case-01 divider cannot authenticate a main-only death
+07-26 17:01:01.000  100  100 I am_proc_died: [0,501,com.example.lifecycle.mainonly]
+# negative-case-02 kill request is not death
+07-26 17:01:02.000  100  100 I am_kill: [502,com.example.lifecycle.kill,900,synthetic request]
+# negative-case-03 lone start is not restart
+07-26 17:01:03.000 I/am_proc_start( 100): [0,503,10503,com.example.lifecycle.startonly,activity,com.example.lifecycle.startonly/.Main]
+# negative-case-04 lone death is not restart
+07-26 17:01:04.000  100  100 I am_proc_died: [0,504,com.example.lifecycle.deathonly]
+# negative-case-05 restart plan is not restart
+07-26 17:01:05.000 I/ActivityManager( 100): Scheduling restart of com.example.lifecycle.planned
+# negative-case-06 application copies process death text
+07-26 17:01:06.000  506  506 I ExampleApp: Process com.example.lifecycle.copied (pid 506) has died
+# negative-case-07 malformed start record
+07-26 17:01:07.000  100  100 I am_proc_start: [0,507,com.example.lifecycle.malformed]
+# negative-case-08 malformed death record
+07-26 17:01:08.000 I/am_proc_died( 100): [pid,com.example.lifecycle.badpid]
+# negative-case-09 am_kill with commas remains only a request
+07-26 17:01:09.000  100  100 I am_kill: [509,com.example.lifecycle.killcomma,900,empty, cached]
+# negative-case-10 ordinary reclaim notice
+07-26 17:01:10.000 I/ActivityManager( 100): Removing empty process com.example.lifecycle.reclaim

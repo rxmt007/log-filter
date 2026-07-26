@@ -242,10 +242,65 @@ export interface ProblemOccurrence extends ProblemOccurrenceRef {
   pid: number | null;
   timestamp: string | null;
   processInstanceId: number;
-  evidenceFlags: string[];
-  outcomeFlags: string[];
-  boundaryFlags: string[];
+  evidenceFlags: ProblemEvidenceFlag[];
+  outcomeFlags: ProblemOutcomeFlag[];
+  boundaryFlags: ProblemBoundaryFlag[];
 }
+
+export type ProblemEvidenceFlag = "primary" | "structured" | "multiline" | "correlated";
+
+export type ProblemOutcomeFlag =
+  | "kill-requested"
+  | "kill-issued"
+  | "death-observed"
+  | "start-after-death-observed"
+  | "explicitly-recoverable"
+  | "conflict";
+
+export type ProblemBoundaryFlag =
+  | "truncated-by-input"
+  | "truncated-by-limit"
+  | "observation-refs-truncated"
+  | "observation-count-limited"
+  | "line-index-overflow"
+  | "correlation-limited";
+
+export type ProblemObservationRole =
+  | "primary"
+  | "process-identity"
+  | "exception-type"
+  | "stack-frame"
+  | "reason"
+  | "signal"
+  | "backtrace-frame"
+  | "start"
+  | "death"
+  | "restart"
+  | "kill-request"
+  | "kill-issued"
+  | "supporting"
+  | "recovery";
+
+export type ProblemEvidenceFormat =
+  | "aosp-text"
+  | "event-log-shaped-text"
+  | "tombstone-shaped-text"
+  | "kernel-shaped-text";
+
+export type ProblemLineProvenance =
+  | "unknown"
+  | "inferred-main"
+  | "inferred-system"
+  | "inferred-events"
+  | "inferred-crash"
+  | "inferred-radio"
+  | "inferred-kernel"
+  | "known-main"
+  | "known-system"
+  | "known-events"
+  | "known-crash"
+  | "known-radio"
+  | "known-kernel";
 
 export interface ProblemPage<T> {
   analysisToken: AnalysisToken;
@@ -284,9 +339,9 @@ export interface ProblemFact {
   code: ProblemFactCode;
   sourceLine: number;
   ruleId: string;
-  role: string;
-  evidenceFormat: string;
-  provenance: string;
+  role: ProblemObservationRole;
+  evidenceFormat: ProblemEvidenceFormat;
+  provenance: ProblemLineProvenance;
 }
 
 export interface ProblemDetail {

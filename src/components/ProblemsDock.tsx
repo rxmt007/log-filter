@@ -17,7 +17,15 @@ import {
   MapPin,
   RefreshCw,
 } from "lucide-react";
-import { problemFactLabel, problemKindLabel } from "@/lib/problems";
+import {
+  problemBoundaryLabel,
+  problemEvidenceFormatLabel,
+  problemFactLabel,
+  problemKindLabel,
+  problemObservationRoleLabel,
+  problemOutcomeLabel,
+  problemProvenanceLabel,
+} from "@/lib/problems";
 import { problemHints } from "@/lib/problemHints";
 import { useProblems, type ProblemsSort } from "@/store/problems";
 import type { InputCoverage, ProblemKind, ProblemOccurrence } from "@/types";
@@ -90,9 +98,12 @@ function observeProblemListRect<TScrollElement extends Element, TItemElement ext
 interface ProblemListboxProps<T> {
   label: string;
   idPrefix: string;
+  datasetKey: string;
   items: T[];
   total: number;
   selectedId: number | null;
+  loading?: boolean;
+  loadFailed?: boolean;
   getId: (item: T) => number;
   onChoose: (item: T) => void;
   onReachEnd?: () => void;
@@ -103,9 +114,12 @@ interface ProblemListboxProps<T> {
 function ProblemListbox<T>({
   label,
   idPrefix,
+  datasetKey,
   items,
   total,
   selectedId,
+  loading = false,
+  loadFailed = false,
   getId,
   onChoose,
   onReachEnd,
@@ -113,6 +127,13 @@ function ProblemListbox<T>({
   children,
 }: ProblemListboxProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const pendingKeyboardAdvance = useRef<{
+    datasetKey: string;
+    fromCount: number;
+    fromIndex: number;
+    fromId: number;
+    sawLoading: boolean;
+  } | null>(null);
   const [activeIndex, setActiveIndex] = useState(() => {
     const selectedIndex = items.findIndex((item) => getId(item) === selectedId);
     return selectedIndex >= 0 ? selectedIndex : 0;
@@ -137,6 +158,33 @@ function ProblemListbox<T>({
   }, [getId, items, selectedId]);
 
   useEffect(() => {
+    const pending = pendingKeyboardAdvance.current;
+    if (!pending) return;
+    if (pending.datasetKey !== datasetKey || loadFailed) {
+      pendingKeyboardAdvance.current = null;
+      return;
+    }
+    if (items.length > pending.fromCount) {
+      const unchanged =
+        activeIndex === pending.fromIndex &&
+        items[pending.fromIndex] != null &&
+        getId(items[pending.fromIndex]) === pending.fromId;
+      pendingKeyboardAdvance.current = null;
+      if (unchanged) setActiveIndex(pending.fromCount);
+      return;
+    }
+    if (loading) {
+      pending.sawLoading = true;
+    } else if (pending.sawLoading) {
+      pendingKeyboardAdvance.current = null;
+    }
+  }, [activeIndex, datasetKey, getId, items, loadFailed, loading]);
+
+  useEffect(() => {
+    pendingKeyboardAdvance.current = null;
+  }, [datasetKey, selectedId]);
+
+  useEffect(() => {
     if (items.length === 0) return;
     virtualizer.scrollToIndex(activeIndex, { align: "auto" });
   }, [activeIndex, items.length, virtualizer]);
@@ -145,6 +193,7 @@ function ProblemListbox<T>({
     (index: number) => {
       const item = items[index];
       if (!item) return;
+      pendingKeyboardAdvance.current = null;
       setActiveIndex(index);
       onChoose(item);
     },
@@ -156,24 +205,38 @@ function ProblemListbox<T>({
     if (event.key === "ArrowDown") {
       event.preventDefault();
       if (activeIndex >= items.length - 1) {
+        pendingKeyboardAdvance.current =
+          onReachEnd == null
+            ? null
+            : {
+                datasetKey,
+                fromCount: items.length,
+                fromIndex: activeIndex,
+                fromId: getId(items[activeIndex]),
+                sawLoading: loading,
+              };
         onReachEnd?.();
       } else {
+        pendingKeyboardAdvance.current = null;
         setActiveIndex(activeIndex + 1);
       }
       return;
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
+      pendingKeyboardAdvance.current = null;
       setActiveIndex(Math.max(0, activeIndex - 1));
       return;
     }
     if (event.key === "Home") {
       event.preventDefault();
+      pendingKeyboardAdvance.current = null;
       setActiveIndex(0);
       return;
     }
     if (event.key === "End") {
       event.preventDefault();
+      pendingKeyboardAdvance.current = null;
       setActiveIndex(items.length - 1);
       return;
     }
@@ -573,9 +636,12 @@ export function ProblemsDock({
             <ProblemListbox
               label="故障分组"
               idPrefix="lf-problem-group"
+              datasetKey={groupPage.snapshotHandle}
               items={groupPage.items}
               total={groupPage.total}
               selectedId={selectedGroupId}
+              loading={groupLoading}
+              loadFailed={groupPageError != null}
               itemHeight={GROUP_LIST_ITEM_HEIGHT}
               getId={(group) => group.id}
               onReachEnd={groupPage.nextCursor == null ? undefined : onLoadMoreGroups}
@@ -654,9 +720,12 @@ export function ProblemsDock({
             <ProblemListbox
               label="发生记录"
               idPrefix="lf-problem-event"
+              datasetKey={occurrencePage.snapshotHandle}
               items={occurrencePage.items}
               total={occurrencePage.total}
               selectedId={selectedEventId}
+              loading={occurrenceLoading}
+              loadFailed={occurrencePageError != null}
               getId={(item) => item.eventId}
               onReachEnd={occurrencePage.nextCursor == null ? undefined : onLoadMoreOccurrences}
               onChoose={(item) => {
@@ -669,7 +738,11 @@ export function ProblemsDock({
                   <span className="lf-problems-item-title">
                     {item.timestamp ?? `第 ${item.anchorLine.toLocaleString()} 行`}
                   </span>
-                  <span>锚点 第 {item.anchorLine.toLocaleString()} 行</span>
+                  <span>
+                    事件 #{item.eventId.toLocaleString()}
+                    {item.pid == null ? "" : ` · PID ${item.pid.toLocaleString()}`} · 锚点 第{" "}
+                    {item.anchorLine.toLocaleString()} 行
+                  </span>
                   <span>
                     范围 {item.startLine.toLocaleString()}–{item.endLine.toLocaleString()}
                   </span>
@@ -716,8 +789,9 @@ export function ProblemsDock({
                 <div>
                   <h2>{problemKindLabel(occurrence.kind)}</h2>
                   <p>
-                    第 {occurrence.startLine.toLocaleString()}–{occurrence.endLine.toLocaleString()}{" "}
-                    行{occurrence.pid == null ? "" : ` · PID ${occurrence.pid}`}
+                    事件 #{occurrence.eventId.toLocaleString()} · 第{" "}
+                    {occurrence.startLine.toLocaleString()}–{occurrence.endLine.toLocaleString()} 行
+                    {occurrence.pid == null ? "" : ` · PID ${occurrence.pid}`}
                   </p>
                 </div>
                 <div className="lf-problems-actions">
@@ -742,6 +816,30 @@ export function ProblemsDock({
                 </div>
               ) : null}
 
+              <div className="lf-problems-facets">
+                <section>
+                  <h3>日志记录的结局</h3>
+                  {occurrence.outcomeFlags.length > 0 ? (
+                    <ul>
+                      {occurrence.outcomeFlags.map((flag) => (
+                        <li key={flag}>{problemOutcomeLabel(flag)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>结局未知；日志中没有可用于确认结束状态的事实。</p>
+                  )}
+                </section>
+                <section>
+                  <h3>边界与覆盖</h3>
+                  <ul>
+                    {occurrence.boundaryFlags.map((flag) => (
+                      <li key={flag}>{problemBoundaryLabel(flag)}</li>
+                    ))}
+                    <li>{status ? coverageDescription(status.coverage) : "输入覆盖范围未知"}</li>
+                  </ul>
+                </section>
+              </div>
+
               <section className="lf-problems-facts">
                 <h3>检测到的事实</h3>
                 {detail.facts.map((fact, index) => (
@@ -749,7 +847,14 @@ export function ProblemsDock({
                     className="lf-problems-fact"
                     key={`${fact.sourceLine}-${fact.code}-${index}`}
                   >
-                    <span>{problemFactLabel(fact.code)}</span>
+                    <span className="lf-problems-fact-body">
+                      <span>{problemFactLabel(fact.code)}</span>
+                      <span className="lf-problems-fact-meta">
+                        {fact.ruleId} · {problemObservationRoleLabel(fact.role)} ·{" "}
+                        {problemEvidenceFormatLabel(fact.evidenceFormat)} ·{" "}
+                        {problemProvenanceLabel(fact.provenance)}
+                      </span>
+                    </span>
                     <button
                       type="button"
                       aria-label={`定位到第 ${fact.sourceLine} 行`}

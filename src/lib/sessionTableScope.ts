@@ -1,3 +1,4 @@
+import { sameAnalysisToken } from "@/lib/analysisToken";
 import { mapSourceLine } from "@/lib/ipc";
 import {
   createTableScopeController,
@@ -7,14 +8,6 @@ import {
   type TableScopeControllerState,
 } from "@/lib/tableScopeController";
 import { useSession } from "@/store/session";
-import type { AnalysisToken } from "@/types";
-
-function sameToken(left: AnalysisToken, right: AnalysisToken) {
-  return (
-    left.sessionGeneration === right.sessionGeneration &&
-    left.analysisGeneration === right.analysisGeneration
-  );
-}
 
 function controllerState(): TableScopeControllerState {
   const state = useSession.getState();
@@ -44,7 +37,7 @@ function waitForFilterResult(
     const inspect = () => {
       const state = controllerState();
       if (
-        !sameToken(state.analysisToken, request.expectedAnalysisToken) ||
+        !sameAnalysisToken(state.analysisToken, request.expectedAnalysisToken) ||
         state.sessionGeneration !== request.expectedAnalysisToken.sessionGeneration ||
         state.scope.kind !== "results" ||
         state.filterInputRevision !== request.filterInputRevision

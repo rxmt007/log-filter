@@ -182,7 +182,7 @@ impl NativePending {
         matched
     }
 
-    fn into_problem(self, limited: bool) -> Option<RecognizedProblem> {
+    fn into_problem(self, mut boundary: BoundaryFlags) -> Option<RecognizedProblem> {
         if !self.minimum_grammar_met() {
             return None;
         }
@@ -213,10 +213,6 @@ impl NativePending {
             fingerprint.finish(),
         );
 
-        let mut boundary = BoundaryFlags::NONE;
-        if limited {
-            boundary.insert(BoundaryFlags::TRUNCATED_BY_INPUT);
-        }
         if self.frame_limited {
             boundary.insert(BoundaryFlags::OBSERVATION_COUNT_LIMITED);
         }
@@ -300,11 +296,11 @@ impl NativeRecognizer {
         self.pending.is_some()
     }
 
-    fn finalize(&mut self, limited: bool) {
+    fn finalize(&mut self, boundary: BoundaryFlags) {
         if let Some(problem) = self
             .pending
             .take()
-            .and_then(|pending| pending.into_problem(limited))
+            .and_then(|pending| pending.into_problem(boundary))
         {
             self.ready.push_back(problem);
         }
@@ -314,7 +310,7 @@ impl NativeRecognizer {
 impl ProblemRecognizer for NativeRecognizer {
     fn observe(&mut self, line: &ObservedLine<'_>) {
         if let Some(problem) = recognize_native_am_crash(line) {
-            self.finalize(false);
+            self.finalize(BoundaryFlags::NONE);
             self.ready.push_back(problem);
             return;
         }
@@ -322,7 +318,7 @@ impl ProblemRecognizer for NativeRecognizer {
         let native_source = matches!(line.parsed.tag, "" | "DEBUG" | "debuggerd");
 
         if native_source && is_tombstone_separator(trim_ascii(message)) {
-            self.finalize(false);
+            self.finalize(BoundaryFlags::NONE);
             let producer_pid = parse_pid(line.parsed.pid).unwrap_or(0);
             self.pending = Some(NativePending::new(line, producer_pid));
             return;
@@ -342,7 +338,11 @@ impl ProblemRecognizer for NativeRecognizer {
                     .then_some(pending.frame_count == 0)
             };
             if let Some(limited) = finalize {
-                self.finalize(limited);
+                self.finalize(if limited {
+                    BoundaryFlags::TRUNCATED_BY_LIMIT
+                } else {
+                    BoundaryFlags::NONE
+                });
             }
             return;
         }
@@ -353,7 +353,7 @@ impl ProblemRecognizer for NativeRecognizer {
                 .checked_add(u32::try_from(line.raw.len()).unwrap_or(u32::MAX))
                 .is_none_or(|bytes| bytes > MAX_NATIVE_BYTES)
         {
-            self.finalize(true);
+            self.finalize(BoundaryFlags::TRUNCATED_BY_LIMIT);
             return;
         }
 
@@ -365,12 +365,16 @@ impl ProblemRecognizer for NativeRecognizer {
                 .then_some(pending.frame_count == 0)
         };
         if let Some(limited) = finalize_limited {
-            self.finalize(limited);
+            self.finalize(if limited {
+                BoundaryFlags::TRUNCATED_BY_LIMIT
+            } else {
+                BoundaryFlags::NONE
+            });
         }
     }
 
     fn finish_input(&mut self) {
-        self.finalize(true);
+        self.finalize(BoundaryFlags::TRUNCATED_BY_INPUT);
     }
 
     fn reset(&mut self) {
@@ -867,6 +871,28 @@ mod tests {
         let huge = "x".repeat(MAX_NATIVE_LINE_BYTES + 1);
         assert!(feed(&mut oversized, 1, &huge).is_none());
         assert!(finish(&mut oversized).is_none());
+
+        let mut line_limited = NativeRecognizer::new();
+        for (line, text) in [
+            (0, SEPARATOR),
+            (
+                1,
+                "pid: 123, tid: 124, name: worker  >>> com.example.native <<<",
+            ),
+            (2, "signal 5 (SIGTRAP), code 1 (TRAP_BRKPT)"),
+        ] {
+            assert!(feed(&mut line_limited, line, text).is_none());
+        }
+        let problem = feed(&mut line_limited, MAX_NATIVE_LINES + 1, "limit boundary")
+            .expect("satisfied grammar commits at the line limit");
+        assert!(problem
+            .draft
+            .boundary
+            .contains(BoundaryFlags::TRUNCATED_BY_LIMIT));
+        assert!(!problem
+            .draft
+            .boundary
+            .contains(BoundaryFlags::TRUNCATED_BY_INPUT));
     }
 
     #[test]

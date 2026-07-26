@@ -25,6 +25,7 @@ use std::path::PathBuf;
 /// 导出分批行数:每批用批量原语拷进临时缓冲再写盘,界定内存占用。
 const EXPORT_CHUNK_LINES: usize = 4096;
 const PROBLEM_SCAN_MAX_LINES: usize = 4096;
+const PROBLEM_SCAN_MAX_BYTES: usize = 512 * 1024;
 const PROBLEM_SCAN_MAX_DETAIL_LINES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -459,12 +460,24 @@ impl Session {
             let buffer_tracker = &mut self.problem_buffer_tracker;
             let engine = &mut self.problem_engine;
             let mut detail_lines = 0usize;
-            scanned_end = indexer.for_each_line_span_while(
+            let mut first_span_start = None;
+            let mut stop_before_next = false;
+            scanned_end = indexer.for_each_line_span_prefix(
                 source_bytes,
                 start,
                 end,
                 frontier,
                 |line, span_start, span_end| {
+                    if stop_before_next {
+                        return false;
+                    }
+                    let step_start = first_span_start.unwrap_or(span_start);
+                    if first_span_start.is_some()
+                        && span_end.saturating_sub(step_start) > PROBLEM_SCAN_MAX_BYTES
+                    {
+                        return false;
+                    }
+                    first_span_start = Some(step_start);
                     let Ok(line) = u32::try_from(line) else {
                         failed_commits = failed_commits.saturating_add(1);
                         return true;
@@ -494,7 +507,8 @@ impl Session {
                     dropped_occurrences =
                         dropped_occurrences.saturating_add(usize::from(delta.dropped()));
                     failed_commits = failed_commits.saturating_add(usize::from(delta.failed()));
-                    detail_lines < PROBLEM_SCAN_MAX_DETAIL_LINES
+                    stop_before_next = detail_lines >= PROBLEM_SCAN_MAX_DETAIL_LINES;
+                    true
                 },
             );
         }
@@ -1260,9 +1274,25 @@ impl Session {
         };
         let end = start.saturating_add(count).min(view_len);
         let mut out = Vec::with_capacity(end.saturating_sub(start));
+        if effective_view == RowsView::All {
+            let bytes = self.source.bytes();
+            self.indexer.for_each_line_span(
+                bytes,
+                start,
+                end,
+                frontier,
+                |source_idx, span_start, span_end| {
+                    out.push((
+                        source_idx as u64 + 1,
+                        self.parse_source_span(span_start, span_end),
+                    ));
+                },
+            );
+            return out;
+        }
         for view_idx in start..end {
             let source_idx = match effective_view {
-                RowsView::All => view_idx,
+                RowsView::All => unreachable!("all rows use the contiguous window fast path"),
                 RowsView::Filtered => self.filtered[view_idx] as usize,
                 RowsView::Bookmarks => {
                     let Some(line_no) = bookmark_lines.get(view_idx) else {
@@ -2608,6 +2638,37 @@ mod tests {
     }
 
     #[test]
+    fn problem_scan_step_has_a_deterministic_byte_budget() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let payload = "x".repeat(8 * 1024);
+        for index in 0..100 {
+            writeln!(
+                file,
+                "07-26 12:00:00.{index:03}   42   42 I Example: {payload}"
+            )
+            .unwrap();
+        }
+        let mut session = Session::open(file.path()).unwrap();
+        session.index_all();
+
+        let first = session.scan_problems_step(usize::MAX);
+
+        assert!(first.scanned_lines > 0);
+        assert!(first.scanned_lines < first.stable_lines);
+        let (_, accepted_end) = session
+            .indexer
+            .line_span(
+                session.source.bytes(),
+                first.scanned_lines - 1,
+                session.indexed_frontier(),
+            )
+            .expect("accepted line span");
+        assert!(accepted_end <= PROBLEM_SCAN_MAX_BYTES);
+        while !session.scan_problems_step(usize::MAX).caught_up {}
+        assert_eq!(session.problem_scanned_lines(), session.stable_lines());
+    }
+
+    #[test]
     fn session_exposes_the_unified_problem_memory_ledger() {
         let file = java_problem_log();
         let session = Session::open(file.path()).unwrap();
@@ -2663,7 +2724,7 @@ mod tests {
     }
 
     #[test]
-    fn static_logcat_events_divider_makes_am_crash_commit_eligible() {
+    fn static_divider_text_does_not_authenticate_eventlog_source() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "--------- beginning of main").unwrap();
         writeln!(
@@ -2683,17 +2744,11 @@ mod tests {
         session.scan_problems_step(4096);
         session.finish_problem_input();
 
-        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
-        assert!(session
-            .problem_event_observations(ProblemEventId(0))
-            .unwrap()
-            .iter()
-            .all(|observation| observation.provenance()
-                == crate::problems::LineProvenance::Known(crate::problems::LogBuffer::Events)));
+        assert_eq!(session.problem_stats().stored_occurrence_count, 0);
     }
 
     #[test]
-    fn logcat_divider_state_survives_bounded_problem_scan_chunks() {
+    fn reliable_source_span_survives_bounded_problem_scan_chunks() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "--------- beginning of events").unwrap();
         writeln!(
@@ -2703,6 +2758,11 @@ mod tests {
         .unwrap();
 
         let mut session = Session::open(file.path()).unwrap();
+        session
+            .add_problem_source_span(
+                SourceSpan::new(1, 1, crate::problems::LogBuffer::Events).unwrap(),
+            )
+            .unwrap();
         session.index_all();
         assert_eq!(session.scan_problems_step(1).scanned_lines, 1);
         assert_eq!(session.problem_stats().stored_occurrence_count, 0);
@@ -2713,7 +2773,7 @@ mod tests {
     }
 
     #[test]
-    fn growing_partial_divider_waits_for_newline_then_applies_to_live_append() {
+    fn growing_partial_divider_never_authenticates_live_append() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         write!(file, "--------- beginning of events").unwrap();
         file.flush().unwrap();
@@ -2740,11 +2800,7 @@ mod tests {
         session.seal_growing_input().unwrap();
         session.finish_problem_input();
 
-        assert_eq!(session.problem_stats().stored_occurrence_count, 1);
-        assert_eq!(
-            session.problem_event(ProblemEventId(0)).unwrap().kind(),
-            crate::problems::ProblemKind::Anr
-        );
+        assert_eq!(session.problem_stats().stored_occurrence_count, 0);
     }
 
     #[cfg(unix)]
@@ -2786,7 +2842,7 @@ mod tests {
     }
 
     #[test]
-    fn known_kernel_divider_admits_kernel_oom_kill() {
+    fn kernel_divider_text_does_not_admit_kernel_oom_kill() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(file, "--------- beginning of kernel").unwrap();
         writeln!(
@@ -2800,14 +2856,7 @@ mod tests {
         session.scan_problems_step(4096);
         session.finish_problem_input();
 
-        let event = session.problem_event(ProblemEventId(0)).unwrap();
-        assert_eq!(event.kind(), crate::problems::ProblemKind::KernelOomKill);
-        assert!(session
-            .problem_event_observations(ProblemEventId(0))
-            .unwrap()
-            .iter()
-            .all(|observation| observation.provenance()
-                == crate::problems::LineProvenance::Known(crate::problems::LogBuffer::Kernel)));
+        assert_eq!(session.problem_stats().stored_occurrence_count, 0);
     }
 
     #[test]
@@ -2829,6 +2878,11 @@ mod tests {
         session
             .add_problem_source_span(
                 SourceSpan::new(1, 1, crate::problems::LogBuffer::Main).unwrap(),
+            )
+            .unwrap();
+        session
+            .add_problem_source_span(
+                SourceSpan::new(2, 2, crate::problems::LogBuffer::Events).unwrap(),
             )
             .unwrap();
         session.index_all();

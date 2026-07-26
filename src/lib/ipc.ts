@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { sameAnalysisToken } from "@/lib/analysisToken";
 import type {
   AnalysisToken,
   AppConfig,
@@ -101,13 +102,6 @@ interface RawLineMappingResponse {
   filterResultRevision: number;
   requestNonce: number;
   target: NavigationTarget | null;
-}
-
-function sameAnalysisToken(left: AnalysisToken, right: AnalysisToken) {
-  return (
-    left.sessionGeneration === right.sessionGeneration &&
-    left.analysisGeneration === right.analysisGeneration
-  );
 }
 
 export const mapSourceLine = async (

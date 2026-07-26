@@ -112,7 +112,7 @@ impl AnrPending {
         self.unmatched = 0;
     }
 
-    fn into_problem(self, limited: bool) -> Option<RecognizedProblem> {
+    fn into_problem(self, boundary: BoundaryFlags) -> Option<RecognizedProblem> {
         let victim_pid = self.victim_pid.filter(|_| self.minimum_grammar_met())?;
         build_anr_problem(
             self.start,
@@ -125,7 +125,7 @@ impl AnrPending {
             self.reason_point,
             EvidenceFormat::AospText,
             false,
-            limited,
+            boundary,
         )
     }
 }
@@ -167,10 +167,10 @@ impl ProblemRecognizer for AnrRecognizer {
                 .iter()
                 .position(|pending| pending.producer_pid == producer_pid)
             {
-                self.finalize(index, false);
+                self.finalize(index, BoundaryFlags::NONE);
             } else if self.pending.len() == MAX_ACTIVE_ANR {
                 let index = self.oldest_pending_index();
-                self.finalize(index, true);
+                self.finalize(index, BoundaryFlags::TRUNCATED_BY_LIMIT);
             }
             let candidate_id = self.next_candidate_id;
             self.next_candidate_id = self.next_candidate_id.wrapping_add(1).max(1);
@@ -227,7 +227,7 @@ impl ProblemRecognizer for AnrRecognizer {
     fn finish_input(&mut self) {
         while !self.pending.is_empty() {
             let index = self.earliest_pending_index();
-            self.finalize(index, true);
+            self.finalize(index, BoundaryFlags::TRUNCATED_BY_INPUT);
         }
     }
 
@@ -255,7 +255,7 @@ impl AnrRecognizer {
             let line_limit = line.line.saturating_sub(pending.start.line) >= MAX_ANR_LINES;
             let byte_limit = pending.bytes_seen > MAX_ANR_BYTES;
             if line_limit || byte_limit {
-                self.finalize(index, true);
+                self.finalize(index, BoundaryFlags::TRUNCATED_BY_LIMIT);
             } else {
                 index += 1;
             }
@@ -272,7 +272,7 @@ impl AnrRecognizer {
         let mut index = 0;
         while index < self.pending.len() {
             if self.pending[index].unmatched > MAX_UNMATCHED {
-                self.finalize(index, true);
+                self.finalize(index, BoundaryFlags::TRUNCATED_BY_LIMIT);
             } else {
                 index += 1;
             }
@@ -297,9 +297,9 @@ impl AnrRecognizer {
             .expect("earliest_pending_index is called only for a non-empty set")
     }
 
-    fn finalize(&mut self, index: usize, limited: bool) {
+    fn finalize(&mut self, index: usize, boundary: BoundaryFlags) {
         let pending = self.pending.remove(index);
-        if let Some(problem) = pending.into_problem(limited) {
+        if let Some(problem) = pending.into_problem(boundary) {
             self.ready.push_back(problem);
         }
     }
@@ -369,7 +369,7 @@ fn recognize_am_anr(line: &ObservedLine<'_>) -> Option<RecognizedProblem> {
         Some(point),
         EvidenceFormat::EventLogShapedText,
         true,
-        false,
+        BoundaryFlags::NONE,
     )
 }
 
@@ -385,7 +385,7 @@ fn build_anr_problem(
     reason_point: Option<EvidencePoint>,
     format: EvidenceFormat,
     structured: bool,
-    limited: bool,
+    boundary: BoundaryFlags,
 ) -> Option<RecognizedProblem> {
     let process = ProcessFingerprintKey::new(Some(victim_process));
     if process.is_unknown() {
@@ -428,10 +428,6 @@ fn build_anr_problem(
     }
     if structured {
         evidence.insert(EvidenceFlags::STRUCTURED);
-    }
-    let mut boundary = BoundaryFlags::NONE;
-    if limited {
-        boundary.insert(BoundaryFlags::TRUNCATED_BY_INPUT);
     }
     let draft = ProblemEventDraft {
         start_line: start.line,
@@ -792,6 +788,9 @@ mod tests {
         assert_eq!(complete.stats().provisional_occurrence_count, 1);
         complete.finish_input();
         assert_eq!(complete.stats().stored_occurrence_count, 1);
+        let event = complete.event(crate::problems::ProblemEventId(0)).unwrap();
+        assert!(event.boundary().contains(BoundaryFlags::TRUNCATED_BY_LIMIT));
+        assert!(!event.boundary().contains(BoundaryFlags::TRUNCATED_BY_INPUT));
 
         let mut incomplete = ProblemEngine::new();
         feed(

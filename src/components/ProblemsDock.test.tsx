@@ -72,8 +72,8 @@ const occurrence: ProblemOccurrence = {
   timestamp: "07-26 12:00:00.000",
   processInstanceId: 3,
   evidenceFlags: ["primary"],
-  outcomeFlags: [],
-  boundaryFlags: ["observation-refs-truncated"],
+  outcomeFlags: ["death-observed"],
+  boundaryFlags: ["truncated-by-limit", "observation-refs-truncated"],
 };
 
 const detail: ProblemDetail = {
@@ -88,16 +88,16 @@ const detail: ProblemDetail = {
       sourceLine: 912,
       ruleId: "aosp.java-uncaught.v1",
       role: "primary",
-      evidenceFormat: "aosp",
-      provenance: "main",
+      evidenceFormat: "aosp-text",
+      provenance: "known-main",
     },
     {
       code: "exception-type-recorded",
       sourceLine: 914,
       ruleId: "aosp.java-uncaught.v1",
       role: "supporting",
-      evidenceFormat: "aosp",
-      provenance: "main",
+      evidenceFormat: "aosp-text",
+      provenance: "known-main",
     },
   ],
 };
@@ -167,6 +167,13 @@ describe("ProblemsDock", () => {
     render(<ProblemsDock onLocateFact={onLocateFact} />);
 
     expect(screen.getByRole("heading", { name: "检测到的事实" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "日志记录的结局" })).toBeInTheDocument();
+    expect(screen.getByText("同一进程实例的结束得到日志佐证")).toBeInTheDocument();
+    expect(screen.getByText("检测器在安全上限处截断了事件证据")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/aosp\.java-uncaught\.v1 · 主证据 · AOSP 文本 · 已证明来源：main/)
+        .length,
+    ).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "排查提示（非结论）" })).toBeInTheDocument();
     expect(screen.getByText("仅展示 2/9 条关键证据，可查看事件范围")).toBeInTheDocument();
     expect(screen.getByText("容量限制：检出 7 项，可展开 5 项，未保存 2 项。")).toBeInTheDocument();
@@ -346,6 +353,22 @@ describe("ProblemsDock", () => {
     listbox.focus();
     await userEvent.keyboard("{ArrowDown}");
     expect(onLoadMoreGroups).toHaveBeenCalledTimes(1);
+    const secondGroup = {
+      ...group,
+      id: 3,
+      fingerprint: "java-crash:next-page",
+    };
+    act(() => {
+      useProblems.getState().replaceGroupPage({
+        analysisToken: token,
+        snapshotHandle: "snapshot-10",
+        revision: 4,
+        total: 3,
+        items: [group, secondGroup],
+        nextCursor: "cursor-2",
+      });
+    });
+    expect(listbox).toHaveAttribute("aria-activedescendant", "lf-problem-group-3");
 
     Object.defineProperties(listbox, {
       clientHeight: { configurable: true, value: 200 },
@@ -354,6 +377,76 @@ describe("ProblemsDock", () => {
     });
     fireEvent.scroll(listbox);
     expect(onLoadMoreGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a pending keyboard page advance after navigation or a failed load", async () => {
+    seedOpenDock();
+    useProblems.getState().replaceGroupPage({
+      analysisToken: token,
+      snapshotHandle: "snapshot-keyboard-race",
+      revision: 4,
+      total: 2,
+      items: [group],
+      nextCursor: "cursor-1",
+    });
+    useProblems.getState().selectGroup(null);
+    const onLoadMoreGroups = vi.fn();
+    render(<ProblemsDock onLoadMoreGroups={onLoadMoreGroups} />);
+    const listbox = screen.getByRole("listbox", { name: "故障分组" });
+    const secondGroup = {
+      ...group,
+      id: 3,
+      fingerprint: "java-crash:keyboard-race",
+    };
+
+    listbox.focus();
+    await userEvent.keyboard("{ArrowDown}{Home}");
+    act(() => {
+      useProblems.getState().replaceGroupPage({
+        analysisToken: token,
+        snapshotHandle: "snapshot-keyboard-race",
+        revision: 4,
+        total: 2,
+        items: [group, secondGroup],
+        nextCursor: null,
+      });
+    });
+    expect(listbox).toHaveAttribute("aria-activedescendant", "lf-problem-group-2");
+
+    act(() => {
+      useProblems.getState().replaceGroupPage({
+        analysisToken: token,
+        snapshotHandle: "snapshot-keyboard-race-2",
+        revision: 5,
+        total: 3,
+        items: [group],
+        nextCursor: "cursor-2",
+      });
+    });
+    await userEvent.keyboard("{ArrowDown}");
+    act(() => {
+      useProblems.setState({
+        groupLoading: true,
+        groupPageError: null,
+      });
+    });
+    act(() => {
+      useProblems.setState({
+        groupLoading: false,
+        groupPageError: "snapshot-expired",
+      });
+    });
+    act(() => {
+      useProblems.getState().replaceGroupPage({
+        analysisToken: token,
+        snapshotHandle: "snapshot-keyboard-race-2",
+        revision: 5,
+        total: 2,
+        items: [group, secondGroup],
+        nextCursor: null,
+      });
+    });
+    expect(listbox).toHaveAttribute("aria-activedescendant", "lf-problem-group-2");
   });
 
   it("virtualizes a synthetic 10,000-group frozen snapshot", () => {

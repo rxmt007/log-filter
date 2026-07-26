@@ -7,6 +7,7 @@ import {
   onProblemsProgress,
   releaseProblemSnapshot,
 } from "@/lib/ipc";
+import { sameAnalysisToken } from "@/lib/analysisToken";
 import { problemsStatusFromProgress } from "@/lib/problems";
 import { useProblems, type ProblemsSort } from "@/store/problems";
 import { useSession } from "@/store/session";
@@ -47,20 +48,13 @@ const defaultClient: ProblemsLiveClient = {
   onProgress: onProblemsProgress,
 };
 
-function sameToken(left: AnalysisToken | null, right: AnalysisToken): boolean {
-  return (
-    left?.sessionGeneration === right.sessionGeneration &&
-    left.analysisGeneration === right.analysisGeneration
-  );
-}
-
 function errorCode(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
 
 function isCurrentAnalysis(token: AnalysisToken): boolean {
-  return sameToken(useProblems.getState().analysisToken, token);
+  return sameAnalysisToken(useProblems.getState().analysisToken, token);
 }
 
 function acceptProblemsStatus(status: ProblemsStatus): void {
@@ -74,7 +68,7 @@ function acceptProblemsStatus(status: ProblemsStatus): void {
   ) {
     return;
   }
-  if (!sameToken(currentToken, status.analysisToken)) {
+  if (!sameAnalysisToken(currentToken, status.analysisToken)) {
     useProblems.getState().resetForAnalysis(status.analysisToken);
   }
   useProblems.getState().acceptStatus(status);
@@ -179,7 +173,7 @@ export function useProblemsLive(client: ProblemsLiveClient = defaultClient): Pro
         .getGroups(request)
         .then((page) => {
           if (requestId !== groupRequestRef.current || !isCurrentAnalysis(token)) return;
-          if (!sameToken(page.analysisToken, token)) {
+          if (!sameAnalysisToken(page.analysisToken, token)) {
             failGroupRequest("stale-analysis-token", token, requestId);
             return;
           }
@@ -249,7 +243,7 @@ export function useProblemsLive(client: ProblemsLiveClient = defaultClient): Pro
           ) {
             return;
           }
-          if (!sameToken(page.analysisToken, token)) {
+          if (!sameAnalysisToken(page.analysisToken, token)) {
             failOccurrenceRequest("stale-analysis-token", token, requestId);
             return;
           }
@@ -272,7 +266,7 @@ export function useProblemsLive(client: ProblemsLiveClient = defaultClient): Pro
       const state = useProblems.getState();
       if (
         requestId !== detailRequestRef.current ||
-        !sameToken(state.analysisToken, token) ||
+        !sameAnalysisToken(state.analysisToken, token) ||
         state.selectedEventId !== eventId
       ) {
         return;
@@ -298,12 +292,12 @@ export function useProblemsLive(client: ProblemsLiveClient = defaultClient): Pro
           const latest = useProblems.getState();
           if (
             requestId !== detailRequestRef.current ||
-            !sameToken(latest.analysisToken, token) ||
+            !sameAnalysisToken(latest.analysisToken, token) ||
             latest.selectedEventId !== eventId
           ) {
             return;
           }
-          if (!sameToken(detail.analysisToken, token)) {
+          if (!sameAnalysisToken(detail.analysisToken, token)) {
             failDetailRequest("stale-analysis-token", token, eventId, requestId);
             return;
           }

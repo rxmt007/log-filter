@@ -170,7 +170,7 @@ impl JavaPending {
         self.unmatched = 0;
     }
 
-    fn into_problem(self, limited: bool) -> Option<RecognizedProblem> {
+    fn into_problem(self, boundary: BoundaryFlags) -> Option<RecognizedProblem> {
         if !self.minimum_grammar_met() {
             return None;
         }
@@ -219,12 +219,6 @@ impl JavaPending {
             fingerprint,
         );
 
-        let mut boundary = BoundaryFlags::NONE;
-        if limited {
-            // The current compact model has one generic truncation bit. It
-            // records that source evidence ended before a natural boundary.
-            boundary.insert(BoundaryFlags::TRUNCATED_BY_INPUT);
-        }
         let mut evidence = EvidenceFlags::PRIMARY;
         if self.last_evidence_line > self.start.line {
             evidence.insert(EvidenceFlags::MULTILINE);
@@ -337,7 +331,6 @@ impl ProblemRecognizer for JavaRecognizer {
                     line: line.line,
                     provenance: line.provenance,
                 });
-                pending.saw_oome = true;
                 pending.touch_evidence(line.line);
                 return;
             }
@@ -349,10 +342,10 @@ impl ProblemRecognizer for JavaRecognizer {
                 .iter()
                 .position(|pending| pending.producer_pid == producer_pid)
             {
-                self.finalize(index, false);
+                self.finalize(index, BoundaryFlags::NONE);
             } else if self.pending.len() == MAX_ACTIVE_JAVA {
                 let index = self.oldest_pending_index();
-                self.finalize(index, true);
+                self.finalize(index, BoundaryFlags::TRUNCATED_BY_LIMIT);
             }
             let candidate_id = self.next_candidate_id;
             self.next_candidate_id = self.next_candidate_id.wrapping_add(1).max(1);
@@ -406,7 +399,7 @@ impl ProblemRecognizer for JavaRecognizer {
     fn finish_input(&mut self) {
         while !self.pending.is_empty() {
             let index = self.earliest_pending_index();
-            self.finalize(index, true);
+            self.finalize(index, BoundaryFlags::TRUNCATED_BY_INPUT);
         }
     }
 
@@ -434,7 +427,7 @@ impl JavaRecognizer {
             let line_limit = line.line.saturating_sub(pending.start.line) >= MAX_JAVA_LINES;
             let byte_limit = pending.bytes_seen > MAX_JAVA_BYTES;
             if line_limit || byte_limit {
-                self.finalize(index, true);
+                self.finalize(index, BoundaryFlags::TRUNCATED_BY_LIMIT);
             } else {
                 index += 1;
             }
@@ -451,7 +444,7 @@ impl JavaRecognizer {
         let mut index = 0;
         while index < self.pending.len() {
             if self.pending[index].unmatched > MAX_UNMATCHED {
-                self.finalize(index, true);
+                self.finalize(index, BoundaryFlags::TRUNCATED_BY_LIMIT);
             } else {
                 index += 1;
             }
@@ -476,9 +469,9 @@ impl JavaRecognizer {
             .expect("earliest_pending_index is called only for a non-empty set")
     }
 
-    fn finalize(&mut self, index: usize, limited: bool) {
+    fn finalize(&mut self, index: usize, boundary: BoundaryFlags) {
         let pending = self.pending.remove(index);
-        if let Some(problem) = pending.into_problem(limited) {
+        if let Some(problem) = pending.into_problem(boundary) {
             self.ready.push_back(problem);
         }
     }
@@ -945,6 +938,9 @@ mod tests {
         assert_eq!(complete.stats().provisional_occurrence_count, 1);
         complete.finish_input();
         assert_eq!(complete.stats().stored_occurrence_count, 1);
+        let event = complete.event(crate::problems::ProblemEventId(0)).unwrap();
+        assert!(event.boundary().contains(BoundaryFlags::TRUNCATED_BY_LIMIT));
+        assert!(!event.boundary().contains(BoundaryFlags::TRUNCATED_BY_INPUT));
 
         let mut incomplete = ProblemEngine::new();
         feed(
@@ -969,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_oom_is_supporting_only_and_upgrades_only_a_verified_fatal() {
+    fn runtime_oom_is_supporting_only_and_never_changes_a_non_oome_fatal_kind() {
         let support =
             "07-26 12:00:00.000  111  111 E art: Throwing OutOfMemoryError \"Failed to allocate\"";
         let mut standalone = ProblemEngine::new();
@@ -1005,7 +1001,7 @@ mod tests {
                 .event(crate::problems::ProblemEventId(0))
                 .unwrap()
                 .kind(),
-            ProblemKind::JavaOom
+            ProblemKind::JavaCrash
         );
     }
 }

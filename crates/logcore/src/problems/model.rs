@@ -115,6 +115,7 @@ impl BoundaryFlags {
     pub const OBSERVATION_COUNT_LIMITED: Self = Self(1 << 2);
     pub const LINE_INDEX_OVERFLOW: Self = Self(1 << 3);
     pub const CORRELATION_LIMITED: Self = Self(1 << 4);
+    pub const TRUNCATED_BY_LIMIT: Self = Self(1 << 5);
 }
 
 /// An optional packed Android log timestamp. Zero represents an unavailable timestamp.
@@ -389,6 +390,14 @@ mod tests {
         assert_eq!(
             ProblemEvent::new(draft, 0, 0, 8, 7),
             Err(ProblemEventError::InvalidObservationTotal)
+        );
+    }
+
+    #[test]
+    fn input_and_detector_limit_truncation_have_distinct_bits() {
+        assert_ne!(
+            BoundaryFlags::TRUNCATED_BY_INPUT.bits(),
+            BoundaryFlags::TRUNCATED_BY_LIMIT.bits()
         );
     }
 }

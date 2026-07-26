@@ -536,6 +536,7 @@
 
 .lf-problems-pane > h2,
 .lf-problems-detail-heading h2,
+.lf-problems-facets h3,
 .lf-problems-facts h3,
 .lf-problems-hints h3 {
   margin: 0;
@@ -715,10 +716,39 @@
   padding-top: 10px;
 }
 
+.lf-problems-facets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 9px;
+}
+
+.lf-problems-facets section {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--lf-border);
+  border-radius: 6px;
+  background: var(--lf-panel-2);
+}
+
+.lf-problems-facets h3,
 .lf-problems-facts h3,
 .lf-problems-hints h3 {
   margin-bottom: 6px;
   font-size: 12px;
+}
+
+.lf-problems-facets ul,
+.lf-problems-facets p {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--lf-text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.lf-problems-facets p {
+  padding-left: 0;
 }
 
 .lf-problems-fact {
@@ -732,11 +762,22 @@
   font-size: 11.5px;
 }
 
-.lf-problems-fact > span {
+.lf-problems-fact-body {
   min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.lf-problems-fact-body > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lf-problems-fact-meta {
+  color: var(--lf-text-dim);
+  font-family: var(--lf-mono);
+  font-size: 10px;
 }
 
 .lf-problems-truncated {

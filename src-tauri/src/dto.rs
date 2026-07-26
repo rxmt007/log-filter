@@ -667,6 +667,7 @@ mod problem_dtos {
     #[serde(rename_all = "kebab-case")]
     pub enum BoundaryFlagDto {
         TruncatedByInput,
+        TruncatedByLimit,
         ObservationRefsTruncated,
         ObservationCountLimited,
         LineIndexOverflow,
@@ -1097,9 +1098,12 @@ mod problem_dtos {
 
     fn boundary_flag_dtos(flags: logcore::problems::BoundaryFlags) -> Vec<BoundaryFlagDto> {
         use logcore::problems::BoundaryFlags;
-        let mut values = Vec::with_capacity(5);
+        let mut values = Vec::with_capacity(6);
         if flags.contains(BoundaryFlags::TRUNCATED_BY_INPUT) {
             values.push(BoundaryFlagDto::TruncatedByInput);
+        }
+        if flags.contains(BoundaryFlags::TRUNCATED_BY_LIMIT) {
+            values.push(BoundaryFlagDto::TruncatedByLimit);
         }
         if flags.contains(BoundaryFlags::OBSERVATION_REFS_TRUNCATED) {
             values.push(BoundaryFlagDto::ObservationRefsTruncated);
@@ -1933,7 +1937,8 @@ mod tests {
                     | EvidenceFlags::CORRELATED,
                 outcome: OutcomeFlags::DEATH_OBSERVED | OutcomeFlags::CONFLICT,
                 boundary: BoundaryFlags::OBSERVATION_REFS_TRUNCATED
-                    | BoundaryFlags::CORRELATION_LIMITED,
+                    | BoundaryFlags::CORRELATION_LIMITED
+                    | BoundaryFlags::TRUNCATED_BY_LIMIT,
             },
             4,
             0,
@@ -1993,6 +1998,7 @@ mod tests {
         assert_eq!(
             detail.occurrence.boundary_flags,
             vec![
+                BoundaryFlagDto::TruncatedByLimit,
                 BoundaryFlagDto::ObservationRefsTruncated,
                 BoundaryFlagDto::CorrelationLimited,
             ]

@@ -203,56 +203,25 @@ impl LineProvenance {
     }
 }
 
-/// Streaming fallback provenance derived from exact logcat buffer dividers.
+/// Resolves provenance supplied by an input adapter.
 ///
-/// The tracker owns only the active buffer, so memory use is constant regardless
-/// of input size. A divider affects rows after itself. Provenance supplied by an
-/// input adapter wins for the current row; a valid divider still advances the
-/// fallback state used after that explicit span ends.
+/// Divider-shaped text is deliberately not trusted here. A raw log line cannot
+/// prove that the surrounding file preserves logcat buffer-section semantics;
+/// adapters that can prove such sections must install explicit `SourceSpan`s.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BufferProvenanceTracker {
-    active_buffer: Option<LogBuffer>,
-}
+pub(crate) struct BufferProvenanceTracker;
 
 impl BufferProvenanceTracker {
     pub(crate) const fn new() -> Self {
-        Self {
-            active_buffer: None,
-        }
+        Self
     }
 
     pub(crate) fn observe_stable_line(
         &mut self,
-        raw_line: &[u8],
+        _raw_line: &[u8],
         adapter_provenance: LineProvenance,
     ) -> LineProvenance {
-        let fallback = self
-            .active_buffer
-            .map(LineProvenance::Known)
-            .unwrap_or(LineProvenance::Unknown);
-        let resolved = match adapter_provenance {
-            LineProvenance::Unknown => fallback,
-            explicit => explicit,
-        };
-
-        if let Some(buffer) = parse_logcat_buffer_divider(raw_line) {
-            self.active_buffer = Some(buffer);
-        }
-        resolved
-    }
-}
-
-fn parse_logcat_buffer_divider(raw_line: &[u8]) -> Option<LogBuffer> {
-    let line = raw_line.strip_suffix(b"\n").unwrap_or(raw_line);
-    let line = line.strip_suffix(b"\r").unwrap_or(line);
-    match line {
-        b"--------- beginning of main" => Some(LogBuffer::Main),
-        b"--------- beginning of system" => Some(LogBuffer::System),
-        b"--------- beginning of events" => Some(LogBuffer::Events),
-        b"--------- beginning of crash" => Some(LogBuffer::Crash),
-        b"--------- beginning of radio" => Some(LogBuffer::Radio),
-        b"--------- beginning of kernel" => Some(LogBuffer::Kernel),
-        _ => None,
+        adapter_provenance
     }
 }
 
@@ -478,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_logcat_dividers_change_only_subsequent_line_provenance() {
+    fn divider_shaped_text_does_not_authenticate_following_lines() {
         let mut tracker = BufferProvenanceTracker::new();
 
         assert_eq!(
@@ -487,53 +456,30 @@ mod tests {
         );
         assert_eq!(
             tracker.observe_stable_line(b"main payload\n", LineProvenance::Unknown),
-            LineProvenance::Known(LogBuffer::Main)
+            LineProvenance::Unknown
         );
         assert_eq!(
             tracker.observe_stable_line(
                 b"--------- beginning of events\r\n",
                 LineProvenance::Unknown
             ),
-            LineProvenance::Known(LogBuffer::Main)
+            LineProvenance::Unknown
         );
         assert_eq!(
             tracker.observe_stable_line(b"events payload\n", LineProvenance::Unknown),
-            LineProvenance::Known(LogBuffer::Events)
-        );
-        assert_eq!(
-            tracker.observe_stable_line(b"--------- beginning of crash\n", LineProvenance::Unknown),
-            LineProvenance::Known(LogBuffer::Events)
-        );
-        assert_eq!(
-            tracker.observe_stable_line(b"crash payload\n", LineProvenance::Unknown),
-            LineProvenance::Known(LogBuffer::Crash)
+            LineProvenance::Unknown
         );
     }
 
     #[test]
-    fn every_supported_standard_divider_is_recognized_exactly() {
-        for (divider, buffer) in [
-            (b"--------- beginning of main\n".as_slice(), LogBuffer::Main),
-            (
-                b"--------- beginning of system\n".as_slice(),
-                LogBuffer::System,
-            ),
-            (
-                b"--------- beginning of events\n".as_slice(),
-                LogBuffer::Events,
-            ),
-            (
-                b"--------- beginning of crash\n".as_slice(),
-                LogBuffer::Crash,
-            ),
-            (
-                b"--------- beginning of radio\n".as_slice(),
-                LogBuffer::Radio,
-            ),
-            (
-                b"--------- beginning of kernel\n".as_slice(),
-                LogBuffer::Kernel,
-            ),
+    fn every_standard_divider_stays_untrusted_without_an_adapter_span() {
+        for divider in [
+            b"--------- beginning of main\n".as_slice(),
+            b"--------- beginning of system\n".as_slice(),
+            b"--------- beginning of events\n".as_slice(),
+            b"--------- beginning of crash\n".as_slice(),
+            b"--------- beginning of radio\n".as_slice(),
+            b"--------- beginning of kernel\n".as_slice(),
         ] {
             let mut tracker = BufferProvenanceTracker::new();
             assert_eq!(
@@ -542,7 +488,7 @@ mod tests {
             );
             assert_eq!(
                 tracker.observe_stable_line(b"payload\n", LineProvenance::Unknown),
-                LineProvenance::Known(buffer)
+                LineProvenance::Unknown
             );
         }
     }
@@ -570,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_adapter_provenance_wins_without_blocking_divider_progress() {
+    fn explicit_adapter_provenance_is_the_only_source_of_known_attribution() {
         let mut tracker = BufferProvenanceTracker::new();
 
         assert_eq!(
@@ -591,8 +537,8 @@ mod tests {
         );
         assert_eq!(
             tracker.observe_stable_line(b"payload after explicit span\n", LineProvenance::Unknown),
-            LineProvenance::Known(LogBuffer::Events),
-            "the divider remains the fallback after the explicit span ends"
+            LineProvenance::Unknown,
+            "divider-shaped text must not extend an adapter-owned span"
         );
     }
 

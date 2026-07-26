@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { sameAnalysisToken } from "@/lib/analysisToken";
 import { appendSnapshotPage } from "@/lib/problems";
 import type {
   AnalysisToken,
@@ -52,13 +53,6 @@ interface ProblemsState {
   clearNewResults: () => void;
 }
 
-function sameToken(left: AnalysisToken | null, right: AnalysisToken) {
-  return (
-    left?.sessionGeneration === right.sessionGeneration &&
-    left.analysisGeneration === right.analysisGeneration
-  );
-}
-
 const initialUi = {
   panelOpen: false,
   panelHeight: 280,
@@ -110,7 +104,7 @@ export const useProblems = create<ProblemsState>()((set) => ({
     })),
   acceptStatus: (status) =>
     set((state) => {
-      if (!sameToken(state.analysisToken, status.analysisToken)) return {};
+      if (!sameAnalysisToken(state.analysisToken, status.analysisToken)) return {};
       if (
         state.status &&
         (status.scannedLines < state.status.scannedLines ||
@@ -179,7 +173,7 @@ export const useProblems = create<ProblemsState>()((set) => ({
     }),
   replaceGroupPage: (groupPage) =>
     set((state) =>
-      sameToken(state.analysisToken, groupPage.analysisToken)
+      sameAnalysisToken(state.analysisToken, groupPage.analysisToken)
         ? {
             groupPage,
             groupLoading: false,
@@ -190,7 +184,7 @@ export const useProblems = create<ProblemsState>()((set) => ({
     ),
   appendGroupPage: (page) =>
     set((state) =>
-      sameToken(state.analysisToken, page.analysisToken)
+      sameAnalysisToken(state.analysisToken, page.analysisToken)
         ? {
             groupPage: state.groupPage
               ? appendSnapshotPage(state.groupPage, page, (item) => item.id)
@@ -202,7 +196,7 @@ export const useProblems = create<ProblemsState>()((set) => ({
     ),
   replaceOccurrencePage: (occurrencePage) =>
     set((state) =>
-      sameToken(state.analysisToken, occurrencePage.analysisToken)
+      sameAnalysisToken(state.analysisToken, occurrencePage.analysisToken)
         ? {
             occurrencePage,
             occurrenceLoading: false,
@@ -212,7 +206,7 @@ export const useProblems = create<ProblemsState>()((set) => ({
     ),
   appendOccurrencePage: (page) =>
     set((state) =>
-      sameToken(state.analysisToken, page.analysisToken)
+      sameAnalysisToken(state.analysisToken, page.analysisToken)
         ? {
             occurrencePage: state.occurrencePage
               ? appendSnapshotPage(state.occurrencePage, page, (item) => item.eventId)
@@ -224,7 +218,7 @@ export const useProblems = create<ProblemsState>()((set) => ({
     ),
   setDetail: (detail) =>
     set((state) =>
-      detail && !sameToken(state.analysisToken, detail.analysisToken)
+      detail && !sameAnalysisToken(state.analysisToken, detail.analysisToken)
         ? {}
         : { detail, detailLoading: false, detailError: null },
     ),

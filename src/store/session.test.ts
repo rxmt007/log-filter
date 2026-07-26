@@ -107,6 +107,40 @@ describe("session store", () => {
     });
   });
 
+  it("publishes a filter completion without clamping an active unfiltered context", () => {
+    useSession.setState({
+      tableScope: {
+        kind: "problem-context",
+        occurrence: { eventId: 3, groupId: 2, startLine: 40, endLine: 44, anchorLine: 42 },
+        eventRange: { startLine: 40, endLine: 44 },
+        contextRange: { startLine: 20, endLine: 90 },
+        returnPoint: { viewportLine: 76, selectedLine: 82, filterInputRevision: 0 },
+      },
+      selectedLine: 82,
+      selectedResultIndex: 81,
+      viewportLine: 76,
+      viewportResultIndex: 75,
+    });
+
+    useSession.getState().applyFilterDone({
+      generation: 1,
+      filteredLines: 2,
+      filterInputRevision: 0,
+      filterResultRevision: 1,
+    });
+
+    expect(useSession.getState()).toMatchObject({
+      selectedLine: 82,
+      selectedResultIndex: 81,
+      viewportLine: 76,
+      viewportResultIndex: 75,
+      status: {
+        filteredLines: 2,
+        filterResultRevision: 1,
+      },
+    });
+  });
+
   it("allocates a new filter request when marked-only membership changes", () => {
     useSession.setState({
       filter: { ...DEFAULT_FILTER, markedOnly: true },

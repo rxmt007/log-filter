@@ -1,6 +1,6 @@
 use logcore::problems::{
-    public_line_number, GroupQuery, PageSpec, ProblemEvent, ProblemEventId, ProblemGroupSummary,
-    ProblemKind,
+    public_line_number, GroupQuery, LogBuffer, PageSpec, ProblemEvent, ProblemEventId,
+    ProblemGroupSummary, ProblemKind, SourceSpan,
 };
 use logcore::session::Session;
 use std::fmt::Write as _;
@@ -12,13 +12,32 @@ const HIGH_SIMILARITY_NEGATIVE: &str =
     include_str!("fixtures/problems/high_similarity_negative.log");
 const HIGH_SIMILARITY_NEGATIVE_GOLDEN: &str =
     include_str!("fixtures/problems/high_similarity_negative.golden");
+const JAVA_MATRIX: &str = include_str!("fixtures/problems/java/matrix.log");
+const JAVA_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/java/matrix.golden");
+const ANR_MATRIX: &str = include_str!("fixtures/problems/anr/matrix.log");
+const ANR_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/anr/matrix.golden");
+const NATIVE_MATRIX: &str = include_str!("fixtures/problems/native/matrix.log");
+const NATIVE_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/native/matrix.golden");
+const LIFECYCLE_MATRIX: &str = include_str!("fixtures/problems/lifecycle/matrix.log");
+const LIFECYCLE_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/lifecycle/matrix.golden");
+const MEMORY_MATRIX: &str = include_str!("fixtures/problems/memory/matrix.log");
+const MEMORY_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/memory/matrix.golden");
 
 const SCAN_CHUNKS: [usize; 3] = [1, 4_096, usize::MAX];
+const MIXED_POSITIVE_SPANS: &[(u32, u32, LogBuffer)] = &[
+    (1, 16, LogBuffer::Main),
+    (18, 21, LogBuffer::System),
+    (23, 26, LogBuffer::Events),
+    (28, 28, LogBuffer::Main),
+    (30, 34, LogBuffer::Crash),
+    (36, 36, LogBuffer::Events),
+    (38, 38, LogBuffer::Kernel),
+];
 
 #[test]
 fn mixed_positive_fixture_matches_golden_for_every_scan_chunk() {
     for chunk in SCAN_CHUNKS {
-        let actual = analyze_and_render(MIXED_POSITIVE, chunk);
+        let actual = analyze_and_render(MIXED_POSITIVE, chunk, MIXED_POSITIVE_SPANS);
         assert_eq!(
             actual, MIXED_POSITIVE_GOLDEN,
             "mixed fixture changed for scan chunk {chunk}"
@@ -29,7 +48,7 @@ fn mixed_positive_fixture_matches_golden_for_every_scan_chunk() {
 #[test]
 fn high_similarity_negative_fixture_stays_empty_for_every_scan_chunk() {
     for chunk in SCAN_CHUNKS {
-        let actual = analyze_and_render(HIGH_SIMILARITY_NEGATIVE, chunk);
+        let actual = analyze_and_render(HIGH_SIMILARITY_NEGATIVE, chunk, &[]);
         assert_eq!(
             actual, HIGH_SIMILARITY_NEGATIVE_GOLDEN,
             "negative fixture changed for scan chunk {chunk}"
@@ -37,7 +56,114 @@ fn high_similarity_negative_fixture_stays_empty_for_every_scan_chunk() {
     }
 }
 
-fn analyze_and_render(fixture: &str, chunk: usize) -> String {
+#[test]
+fn per_kind_positive_and_high_similarity_negative_matrices_are_chunk_invariant() {
+    let matrices = [
+        (
+            "java",
+            JAVA_MATRIX,
+            ProblemKind::JavaCrash,
+            vec![(0, 19, LogBuffer::Events)],
+            JAVA_MATRIX_GOLDEN,
+        ),
+        (
+            "anr",
+            ANR_MATRIX,
+            ProblemKind::Anr,
+            vec![(0, 19, LogBuffer::Events)],
+            ANR_MATRIX_GOLDEN,
+        ),
+        (
+            "native",
+            NATIVE_MATRIX,
+            ProblemKind::NativeCrash,
+            vec![(0, 19, LogBuffer::Events)],
+            NATIVE_MATRIX_GOLDEN,
+        ),
+        (
+            "lifecycle",
+            LIFECYCLE_MATRIX,
+            ProblemKind::ProcessRestart,
+            vec![(0, 39, LogBuffer::Events)],
+            LIFECYCLE_MATRIX_GOLDEN,
+        ),
+        (
+            "memory",
+            MEMORY_MATRIX,
+            ProblemKind::LmkKill,
+            vec![(0, 15, LogBuffer::Main), (16, 19, LogBuffer::Kernel)],
+            MEMORY_MATRIX_GOLDEN,
+        ),
+    ];
+
+    for (name, fixture, expected_kind, positive_spans, golden) in matrices {
+        let (positive, negative_tail) = fixture
+            .split_once("--------- beginning")
+            .expect("matrix fixture separates positive and negative cases");
+        let positive = positive.trim_end_matches('\n');
+        let expected = analyze_and_render(positive, usize::MAX, &positive_spans);
+        assert_eq!(
+            matrix_contract(&expected, expected_kind, 10),
+            golden,
+            "{name} canonical public snapshot changed:\n{expected}"
+        );
+        assert_matrix_events(name, &expected, expected_kind, 10);
+        for chunk in SCAN_CHUNKS {
+            assert_eq!(
+                analyze_and_render(positive, chunk, &positive_spans),
+                expected,
+                "{name} positive matrix changed for scan chunk {chunk}"
+            );
+        }
+
+        let negative = format!("--------- beginning{negative_tail}");
+        let negative_last_line =
+            u32::try_from(negative.lines().count().saturating_sub(1)).expect("small fixture");
+        let negative_spans = [(0, negative_last_line, LogBuffer::Main)];
+        for chunk in SCAN_CHUNKS {
+            let actual = analyze_and_render(&negative, chunk, &negative_spans);
+            assert_eq!(
+                actual, HIGH_SIMILARITY_NEGATIVE_GOLDEN,
+                "{name} negative matrix changed for scan chunk {chunk}"
+            );
+        }
+    }
+}
+
+fn matrix_contract(rendered: &str, expected_kind: ProblemKind, count: usize) -> String {
+    format!(
+        "observed={count} stored={count} kind={expected_kind:?}\nsnapshot-blake3={}\n",
+        blake3::hash(rendered.as_bytes()).to_hex()
+    )
+}
+
+fn assert_matrix_events(name: &str, rendered: &str, expected_kind: ProblemKind, count: usize) {
+    assert!(
+        rendered.starts_with(&format!("stats observed={count} stored={count} groups=")),
+        "{name} matrix did not commit exactly {count} occurrences:\n{rendered}"
+    );
+    let event_lines: Vec<_> = rendered
+        .lines()
+        .filter(|line| line.starts_with("  event id="))
+        .collect();
+    assert_eq!(
+        event_lines.len(),
+        count,
+        "{name} matrix public snapshot:\n{rendered}"
+    );
+    assert!(
+        event_lines
+            .iter()
+            .all(|line| line.contains(&format!("kind={expected_kind:?}"))),
+        "{name} matrix contains an unexpected Problem kind:\n{rendered}"
+    );
+}
+
+fn analyze_and_render(
+    fixture: &str,
+    chunk: usize,
+    source_spans: &[(u32, u32, LogBuffer)],
+) -> String {
     let mut source = tempfile::NamedTempFile::new().expect("create fixture file");
     source
         .write_all(fixture.as_bytes())
@@ -45,6 +171,13 @@ fn analyze_and_render(fixture: &str, chunk: usize) -> String {
     source.flush().expect("flush fixture file");
 
     let mut session = Session::open(source.path()).expect("open fixture session");
+    for &(start_line, end_line, buffer) in source_spans {
+        session
+            .add_problem_source_span(
+                SourceSpan::new(start_line, end_line, buffer).expect("valid fixture source span"),
+            )
+            .expect("non-overlapping fixture source span");
+    }
     session.index_all();
 
     let mut previous = 0;

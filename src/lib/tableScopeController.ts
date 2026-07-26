@@ -1,3 +1,4 @@
+import { sameAnalysisToken } from "@/lib/analysisToken";
 import type { AnalysisToken, ProblemOccurrenceRef, ScrollRequest, TableScope } from "@/types";
 
 export type MappingBias = "exact" | "nearest";
@@ -108,13 +109,6 @@ export interface TableScopeController {
   returnToResults(): Promise<void>;
 }
 
-function sameToken(left: AnalysisToken, right: AnalysisToken) {
-  return (
-    left.sessionGeneration === right.sessionGeneration &&
-    left.analysisGeneration === right.analysisGeneration
-  );
-}
-
 const DEFAULT_CONTEXT_RADIUS = 50;
 export const MAX_CONTEXT_ROWS = 512;
 
@@ -220,7 +214,7 @@ export function createTableScopeController(
     return (
       operation === operationNonce &&
       current.sessionGeneration === token.sessionGeneration &&
-      sameToken(current.analysisToken, token)
+      sameAnalysisToken(current.analysisToken, token)
     );
   };
 
@@ -238,7 +232,7 @@ export function createTableScopeController(
     return (
       current.scope.kind === "results" &&
       current.sessionGeneration === dataset.sessionGeneration &&
-      sameToken(current.analysisToken, dataset.analysisToken) &&
+      sameAnalysisToken(current.analysisToken, dataset.analysisToken) &&
       current.filterInputRevision === dataset.filterInputRevision &&
       current.appliedFilterInputRevision === dataset.appliedFilterInputRevision &&
       current.filterResultRevision === dataset.filterResultRevision
@@ -273,7 +267,7 @@ export function createTableScopeController(
   const stateMatchesGuard = (state: TableScopeControllerState, guard: NavigationCommitGuard) =>
     state.scope.kind === guard.expectedScopeKind &&
     state.sessionGeneration === guard.expectedSessionGeneration &&
-    sameToken(state.analysisToken, guard.expectedAnalysisToken) &&
+    sameAnalysisToken(state.analysisToken, guard.expectedAnalysisToken) &&
     (guard.expectedFilterInputRevision == null ||
       state.filterInputRevision === guard.expectedFilterInputRevision) &&
     (guard.expectedAppliedFilterInputRevision == null ||
@@ -311,7 +305,7 @@ export function createTableScopeController(
           if (
             current.scope.kind !== "results" ||
             current.filterInputRevision !== expectedInputRevision ||
-            !sameToken(current.analysisToken, token) ||
+            !sameAnalysisToken(current.analysisToken, token) ||
             current.sessionGeneration !== token.sessionGeneration
           ) {
             resolve({ kind: "changed" });
@@ -344,7 +338,7 @@ export function createTableScopeController(
       if (!operationIsCurrent(operation, token) || nonce !== requestNonce) {
         return { status: "aborted" };
       }
-      if (!sameToken(response.analysisToken, token)) {
+      if (!sameAnalysisToken(response.analysisToken, token)) {
         return failedProtocolOutcome("Filter result wait returned a mismatched analysis token");
       }
       const current = dependencies.getState();
@@ -392,7 +386,7 @@ export function createTableScopeController(
             current.appliedFilterInputRevision !== dataset.appliedFilterInputRevision ||
             current.filterResultRevision !== dataset.filterResultRevision ||
             current.sessionGeneration !== token.sessionGeneration ||
-            !sameToken(current.analysisToken, token)
+            !sameAnalysisToken(current.analysisToken, token)
           ) {
             resolve({ kind: "changed" });
           }
@@ -436,7 +430,7 @@ export function createTableScopeController(
       ) {
         continue;
       }
-      if (responses.some((response) => !sameToken(response.analysisToken, token))) {
+      if (responses.some((response) => !sameAnalysisToken(response.analysisToken, token))) {
         return failedProtocolOutcome("Line mapping returned a mismatched analysis token");
       }
       if (responses.some((response) => response.status === "stale-filter-result")) {
@@ -586,7 +580,7 @@ export function createTableScopeController(
     const pendingReturnMetadata =
       returnMetadata &&
       returnMetadata.sessionGeneration === state.sessionGeneration &&
-      sameToken(returnMetadata.analysisToken, state.analysisToken)
+      sameAnalysisToken(returnMetadata.analysisToken, state.analysisToken)
         ? returnMetadata
         : null;
     const nextReturnMetadata =
@@ -648,7 +642,7 @@ export function createTableScopeController(
           operationIsCurrent(operation, expectedToken) &&
           nonce === requestNonce &&
           response.requestNonce === nonce &&
-          sameToken(response.analysisToken, expectedToken) &&
+          sameAnalysisToken(response.analysisToken, expectedToken) &&
           current.scope.kind === "problem-context" &&
           current.scope.occurrence.eventId === occurrence.eventId
         ) {
@@ -815,7 +809,7 @@ export function createTableScopeController(
       if (
         !metadata ||
         metadata.sessionGeneration !== state.sessionGeneration ||
-        !sameToken(metadata.analysisToken, state.analysisToken)
+        !sameAnalysisToken(metadata.analysisToken, state.analysisToken)
       ) {
         returnMetadata = null;
         commitSafeResults(guardForState(state));

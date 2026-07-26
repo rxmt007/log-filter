@@ -1,6 +1,11 @@
 import type {
   ProblemFactCode,
+  ProblemBoundaryFlag,
+  ProblemEvidenceFormat,
   ProblemKind,
+  ProblemLineProvenance,
+  ProblemObservationRole,
+  ProblemOutcomeFlag,
   ProblemPage,
   ProblemsProgress,
   ProblemsStatus,
@@ -116,10 +121,88 @@ const KIND_LABELS = {
   "kernel-oom-kill": "Kernel OOM Kill",
 } satisfies Record<ProblemKind, string>;
 
+const OUTCOME_LABELS = {
+  "kill-requested": "系统服务记录了 kill 请求，但未证明已经执行",
+  "kill-issued": "日志明确记录已发出 kill",
+  "death-observed": "同一进程实例的结束得到日志佐证",
+  "start-after-death-observed": "同一进程身份在结束后再次出现启动记录",
+  "explicitly-recoverable": "日志字段明确标记该事件可恢复",
+  conflict: "日志包含互相矛盾或无法自动解释的结局事实",
+} satisfies Record<ProblemOutcomeFlag, string>;
+
+const BOUNDARY_LABELS = {
+  "truncated-by-input": "输入结束时事件仍处于开放状态",
+  "truncated-by-limit": "检测器在安全上限处截断了事件证据",
+  "observation-refs-truncated": "详情只物化了有界的关键证据引用",
+  "observation-count-limited": "可采用的证据数量达到安全上限",
+  "line-index-overflow": "源行号超出当前索引表示范围",
+  "correlation-limited": "部分晚到关联证据可能未保留",
+} satisfies Record<ProblemBoundaryFlag, string>;
+
+const EVIDENCE_FORMAT_LABELS = {
+  "aosp-text": "AOSP 文本",
+  "event-log-shaped-text": "EventLog 格式文本",
+  "tombstone-shaped-text": "tombstone 格式文本",
+  "kernel-shaped-text": "kernel 格式文本",
+} satisfies Record<ProblemEvidenceFormat, string>;
+
+const ROLE_LABELS = {
+  primary: "主证据",
+  "process-identity": "进程身份",
+  "exception-type": "异常类型",
+  "stack-frame": "Java/Kotlin 栈帧",
+  reason: "系统记录的 reason",
+  signal: "fatal signal",
+  "backtrace-frame": "native 栈帧",
+  start: "启动记录",
+  death: "结束记录",
+  restart: "再次启动记录",
+  "kill-request": "kill 请求",
+  "kill-issued": "kill 已发出",
+  supporting: "支持证据",
+  recovery: "可恢复标记",
+} satisfies Record<ProblemObservationRole, string>;
+
+const PROVENANCE_LABELS = {
+  unknown: "来源未证明",
+  "inferred-main": "推断来源：main",
+  "inferred-system": "推断来源：system",
+  "inferred-events": "推断来源：events",
+  "inferred-crash": "推断来源：crash",
+  "inferred-radio": "推断来源：radio",
+  "inferred-kernel": "推断来源：kernel",
+  "known-main": "已证明来源：main",
+  "known-system": "已证明来源：system",
+  "known-events": "已证明来源：events",
+  "known-crash": "已证明来源：crash",
+  "known-radio": "已证明来源：radio",
+  "known-kernel": "已证明来源：kernel",
+} satisfies Record<ProblemLineProvenance, string>;
+
 export function problemFactLabel(code: ProblemFactCode): string {
   return FACT_LABELS[code];
 }
 
 export function problemKindLabel(kind: ProblemKind): string {
   return KIND_LABELS[kind];
+}
+
+export function problemOutcomeLabel(flag: ProblemOutcomeFlag): string {
+  return OUTCOME_LABELS[flag];
+}
+
+export function problemBoundaryLabel(flag: ProblemBoundaryFlag): string {
+  return BOUNDARY_LABELS[flag];
+}
+
+export function problemEvidenceFormatLabel(format: ProblemEvidenceFormat): string {
+  return EVIDENCE_FORMAT_LABELS[format];
+}
+
+export function problemObservationRoleLabel(role: ProblemObservationRole): string {
+  return ROLE_LABELS[role];
+}
+
+export function problemProvenanceLabel(provenance: ProblemLineProvenance): string {
+  return PROVENANCE_LABELS[provenance];
 }
