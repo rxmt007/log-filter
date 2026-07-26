@@ -1,14 +1,22 @@
-# LogFilter Problems Android TV Demo
+# LogFilter Problems Android Demo
 
-这是一个面向 Android TV / TV Box 的小型测试夹具，用真实 Android 平台行为验证
-LogFilter Problems 面板。应用不尝试判断根因，也不会伪造系统日志文本。
+这是一个面向 Android TV / TV Box 和触屏手机的小型测试夹具，用真实 Android
+平台行为验证 LogFilter Problems 面板。应用不尝试判断根因，也不会伪造系统日志文本。
 
-## 遥控器交互
+同一个 APK 内包含两套独立页面：TV 使用遥控器布局，普通 Android 设备使用可整页
+滚动的窄屏触控布局。两套页面分别维护布局与焦点参数，共用异常动作和二次确认逻辑。
 
-- 方向键：移动焦点。
-- OK / Enter：触发按钮。
-- Java 崩溃、Java OOM、ANR、native crash 和进程退出均需在 5 秒内按两次确认。
-- 崩溃或进程退出后，从 TV Launcher 重新打开应用即可继续测试。
+## 交互
+
+- TV / TV Box：方向键移动焦点，OK / Enter 触发按钮。
+- 触屏手机：上下滑动页面，轻触按钮执行。
+- Java 崩溃、Java OOM、ANR、native crash 和进程退出均需在 5 秒内再次点击
+  同一按钮或按 OK 确认。
+- 崩溃或进程退出后，从 Launcher 的应用列表重新打开即可继续测试。
+- 手机不强制横屏；手机布局以 320dp 为设计下限，并通过整页滚动保持所有动作可达。
+
+当前版本已在 TV Box 上完成遥控器回归；手机端已通过构建、单元测试和安装兼容性
+声明检查，尚未在手机实机或手机模拟器上验证。
 
 首页提供以下动作：
 

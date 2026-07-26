@@ -2,9 +2,10 @@
 <resources>
     <string name="app_name">LogFilter 故障演示</string>
     <string name="screen_title">LogFilter Problems 故障演示</string>
-    <string name="screen_subtitle">方向键选择，OK 键执行；破坏性动作需要在 5 秒内再次确认。</string>
+    <string name="screen_subtitle_tv">方向键选择，OK 键执行；破坏性动作需要在 5 秒内再次确认。</string>
+    <string name="screen_subtitle_phone">轻触按钮执行；破坏性动作需要在 5 秒内再次轻触确认。</string>
     <string name="status_ready">请选择一个动作。普通 E/F 日志用于验证“日志级别 ≠ 故障事件”。</string>
-    <string name="status_armed">已选择“%1$s”。5 秒内再次按 OK 确认。</string>
+    <string name="status_armed">已选择“%1$s”。5 秒内再次点击此按钮或按 OK 确认。</string>
     <string name="status_cancelled">确认已超时，未执行异常。</string>
     <string name="status_running">正在触发“%1$s”…</string>
     <string name="status_error_logged">已输出 3 条 E 和 1 条 F 日志；应用保持运行，Problems 不应新增事件。</string>

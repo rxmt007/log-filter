@@ -2,6 +2,8 @@ package com.example.logfilterproblemdemo;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -32,6 +34,7 @@ public final class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ArmingGate armingGate = new ArmingGate(CONFIRM_TIMEOUT_MS);
     private TextView statusView;
+    private DemoUiMode uiMode;
 
     private final Runnable disarmRunnable =
             () -> {
@@ -60,16 +63,34 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        setContentView(createContentView());
+        uiMode = resolveUiMode();
+        setContentView(
+                uiMode == DemoUiMode.TELEVISION
+                        ? createTelevisionContentView()
+                        : createPhoneContentView());
     }
 
     @Override
     protected void onDestroy() {
-        mainHandler.removeCallbacks(disarmRunnable);
+        mainHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
 
-    private View createContentView() {
+    private DemoUiMode resolveUiMode() {
+        Configuration configuration = getResources().getConfiguration();
+        boolean televisionUiMode =
+                (configuration.uiMode & Configuration.UI_MODE_TYPE_MASK)
+                        == Configuration.UI_MODE_TYPE_TELEVISION;
+        boolean hasLeanbackFeature =
+                getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK);
+        return DemoUiMode.select(televisionUiMode, hasLeanbackFeature);
+    }
+
+    /**
+     * TV screen. Keep this layout independent from the phone screen so touch-oriented changes do
+     * not subtly alter remote focus or the established living-room proportions.
+     */
+    private View createTelevisionContentView() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -87,7 +108,7 @@ public final class MainActivity extends Activity {
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView subtitle = new TextView(this);
-        subtitle.setText(R.string.screen_subtitle);
+        subtitle.setText(R.string.screen_subtitle_tv);
         subtitle.setTextColor(getColor(R.color.text_secondary));
         subtitle.setTextSize(18);
         subtitle.setGravity(Gravity.CENTER);
@@ -117,11 +138,11 @@ public final class MainActivity extends Activity {
 
         Button firstButton = null;
         for (DemoAction action : DemoAction.values()) {
-            Button button = createActionButton(action);
+            Button button = createTelevisionActionButton(action);
             if (firstButton == null) {
                 firstButton = button;
             }
-            buttonColumn.addView(button, actionButtonLayoutParams());
+            buttonColumn.addView(button, televisionActionButtonLayoutParams());
         }
 
         ScrollView scrollView = new ScrollView(this);
@@ -137,12 +158,75 @@ public final class MainActivity extends Activity {
                         ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         if (firstButton != null) {
-            firstButton.requestFocus();
+            Button initialButton = firstButton;
+            initialButton.post(initialButton::requestFocus);
         }
         return root;
     }
 
-    private Button createActionButton(DemoAction action) {
+    /**
+     * Phone screen. The whole page scrolls, which keeps every control reachable on narrow devices,
+     * landscape phones, and larger font scales without adding width breakpoint rules.
+     */
+    private View createPhoneContentView() {
+        ScrollView page = new ScrollView(this);
+        page.setFillViewport(true);
+        page.setClipToPadding(false);
+        page.setScrollbarFadingEnabled(false);
+        page.setBackgroundColor(getColor(R.color.screen_background));
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.setPadding(dp(16), dp(16), dp(16), dp(20));
+
+        TextView title = new TextView(this);
+        title.setText(R.string.screen_title);
+        title.setTextColor(getColor(R.color.text_primary));
+        title.setTextSize(24);
+        title.setGravity(Gravity.CENTER);
+        root.addView(
+                title,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText(R.string.screen_subtitle_phone);
+        subtitle.setTextColor(getColor(R.color.text_secondary));
+        subtitle.setTextSize(16);
+        subtitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams subtitleParams =
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subtitleParams.topMargin = dp(6);
+        root.addView(subtitle, subtitleParams);
+
+        statusView = new TextView(this);
+        statusView.setText(R.string.status_ready);
+        statusView.setTextColor(getColor(R.color.status_warning));
+        statusView.setTextSize(16);
+        statusView.setGravity(Gravity.CENTER);
+        statusView.setPadding(dp(12), dp(10), dp(12), dp(10));
+        statusView.setBackgroundColor(getColor(R.color.panel_background));
+        LinearLayout.LayoutParams statusParams =
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        statusParams.topMargin = dp(14);
+        statusParams.bottomMargin = dp(10);
+        root.addView(statusView, statusParams);
+
+        for (DemoAction action : DemoAction.values()) {
+            root.addView(createPhoneActionButton(action), phoneActionButtonLayoutParams());
+        }
+
+        page.addView(
+                root,
+                new ScrollView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return page;
+    }
+
+    private Button createTelevisionActionButton(DemoAction action) {
         Button button = new Button(this);
         button.setText(action.labelRes);
         button.setTextColor(Color.WHITE);
@@ -158,11 +242,35 @@ public final class MainActivity extends Activity {
         return button;
     }
 
-    private LinearLayout.LayoutParams actionButtonLayoutParams() {
+    private Button createPhoneActionButton(DemoAction action) {
+        Button button = new Button(this);
+        button.setText(action.labelRes);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(18);
+        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setFocusable(true);
+        button.setMinHeight(dp(56));
+        button.setMinimumHeight(dp(56));
+        button.setPadding(dp(12), dp(10), dp(12), dp(10));
+        button.setBackgroundResource(R.drawable.action_button_background);
+        button.setOnClickListener(view -> onActionPressed(action, button));
+        return button;
+    }
+
+    private LinearLayout.LayoutParams televisionActionButtonLayoutParams() {
         LinearLayout.LayoutParams params =
                 new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMargins(0, dp(5), 0, dp(5));
+        return params;
+    }
+
+    private LinearLayout.LayoutParams phoneActionButtonLayoutParams() {
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(4), 0, dp(4));
         return params;
     }
 
