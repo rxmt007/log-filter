@@ -134,6 +134,97 @@ export type ProblemKind =
   | "lmk-kill"
   | "kernel-oom-kill";
 
+export interface AnalysisToken {
+  sessionGeneration: number;
+  analysisGeneration: number;
+}
+
+export interface ProblemStats {
+  observedOccurrenceCount: number;
+  storedOccurrenceCount: number;
+  droppedOccurrenceCount: number;
+  storedGroupCount: number;
+  ungroupedDroppedOccurrenceCount: number;
+  droppedRecentObservationCount: number;
+  revision: number;
+  limited: boolean;
+  correlationLimited: boolean;
+}
+
+export interface ProblemsStatus {
+  analysisToken: AnalysisToken;
+  scannedLines: number;
+  stableLines: number;
+  scanning: boolean;
+  finished: boolean;
+  stats: ProblemStats;
+}
+
+export interface ProblemGroup {
+  id: number;
+  kind: ProblemKind;
+  observedOccurrenceCount: number;
+  storedOccurrenceCount: number;
+  droppedOccurrenceCount: number;
+  firstLine: number;
+  lastLine: number;
+  representativeEventId: number | null;
+}
+
+export interface ProblemOccurrence extends ProblemOccurrenceRef {
+  kind: ProblemKind;
+  pid: number | null;
+  timestamp: string | null;
+  outcomeFlags: string[];
+  boundaryFlags: string[];
+}
+
+export interface ProblemPage<T> {
+  querySnapshotId: number;
+  revision: number;
+  total: number;
+  items: T[];
+  nextOffset: number | null;
+}
+
+export type ProblemFactCode =
+  | "java-uncaught-exception"
+  | "java-out-of-memory-error"
+  | "managed-crash-record"
+  | "anr-detected"
+  | "native-crash-detected"
+  | "signal-exit-detected"
+  | "process-started"
+  | "process-died"
+  | "process-restarted"
+  | "lmk-kill-issued"
+  | "kernel-oom-kill-issued"
+  | "kill-requested"
+  | "process-identity-recorded"
+  | "exception-type-recorded"
+  | "stack-frame-recorded"
+  | "anr-reason-recorded"
+  | "fatal-signal-recorded"
+  | "native-frame-recorded"
+  | "process-death-observed"
+  | "start-after-death-observed"
+  | "native-recovery-recorded"
+  | "supporting-evidence-recorded";
+
+export interface ProblemFact {
+  code: ProblemFactCode;
+  sourceLine: number;
+  ruleId: string;
+}
+
+export interface ProblemDetail {
+  analysisToken: AnalysisToken;
+  revision: number;
+  occurrence: ProblemOccurrence;
+  facts: ProblemFact[];
+  observationTotal: number;
+}
+
 export interface LineRange {
   startLine: number;
   endLine: number;
