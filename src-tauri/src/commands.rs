@@ -42,7 +42,9 @@ struct StreamReaderArgs {
 
 fn status_from(session: &logcore::session::Session, generation: u64) -> Status {
     Status {
-        total_lines: session.total_lines(),
+        // stableLines DTO 在 Task 10/11 贯通前，现有 totalLines 继续作为前端可见 rowCount；
+        // 诊断用“已发现行首数”只保留在 Session::total_lines。
+        total_lines: session.stable_lines(),
         filtered_lines: session.filtered_count(),
         bookmark_lines: session.bookmark_count(),
         error_lines: session.error_count(),
@@ -232,14 +234,43 @@ fn take_stream_task(state: &AppState, mode: StreamStop) -> Option<StreamTask> {
 }
 
 fn stop_stream_task(state: &AppState, mode: StreamStop) {
-    let Some(task) = take_stream_task(state, mode) else {
+    if let Some(task) = take_stream_task(state, mode) {
+        {
+            let mut child = lock_child(&task.child);
+            let _ = child.kill();
+        }
+        let _ = task.handle.join();
+    }
+    transition_stream_session(state, mode);
+}
+
+fn transition_stream_session(state: &AppState, mode: StreamStop) {
+    let mut guard = state.lock_session();
+    let Some(session) = guard.as_mut() else {
         return;
     };
-    {
-        let mut child = lock_child(&task.child);
-        let _ = child.kill();
+    match (mode, session.input_lifecycle()) {
+        (StreamStop::Pause, Some(logcore::session::InputLifecycle::Growing)) => {
+            let _ = session.pause_growing_input();
+        }
+        (
+            StreamStop::Stop | StreamStop::Forget,
+            Some(
+                logcore::session::InputLifecycle::Growing
+                | logcore::session::InputLifecycle::Paused,
+            ),
+        ) => {
+            let previous_stable = session.stable_lines();
+            // reader 已 join 且 stdout EOF，补完当前 mmap 内尚未消费的字节后再封口。
+            session.index_all();
+            if session.seal_growing_input().is_ok() {
+                let stable_lines = session.stable_lines();
+                let _ = append_filter_for_range(session, previous_stable, stable_lines);
+                let _ = append_search_for_range(session, previous_stable, stable_lines);
+            }
+        }
+        _ => {}
     }
-    let _ = task.handle.join();
 }
 
 fn spawn_logcat_stream(
@@ -334,18 +365,18 @@ fn spawn_stream_reader(args: StreamReaderArgs) -> JoinHandle<()> {
                         let Some(session) = guard.as_mut() else {
                             break;
                         };
-                        let previous_total = session.total_lines();
+                        let previous_stable = session.stable_lines();
                         let Ok(outcome) = session.remap_and_index_step(INDEX_BUDGET) else {
                             break;
                         };
-                        let total_lines = session.total_lines();
+                        let stable_lines = session.stable_lines();
                         // 外部截断触发重建后,派生命中数组已清空,须从 0 起做一次完整重扫;
-                        // 否则沿用增量的 previous_total(截断后它反而大于新总行数,会漏扫)。
-                        let scan_start = if outcome.reset { 0 } else { previous_total };
+                        // 否则沿用增量的 previous_stable；尾半行不会提前进入任何派生扫描。
+                        let scan_start = if outcome.reset { 0 } else { previous_stable };
                         let _filtered_count =
-                            append_filter_for_range(session, scan_start, total_lines);
+                            append_filter_for_range(session, scan_start, stable_lines);
                         let search_progress =
-                            append_search_for_range(session, scan_start, total_lines);
+                            append_search_for_range(session, scan_start, stable_lines);
                         let status = status_from(session, session_generation);
                         (status, search_progress)
                     };
@@ -506,9 +537,11 @@ fn start_logcat_blocking(
         session_path.parent().unwrap_or(&session_path),
         STREAM_SESSION_KEEP,
     );
-    let session =
-        logcore::session::Session::open_with_encoding(&session_path, config_encoding(&config))
-            .map_err(|err| err.to_string())?;
+    let session = logcore::session::Session::open_growing_with_encoding(
+        &session_path,
+        config_encoding(&config),
+    )
+    .map_err(|err| err.to_string())?;
     let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.next_filter_task_generation();
     state.next_search_task_generation();
@@ -550,22 +583,44 @@ pub async fn resume_logcat(
 }
 
 fn resume_logcat_blocking(state: &AppState, app: AppHandle) -> Result<StreamControlDto, String> {
+    let mut request = prepare_paused_stream_resume(state)?;
+    // 续抓时用最后一条日志时间戳做 `logcat -T`,避免 ring buffer 重放造成重复;
+    // 尾部无可解析时间戳时 since_timestamp 保持 None,退化为全量重放。
+    request.since_timestamp = read_session_tail(&request.session_path, 64 * 1024)
+        .as_deref()
+        .and_then(logcore::adb::last_log_timestamp);
+    if let Err(error) = spawn_logcat_stream(state.clone(), app, request.clone()) {
+        if let Some(mut guard) = state.lock_session_if_current(request.session_generation) {
+            if let Some(session) = guard.as_mut() {
+                let _ = session.pause_growing_input();
+            }
+        }
+        return Err(error);
+    }
+    Ok(stream_status(state))
+}
+
+fn prepare_paused_stream_resume(state: &AppState) -> Result<StreamRequestState, String> {
     let request = {
         let runtime = state.lock_stream();
+        if !runtime.paused {
+            return Err("logcat session is not paused".to_string());
+        }
         runtime
             .last_request
             .clone()
             .ok_or_else(|| "no paused logcat session to resume".to_string())?
     };
-    stop_stream_task(state, StreamStop::Pause);
-    // 续抓时用最后一条日志时间戳做 `logcat -T`,避免 ring buffer 重放造成重复;
-    // 尾部无可解析时间戳时 since_timestamp 保持 None,退化为全量重放。
-    let mut request = request;
-    request.since_timestamp = read_session_tail(&request.session_path, 64 * 1024)
-        .as_deref()
-        .and_then(logcore::adb::last_log_timestamp);
-    spawn_logcat_stream(state.clone(), app, request)?;
-    Ok(stream_status(state))
+    let Some(mut guard) = state.lock_session_if_current(request.session_generation) else {
+        return Err("logcat session changed before resume".to_string());
+    };
+    let session = guard
+        .as_mut()
+        .ok_or_else(|| "no paused logcat session to resume".to_string())?;
+    session
+        .resume_paused_input()
+        .map_err(|error| format!("cannot resume logcat session: {error}"))?;
+    Ok(request)
 }
 
 /// 读会话文件末尾至多 max_bytes 的内容(lossy 解码),供 resume 提取最后时间戳。
@@ -596,7 +651,7 @@ fn reset_stream_session_file(
     *state.lock_session() = None;
     File::create(path).map_err(|err| err.to_string())?;
     let _ = fs::remove_file(logcore::bookmarks::sidecar_path_for(path));
-    let session = logcore::session::Session::open_with_encoding(path, encoding)
+    let session = logcore::session::Session::open_growing_with_encoding(path, encoding)
         .map_err(|err| err.to_string())?;
     let session_generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.next_filter_task_generation();
@@ -805,7 +860,7 @@ fn run_chunked_scan(
 ) -> Option<Vec<u32>> {
     let total_lines = {
         let guard = app_state.lock_session_if_current(session_generation)?;
-        guard.as_ref().map(|session| session.total_lines())?
+        guard.as_ref().map(|session| session.stable_lines())?
     };
     let mut matches = Vec::new();
     let mut start = 0;
@@ -858,7 +913,7 @@ fn spawn_filter_task(
             match guard.as_mut() {
                 Some(session) => {
                     let mut count = session.apply_filter_results(&spec, matches);
-                    let current_total = session.total_lines();
+                    let current_total = session.stable_lines();
                     if current_total > total_lines {
                         let extra =
                             session.filter_indexed_range(&matcher, total_lines, current_total);
@@ -940,7 +995,7 @@ fn spawn_search_task(
             match guard.as_mut() {
                 Some(session) => {
                     let mut summary = session.apply_search_results(&spec, matches);
-                    let current_total = session.total_lines();
+                    let current_total = session.stable_lines();
                     if current_total > total_lines {
                         let extra =
                             session.search_indexed_range(&matcher, total_lines, current_total);
@@ -1188,7 +1243,7 @@ fn run_chunked_export(
         let Some(session) = guard.as_ref() else {
             return Err("open a log file before exporting".to_string());
         };
-        let total = session.total_lines() as u64;
+        let total = session.stable_lines() as u64;
         let start = start_line.min(total + 1);
         let end = end_line.min(total);
         // 空区间输出 0 行;转 0-based AllLines 风格区间(下面统一切片)。
@@ -1452,6 +1507,120 @@ mod tests {
     fn clamps_visible_row_requests_to_ipc_limit() {
         assert_eq!(clamp_row_count(32), 32);
         assert_eq!(clamp_row_count(MAX_ROWS + 1), MAX_ROWS);
+    }
+
+    #[test]
+    fn status_total_lines_uses_the_stable_frontier() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "04-20 12:06:02.125   146   179 E Crash: unfinished").unwrap();
+        file.flush().unwrap();
+        let mut session = logcore::session::Session::open_growing(file.path()).unwrap();
+        session.index_all();
+
+        let status = status_from(&session, 7);
+
+        assert_eq!(session.total_lines(), 1);
+        assert_eq!(session.stable_lines(), 0);
+        assert_eq!(status.total_lines, 0);
+    }
+
+    #[test]
+    fn chunked_scan_snapshot_stops_at_the_stable_frontier() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "04-20 12:06:02.125   146   179 E Crash: unfinished").unwrap();
+        file.flush().unwrap();
+        let mut session = logcore::session::Session::open_growing(file.path()).unwrap();
+        session.index_all();
+
+        let state = AppState::new();
+        state.generation.store(1, Ordering::SeqCst);
+        *state.lock_session() = Some(session);
+        let scanned = std::cell::Cell::new(0);
+
+        let matches = run_chunked_scan(
+            &state,
+            1,
+            || true,
+            |_session, _start, _end| Vec::new(),
+            |end, _matches| scanned.set(end),
+        )
+        .unwrap();
+
+        assert!(matches.is_empty());
+        assert_eq!(scanned.get(), 0);
+    }
+
+    #[test]
+    fn pause_and_stop_transition_the_growing_session_without_a_live_reader() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            file,
+            "04-20 12:06:02.125   146   179 E Crash: final partial"
+        )
+        .unwrap();
+        file.flush().unwrap();
+        let mut session = logcore::session::Session::open_growing(file.path()).unwrap();
+        session.index_all();
+        let state = AppState::new();
+        *state.lock_session() = Some(session);
+
+        stop_stream_task(&state, StreamStop::Pause);
+        {
+            let guard = state.lock_session();
+            let session = guard.as_ref().unwrap();
+            assert_eq!(
+                session.input_lifecycle(),
+                Some(logcore::session::InputLifecycle::Paused)
+            );
+            assert_eq!(session.stable_lines(), 0);
+        }
+
+        stop_stream_task(&state, StreamStop::Stop);
+        let guard = state.lock_session();
+        let session = guard.as_ref().unwrap();
+        assert_eq!(
+            session.input_lifecycle(),
+            Some(logcore::session::InputLifecycle::Sealed)
+        );
+        assert_eq!(session.stable_lines(), 1);
+    }
+
+    #[test]
+    fn resume_requires_runtime_and_session_paused_and_rejects_sealed_input() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut session = logcore::session::Session::open_growing(file.path()).unwrap();
+        session.index_all();
+        let state = AppState::new();
+        state.generation.store(3, Ordering::SeqCst);
+        *state.lock_session() = Some(session);
+        {
+            let mut runtime = state.lock_stream();
+            runtime.last_request = Some(StreamRequestState {
+                adb_path: PathBuf::from("adb"),
+                requested_serial: None,
+                buffers: vec!["main".to_string()],
+                session_path: file.path().to_path_buf(),
+                session_generation: 3,
+                since_timestamp: None,
+            });
+        }
+
+        assert!(prepare_paused_stream_resume(&state).is_err());
+        stop_stream_task(&state, StreamStop::Pause);
+        let request = prepare_paused_stream_resume(&state).unwrap();
+        assert_eq!(request.session_generation, 3);
+        assert_eq!(
+            state.lock_session().as_ref().unwrap().input_lifecycle(),
+            Some(logcore::session::InputLifecycle::Growing)
+        );
+
+        stop_stream_task(&state, StreamStop::Stop);
+        state.lock_stream().paused = true; // 模拟陈旧 runtime 标志，Session 仍是权威边界。
+        assert!(prepare_paused_stream_resume(&state).is_err());
+        assert_eq!(
+            state.lock_session().as_ref().unwrap().input_lifecycle(),
+            Some(logcore::session::InputLifecycle::Sealed)
+        );
     }
 
     #[test]
@@ -1750,5 +1919,9 @@ mod tests {
         assert!(!logcore::bookmarks::sidecar_path_for(&path).exists());
         let guard = state.lock_session();
         assert_eq!(guard.as_ref().unwrap().total_lines(), 0);
+        assert_eq!(
+            guard.as_ref().unwrap().input_lifecycle(),
+            Some(logcore::session::InputLifecycle::Growing)
+        );
     }
 }

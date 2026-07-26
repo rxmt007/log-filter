@@ -12,6 +12,7 @@ struct LineCheckpoint {
 pub struct Indexer {
     checkpoints: Vec<LineCheckpoint>,
     total_lines: usize,
+    completed_lines: usize,
     cursor: usize,
     checkpoint_stride: usize,
     last_line_start: usize,
@@ -26,6 +27,7 @@ impl Indexer {
         Self {
             checkpoints: Vec::new(),
             total_lines: 0,
+            completed_lines: 0,
             cursor: 0,
             checkpoint_stride: checkpoint_stride.max(1),
             last_line_start: 0,
@@ -47,6 +49,7 @@ impl Indexer {
         let end = self.cursor.saturating_add(budget).min(bytes.len());
         let chunk = &bytes[self.cursor..end];
         for pos in memchr_iter(b'\n', chunk) {
+            self.completed_lines += 1;
             let abs_next = self.cursor + pos + 1;
             if abs_next < bytes.len() {
                 self.add_line_start(abs_next);
@@ -67,6 +70,14 @@ impl Indexer {
 
     pub fn total_lines(&self) -> usize {
         self.total_lines
+    }
+
+    /// 已经消费到行尾换行符的完整行数。
+    ///
+    /// 这与 `total_lines`（已发现的行首数）有意分离：增量输入的最后一行可能已经有
+    /// 行首，但当前读块尚未包含它的换行符。
+    pub fn completed_lines(&self) -> usize {
+        self.completed_lines
     }
 
     pub fn checkpoint_count(&self) -> usize {
@@ -195,6 +206,70 @@ mod tests {
         assert_eq!(ix.total_lines(), 2);
         assert_eq!(ix.line_span(bytes, 0, bytes.len()), Some((0, 2)));
         assert_eq!(ix.line_span(bytes, 1, bytes.len()), Some((2, 5)));
+    }
+
+    #[test]
+    fn completed_lines_excludes_a_budget_split_partial_line() {
+        let bytes = b"first line\nsecond line\n";
+        let mut ix = Indexer::new();
+
+        ix.step(bytes, 5);
+
+        assert_eq!(ix.total_lines(), 1);
+        assert_eq!(ix.completed_lines(), 0);
+    }
+
+    #[test]
+    fn completed_lines_advances_only_after_the_newline_is_processed() {
+        let bytes = b"one\ntwo\n";
+        let mut ix = Indexer::new();
+
+        ix.step(bytes, 4);
+
+        assert_eq!(ix.total_lines(), 2);
+        assert_eq!(ix.completed_lines(), 1);
+    }
+
+    #[test]
+    fn completing_a_partial_line_advances_the_frontier_once() {
+        let bytes = b"one\ntwo\n";
+        let mut ix = Indexer::new();
+        ix.step(bytes, 7);
+        assert_eq!(ix.completed_lines(), 1);
+
+        ix.step(bytes, 1);
+        assert_eq!(ix.completed_lines(), 2);
+
+        ix.step(bytes, usize::MAX);
+        assert_eq!(ix.completed_lines(), 2);
+    }
+
+    #[test]
+    fn crlf_split_between_budgets_is_counted_once() {
+        let bytes = b"one\r\ntwo\r\n";
+        let mut ix = Indexer::new();
+
+        ix.step(bytes, 4);
+        assert_eq!(ix.completed_lines(), 0);
+
+        ix.step(bytes, 1);
+        assert_eq!(ix.completed_lines(), 1);
+
+        ix.step(bytes, usize::MAX);
+        assert_eq!(ix.completed_lines(), 2);
+    }
+
+    #[test]
+    fn every_byte_budget_split_matches_the_complete_line_oracle() {
+        let bytes = b"one\r\ntwo\nthree";
+        for split in 0..=bytes.len() {
+            let mut ix = Indexer::new();
+            ix.step(bytes, split);
+            ix.step(bytes, usize::MAX);
+
+            assert_eq!(ix.total_lines(), 3, "split at byte {split}");
+            assert_eq!(ix.completed_lines(), 2, "split at byte {split}");
+        }
     }
 
     #[test]

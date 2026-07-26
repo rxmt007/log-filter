@@ -62,10 +62,50 @@ pub struct RemapStep {
     pub done: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputLifecycle {
+    Growing,
+    Paused,
+    Sealed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputLifecycleError {
+    StaticInput,
+    InvalidTransition {
+        from: InputLifecycle,
+        operation: &'static str,
+    },
+    InputNotFullyIndexed,
+}
+
+impl std::fmt::Display for InputLifecycleError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StaticInput => formatter.write_str("input is static"),
+            Self::InvalidTransition { from, operation } => {
+                write!(formatter, "cannot {operation} input while it is {from:?}")
+            }
+            Self::InputNotFullyIndexed => {
+                formatter.write_str("cannot seal input before indexed bytes reach EOF")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InputLifecycleError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputState {
+    Static,
+    Growing(InputLifecycle),
+}
+
 pub struct Session {
     source_path: PathBuf,
     source: MmapSource,
     indexer: Indexer,
+    input_state: InputState,
     filtered: Vec<u32>,
     filter_active: bool,
     filter_spec: FilterSpec,
@@ -83,12 +123,33 @@ impl Session {
     }
 
     pub fn open_with_encoding(path: &Path, encoding: TextEncoding) -> std::io::Result<Session> {
+        Self::open_with_input_state(path, encoding, InputState::Static)
+    }
+
+    /// 打开会继续追加字节的输入。与静态文件不同，未见行尾换行的尾行不会成为稳定行。
+    pub fn open_growing(path: &Path) -> std::io::Result<Session> {
+        Self::open_growing_with_encoding(path, TextEncoding::Utf8)
+    }
+
+    pub fn open_growing_with_encoding(
+        path: &Path,
+        encoding: TextEncoding,
+    ) -> std::io::Result<Session> {
+        Self::open_with_input_state(path, encoding, InputState::Growing(InputLifecycle::Growing))
+    }
+
+    fn open_with_input_state(
+        path: &Path,
+        encoding: TextEncoding,
+        input_state: InputState,
+    ) -> std::io::Result<Session> {
         let source = MmapSource::open(path)?;
         let bookmarks = BookmarkStore::load_for_source(path).unwrap_or_default();
         Ok(Session {
             source_path: path.to_path_buf(),
             source,
             indexer: Indexer::new(),
+            input_state,
             filtered: Vec::new(),
             filter_active: false,
             filter_spec: FilterSpec::default(),
@@ -117,6 +178,76 @@ impl Session {
         self.indexer.total_lines()
     }
 
+    /// 可供派生扫描消费的稳定完整行数。
+    ///
+    /// 静态输入只有在索引抵达 EOF 后才提交最后一个无换行行；增长输入在封口前只提交
+    /// 已经看到换行符的行。
+    pub fn stable_lines(&self) -> usize {
+        match self.input_state {
+            InputState::Static if self.is_indexing_done() => self.indexer.total_lines(),
+            InputState::Growing(InputLifecycle::Sealed) => self.indexer.total_lines(),
+            InputState::Static
+            | InputState::Growing(InputLifecycle::Growing | InputLifecycle::Paused) => {
+                self.indexer.completed_lines()
+            }
+        }
+    }
+
+    pub fn input_lifecycle(&self) -> Option<InputLifecycle> {
+        match self.input_state {
+            InputState::Static => None,
+            InputState::Growing(lifecycle) => Some(lifecycle),
+        }
+    }
+
+    pub fn pause_growing_input(&mut self) -> Result<(), InputLifecycleError> {
+        match self.input_state {
+            InputState::Growing(InputLifecycle::Growing) => {
+                self.input_state = InputState::Growing(InputLifecycle::Paused);
+                Ok(())
+            }
+            InputState::Static => Err(InputLifecycleError::StaticInput),
+            InputState::Growing(from) => Err(InputLifecycleError::InvalidTransition {
+                from,
+                operation: "pause",
+            }),
+        }
+    }
+
+    pub fn resume_paused_input(&mut self) -> Result<(), InputLifecycleError> {
+        match self.input_state {
+            InputState::Growing(InputLifecycle::Paused) => {
+                self.input_state = InputState::Growing(InputLifecycle::Growing);
+                Ok(())
+            }
+            InputState::Static => Err(InputLifecycleError::StaticInput),
+            InputState::Growing(from) => Err(InputLifecycleError::InvalidTransition {
+                from,
+                operation: "resume",
+            }),
+        }
+    }
+
+    pub fn seal_growing_input(&mut self) -> Result<(), InputLifecycleError> {
+        match self.input_state {
+            InputState::Static => Err(InputLifecycleError::StaticInput),
+            InputState::Growing(InputLifecycle::Sealed) => {
+                Err(InputLifecycleError::InvalidTransition {
+                    from: InputLifecycle::Sealed,
+                    operation: "seal",
+                })
+            }
+            InputState::Growing(InputLifecycle::Growing | InputLifecycle::Paused) => {
+                if !self.is_indexing_done() {
+                    return Err(InputLifecycleError::InputNotFullyIndexed);
+                }
+                self.input_state = InputState::Growing(InputLifecycle::Sealed);
+                self.refresh_error_lines();
+                Ok(())
+            }
+        }
+    }
+
     pub fn is_indexing_done(&self) -> bool {
         self.indexer.is_done(self.source.len())
     }
@@ -125,6 +256,14 @@ impl Session {
     /// 检测到收缩(外部截断/轮转)时旧索引全部失效,重建派生状态,避免越界访问乃至 SIGBUS。
     /// 返回 `true` 当且仅当发生了收缩重建(调用方据此从 0 起重扫过滤/查找)。
     pub fn remap_source(&mut self) -> io::Result<bool> {
+        if let InputState::Growing(lifecycle @ (InputLifecycle::Paused | InputLifecycle::Sealed)) =
+            self.input_state
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("cannot append while growing input is {lifecycle:?}"),
+            ));
+        }
         let disk_len = fs::metadata(&self.source_path)?.len() as usize;
         if disk_len < self.source.len() {
             self.source = MmapSource::open(&self.source_path)?;
@@ -284,7 +423,7 @@ impl Session {
             // 超过 u32 的 source_idx 不可能在命中数组内(命中数组元素都 ≤ u32::MAX)。
             let needle = u32::try_from(source_idx).ok()?;
             self.filtered.binary_search(&needle).ok()
-        } else if (source_idx as usize) < self.indexer.total_lines() {
+        } else if (source_idx as usize) < self.stable_lines() {
             Some(source_idx as usize)
         } else {
             None
@@ -299,7 +438,7 @@ impl Session {
     }
 
     fn source_minimap(&self, buckets: usize) -> Minimap {
-        let total = self.total_lines();
+        let total = self.stable_lines();
         let bookmarks = self
             .bookmark_source_lines()
             .into_iter()
@@ -333,13 +472,7 @@ impl Session {
         let mut buf = Vec::new();
         match effective_view {
             RowsView::All => {
-                self.write_line_range(
-                    0,
-                    self.indexer.total_lines(),
-                    &mut buf,
-                    &mut writer,
-                    &mut summary,
-                )?;
+                self.write_line_range(0, self.stable_lines(), &mut buf, &mut writer, &mut summary)?;
             }
             RowsView::Filtered => {
                 self.write_sorted_lines(&self.filtered, &mut buf, &mut writer, &mut summary)?;
@@ -375,7 +508,7 @@ impl Session {
             ));
         }
         let mut writer = self.create_export_file(output)?;
-        let total = self.indexer.total_lines() as u64;
+        let total = self.stable_lines() as u64;
         let start = start_line_no.min(total + 1);
         let end = end_line_no.min(total);
         let mut summary = ExportSummary {
@@ -399,14 +532,14 @@ impl Session {
     pub fn export_plan_snapshot(&self, view: RowsView) -> ExportPlan {
         match view {
             RowsView::All => ExportPlan::AllLines {
-                total: self.total_lines(),
+                total: self.stable_lines(),
             },
             RowsView::Filtered => {
                 if self.filter_active {
                     ExportPlan::Indices(self.filtered.clone())
                 } else {
                     ExportPlan::AllLines {
-                        total: self.total_lines(),
+                        total: self.stable_lines(),
                     }
                 }
             }
@@ -424,6 +557,9 @@ impl Session {
     /// 把第 source_idx 行(0-based)的原始字节(含行尾换行)追加进 out,返回追加的字节数;
     /// 行不可用(未索引/越界)返回 0。供"锁内拷贝、锁外写盘"的分段导出使用。
     pub fn append_line_bytes(&self, source_idx: usize, out: &mut Vec<u8>) -> u64 {
+        if source_idx >= self.stable_lines() {
+            return 0;
+        }
         let frontier = self.indexed_frontier();
         match self.source_line_bytes(source_idx, frontier) {
             Some(bytes) => {
@@ -458,7 +594,7 @@ impl Session {
         self.indexer.for_each_line_span(
             bytes,
             first,
-            last.saturating_add(1),
+            last.saturating_add(1).min(self.stable_lines()),
             frontier,
             |line, span_start, span_end| {
                 while cursor < indices.len() && (indices[cursor] as usize) < line {
@@ -483,7 +619,7 @@ impl Session {
         count: usize,
         out: &mut Vec<u8>,
     ) -> (usize, u64) {
-        let total = self.indexer.total_lines();
+        let total = self.stable_lines();
         let end = start.saturating_add(count).min(total);
         let frontier = self.indexed_frontier();
         let bytes = self.source.bytes();
@@ -518,7 +654,7 @@ impl Session {
             return Ok(count);
         }
         let matcher = FilterMatcher::new(spec)?;
-        let matches = self.filter_indexed_range(&matcher, 0, self.total_lines());
+        let matches = self.filter_indexed_range(&matcher, 0, self.stable_lines());
         Ok(self.apply_filter_results(spec, matches))
     }
 
@@ -527,7 +663,7 @@ impl Session {
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
-            return Ok(Some(self.total_lines()));
+            return Ok(Some(self.stable_lines()));
         }
         FilterMatcher::new(spec)?;
         Ok(None)
@@ -546,7 +682,7 @@ impl Session {
         end: usize,
     ) -> Vec<u32> {
         let frontier = self.indexed_frontier();
-        let end = end.min(self.total_lines());
+        let end = end.min(self.stable_lines());
         let mut matches = Vec::new();
         for (idx, (span_start, span_end)) in (start.min(end)..end).zip(self.indexer.line_spans(
             self.source.bytes(),
@@ -571,7 +707,7 @@ impl Session {
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
-            return self.total_lines();
+            return self.stable_lines();
         }
         let count = matches.len();
         self.filtered = matches;
@@ -583,7 +719,7 @@ impl Session {
         if !spec.is_active() {
             self.filtered.clear();
             self.filter_active = false;
-            return self.total_lines();
+            return self.stable_lines();
         }
         self.filter_spec = spec.clone();
         self.filter_active = true;
@@ -597,7 +733,7 @@ impl Session {
         if self.filter_active {
             self.filtered.len()
         } else {
-            self.total_lines()
+            self.stable_lines()
         }
     }
 
@@ -606,7 +742,7 @@ impl Session {
             return Ok(SearchSummary::from_matches(&self.search_matches));
         }
         let matcher = SearchMatcher::new(spec)?;
-        let matches = self.search_indexed_range(&matcher, 0, self.total_lines());
+        let matches = self.search_indexed_range(&matcher, 0, self.stable_lines());
         Ok(self.apply_search_results(spec, matches))
     }
 
@@ -634,7 +770,7 @@ impl Session {
         end: usize,
     ) -> Vec<u32> {
         let frontier = self.indexed_frontier();
-        let end = end.min(self.total_lines());
+        let end = end.min(self.stable_lines());
         let mut matches = Vec::new();
         for (idx, (span_start, span_end)) in (start.min(end)..end).zip(self.indexer.line_spans(
             self.source.bytes(),
@@ -706,7 +842,7 @@ impl Session {
             Vec::new()
         };
         let view_len = match effective_view {
-            RowsView::All => self.indexer.total_lines(),
+            RowsView::All => self.stable_lines(),
             RowsView::Filtered => self.filtered.len(),
             RowsView::Bookmarks => bookmark_lines.len(),
             RowsView::Errors => self.error_lines.len(),
@@ -769,7 +905,7 @@ impl Session {
         writer: &mut impl Write,
         summary: &mut ExportSummary,
     ) -> io::Result<()> {
-        let total = self.indexer.total_lines();
+        let total = self.stable_lines();
         let end = start.saturating_add(count).min(total);
         let mut cursor = start.min(end);
         while cursor < end {
@@ -836,7 +972,7 @@ impl Session {
 
     fn refresh_error_lines(&mut self) {
         let frontier = self.indexed_frontier();
-        let total = self.indexer.total_lines();
+        let total = self.stable_lines();
         let bytes = self.source.bytes();
         for (idx, (span_start, span_end)) in (self.error_scan_lines..total).zip(
             self.indexer
@@ -853,7 +989,7 @@ impl Session {
     }
 
     fn bookmark_source_lines(&self) -> Vec<u64> {
-        let max = self.total_lines() as u64;
+        let max = self.stable_lines() as u64;
         self.bookmarks
             .list()
             .into_iter()
@@ -938,6 +1074,185 @@ mod tests {
         assert_eq!(rows[0].1.tag, "BatteryService");
         assert_eq!(rows[1].1.tag, "LightsService");
         assert_eq!(rows[2].1.message, "--------- beginning of main");
+    }
+
+    #[test]
+    fn static_and_growing_inputs_commit_unterminated_tail_differently() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "04-20 12:06:02.125   146   179 E Crash: unterminated").unwrap();
+        f.flush().unwrap();
+
+        let mut static_session = Session::open(f.path()).unwrap();
+        static_session.index_step(8);
+        assert_eq!(static_session.total_lines(), 1);
+        assert_eq!(static_session.stable_lines(), 0);
+        static_session.index_all();
+        assert_eq!(static_session.stable_lines(), 1);
+
+        let mut growing_session = Session::open_growing(f.path()).unwrap();
+        growing_session.index_all();
+        assert_eq!(growing_session.total_lines(), 1);
+        assert_eq!(growing_session.stable_lines(), 0);
+    }
+
+    #[test]
+    fn growing_input_pause_resume_and_seal_have_distinct_tail_semantics() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "04-20 12:06:02.125   146   179 E Crash: unterminated").unwrap();
+        f.flush().unwrap();
+
+        let mut session = Session::open_growing(f.path()).unwrap();
+        session.index_all();
+        assert_eq!(session.stable_lines(), 0);
+        assert_eq!(session.error_count(), 0);
+
+        session.pause_growing_input().unwrap();
+        assert_eq!(session.stable_lines(), 0, "pause must not seal the tail");
+        session.resume_paused_input().unwrap();
+        assert_eq!(session.stable_lines(), 0);
+
+        session.seal_growing_input().unwrap();
+        assert_eq!(session.stable_lines(), 1);
+        assert_eq!(session.error_count(), 1);
+        assert!(session.resume_paused_input().is_err());
+        assert!(session.pause_growing_input().is_err());
+
+        let mut static_session = Session::open(f.path()).unwrap();
+        assert!(static_session.pause_growing_input().is_err());
+        assert!(static_session.resume_paused_input().is_err());
+        assert!(static_session.seal_growing_input().is_err());
+    }
+
+    #[test]
+    fn growing_filter_waits_for_the_tail_newline_and_matches_once() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "04-20 12:06:02.125   146   179 E Crash: incomplete hit").unwrap();
+        f.flush().unwrap();
+
+        let mut session = Session::open_growing(f.path()).unwrap();
+        session.index_all();
+        let spec = FilterSpec {
+            word_include: FilterField::plain(true, "incomplete hit"),
+            ..Default::default()
+        };
+        assert_eq!(session.set_filter(&spec).unwrap(), 0);
+
+        let previous_stable = session.stable_lines();
+        writeln!(f).unwrap();
+        f.flush().unwrap();
+        session.remap_and_index_step(usize::MAX).unwrap();
+        let matcher = FilterMatcher::new(&spec).unwrap();
+        let matches =
+            session.filter_indexed_range(&matcher, previous_stable, session.stable_lines());
+        assert_eq!(session.append_filter_results(&spec, matches), 1);
+
+        let duplicate_scan =
+            session.filter_indexed_range(&matcher, session.stable_lines(), session.stable_lines());
+        assert_eq!(session.append_filter_results(&spec, duplicate_scan), 1);
+    }
+
+    #[test]
+    fn growing_search_waits_for_the_tail_newline_and_matches_once() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "04-20 12:06:02.125   146   179 E Crash: searchable tail").unwrap();
+        f.flush().unwrap();
+
+        let mut session = Session::open_growing(f.path()).unwrap();
+        session.index_all();
+        let spec = SearchSpec::plain("searchable tail");
+        assert_eq!(session.search(&spec).unwrap().count, 0);
+
+        let previous_stable = session.stable_lines();
+        writeln!(f).unwrap();
+        f.flush().unwrap();
+        session.remap_and_index_step(usize::MAX).unwrap();
+        let matcher = SearchMatcher::new(&spec).unwrap();
+        let matches =
+            session.search_indexed_range(&matcher, previous_stable, session.stable_lines());
+        let summary = session.append_search_results(&spec, matches);
+        assert_eq!(summary.count, 1);
+        assert_eq!(session.search_next(1, SearchDirection::Next), Some(1));
+
+        let duplicate_scan =
+            session.search_indexed_range(&matcher, session.stable_lines(), session.stable_lines());
+        assert_eq!(
+            session.append_search_results(&spec, duplicate_scan).count,
+            1
+        );
+    }
+
+    #[test]
+    fn growing_tail_is_hidden_from_rows_counts_minimap_and_export_until_sealed() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "04-20 12:06:02.125   146   179 E Crash: private tail").unwrap();
+        f.flush().unwrap();
+
+        let mut session = Session::open_growing(f.path()).unwrap();
+        session.index_all();
+        assert_eq!(session.total_lines(), 1, "diagnostic line start exists");
+        assert_eq!(session.stable_lines(), 0);
+        assert_eq!(session.filtered_count(), 0);
+        assert!(session.get_rows(0, 1).is_empty());
+        assert_eq!(
+            session.export_plan_snapshot(RowsView::All),
+            ExportPlan::AllLines { total: 0 }
+        );
+        assert_eq!(
+            session.minimap(10),
+            Minimap {
+                bookmarks: Vec::new(),
+                errors: Vec::new(),
+            }
+        );
+        let mut bytes = Vec::new();
+        assert_eq!(session.append_line_bytes(0, &mut bytes), 0);
+        assert_eq!(session.append_line_range_bytes(0, 1, &mut bytes), (0, 0));
+        assert!(bytes.is_empty());
+
+        session.seal_growing_input().unwrap();
+        assert_eq!(session.filtered_count(), 1);
+        assert_eq!(session.get_rows(0, 1).len(), 1);
+        assert_eq!(
+            session.export_plan_snapshot(RowsView::All),
+            ExportPlan::AllLines { total: 1 }
+        );
+    }
+
+    #[test]
+    fn paused_input_requires_resume_and_sealed_input_rejects_growth() {
+        let mut paused_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            paused_file,
+            "04-20 12:06:02.125   146   179 I Stream: first"
+        )
+        .unwrap();
+        paused_file.flush().unwrap();
+        let mut paused = Session::open_growing(paused_file.path()).unwrap();
+        paused.index_all();
+        paused.pause_growing_input().unwrap();
+
+        writeln!(
+            paused_file,
+            "04-20 12:06:02.225   146   179 I Stream: second"
+        )
+        .unwrap();
+        paused_file.flush().unwrap();
+        assert!(paused.remap_and_index_step(usize::MAX).is_err());
+        assert_eq!(paused.stable_lines(), 1);
+
+        paused.resume_paused_input().unwrap();
+        paused.remap_and_index_step(usize::MAX).unwrap();
+        assert_eq!(paused.stable_lines(), 2);
+        paused.seal_growing_input().unwrap();
+
+        writeln!(
+            paused_file,
+            "04-20 12:06:02.325   146   179 I Stream: forbidden"
+        )
+        .unwrap();
+        paused_file.flush().unwrap();
+        assert!(paused.remap_and_index_step(usize::MAX).is_err());
+        assert_eq!(paused.stable_lines(), 2);
     }
 
     #[test]
@@ -1407,8 +1722,8 @@ mod tests {
     }
 
     #[test]
-    fn frontier_row_not_spanning_to_eof_while_indexing() {
-        // C2 回归:索引未完成时,前沿那一行不能把"未索引的整段剩余"吞成一行。
+    fn unstable_frontier_row_is_hidden_while_indexing() {
+        // Gate 0 回归:索引未完成时,已经发现行首但尚未见到行尾的前沿行不可见。
         let mut f = tempfile::NamedTempFile::new().unwrap();
         for _ in 0..2000 {
             writeln!(f, "04-20 12:06:02.125   146   179 D T: msg").unwrap();
@@ -1416,13 +1731,9 @@ mod tests {
         let mut s = Session::open(f.path()).unwrap();
         s.index_step(100); // 只索引一小段,未完成
         assert!(!s.is_indexing_done());
-        let n = s.total_lines();
-        let rows = s.get_rows(n.saturating_sub(1), 1); // 前沿那一行
-        assert!(
-            rows[0].1.message.len() < 1024,
-            "frontier row leaked {} bytes",
-            rows[0].1.message.len()
-        );
+        assert!(s.total_lines() > s.stable_lines());
+        let rows = s.get_rows(s.stable_lines(), 1);
+        assert!(rows.is_empty());
     }
 
     #[test]
@@ -1543,6 +1854,63 @@ mod tests {
         let rows = s.get_rows_for_view(RowsView::Filtered, 0, 10);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.message, "reborn");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn growing_truncation_resets_all_stable_and_derived_cursors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("growing-reset.log");
+        std::fs::write(
+            &path,
+            "04-20 12:06:02.125   146   179 E Old: reset-marker padding-padding-padding-padding\n",
+        )
+        .unwrap();
+        let mut session = Session::open_growing(&path).unwrap();
+        session.index_all();
+        let filter = FilterSpec {
+            word_include: FilterField::plain(true, "reset-marker"),
+            ..Default::default()
+        };
+        let search = SearchSpec::plain("reset-marker");
+        assert_eq!(session.set_filter(&filter).unwrap(), 1);
+        assert_eq!(session.search(&search).unwrap().count, 1);
+        assert_eq!(session.error_count(), 1);
+
+        std::fs::write(
+            &path,
+            "04-20 12:06:03.000   200   220 I Fresh: reset-marker",
+        )
+        .unwrap();
+        let outcome = session.remap_and_index_step(usize::MAX).unwrap();
+        assert!(outcome.reset);
+        assert_eq!(session.total_lines(), 1);
+        assert_eq!(session.stable_lines(), 0);
+        assert_eq!(session.filtered_count(), 0);
+        assert_eq!(session.search_next(1, SearchDirection::Next), None);
+        assert_eq!(session.error_count(), 0);
+        assert!(session.get_rows(0, 1).is_empty());
+
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(writer).unwrap();
+        writer.flush().unwrap();
+        let previous_stable = session.stable_lines();
+        session.remap_and_index_step(usize::MAX).unwrap();
+        let filter_matcher = FilterMatcher::new(&filter).unwrap();
+        let filter_matches =
+            session.filter_indexed_range(&filter_matcher, previous_stable, session.stable_lines());
+        assert_eq!(session.append_filter_results(&filter, filter_matches), 1);
+        let search_matcher = SearchMatcher::new(&search).unwrap();
+        let search_matches =
+            session.search_indexed_range(&search_matcher, previous_stable, session.stable_lines());
+        assert_eq!(
+            session.append_search_results(&search, search_matches).count,
+            1
+        );
+        assert_eq!(session.error_count(), 0);
     }
 
     #[test]
