@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="320"
+     height="180"
+     viewBox="0 0 320 180">
+  <rect width="320" height="180" fill="#18242e"/>
+  <rect width="12" height="180" fill="#1976d2"/>
+  <text x="34"
+        y="78"
+        fill="#ffffff"
+        font-family="Arial, sans-serif"
+        font-size="38"
+        font-weight="700">LogFilter</text>
+  <text x="35"
+        y="124"
+        fill="#b9c7d0"
+        font-family="Arial, sans-serif"
+        font-size="24"
+        font-weight="700">Problems Demo</text>
+</svg>
