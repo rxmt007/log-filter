@@ -5,6 +5,7 @@ import { Toolbar } from "@/components/Toolbar";
 import { StatusBar } from "@/components/StatusBar";
 import { LogTable } from "@/components/LogTable";
 import { Minimap } from "@/components/Minimap";
+import { ProblemsDock } from "@/components/ProblemsDock";
 import { Toast, type ToastState } from "@/components/Toast";
 import {
   getConfig,
@@ -239,9 +240,12 @@ export default function App() {
   return (
     <div className={`lf-app lf-theme-${theme}`} style={appStyle}>
       <Toolbar />
-      <div className="lf-main">
-        <Minimap />
-        <LogTable />
+      <div className="lf-workbench">
+        <div className="lf-main">
+          <Minimap />
+          <LogTable />
+        </div>
+        <ProblemsDock />
       </div>
       <StatusBar />
       <Toast toast={toast} onDismiss={dismissToast} />
