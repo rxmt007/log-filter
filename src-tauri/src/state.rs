@@ -11,11 +11,13 @@ use std::thread::JoinHandle;
 pub struct AppState {
     pub session: Arc<Mutex<Option<Session>>>,
     pub generation: Arc<AtomicU64>,
+    pub analysis_generation: Arc<AtomicU64>,
     pub filter_task_generation: Arc<AtomicU64>,
     pub search_task_generation: Arc<AtomicU64>,
     pub export_task_generation: Arc<AtomicU64>,
     pub stream_generation: Arc<AtomicU64>,
     pub stream: Arc<Mutex<StreamRuntime>>,
+    pub stream_control: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]
@@ -47,11 +49,13 @@ impl AppState {
         Self {
             session: Arc::new(Mutex::new(None)),
             generation: Arc::new(AtomicU64::new(0)),
+            analysis_generation: Arc::new(AtomicU64::new(0)),
             filter_task_generation: Arc::new(AtomicU64::new(0)),
             search_task_generation: Arc::new(AtomicU64::new(0)),
             export_task_generation: Arc::new(AtomicU64::new(0)),
             stream_generation: Arc::new(AtomicU64::new(0)),
             stream: Arc::new(Mutex::new(StreamRuntime::default())),
+            stream_control: Arc::new(Mutex::new(())),
         }
     }
 
@@ -99,6 +103,21 @@ impl AppState {
         }
     }
 
+    pub fn lock_stream_control(&self) -> MutexGuard<'_, ()> {
+        match self.stream_control.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    pub fn next_analysis_generation(&self) -> u64 {
+        self.analysis_generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn current_analysis_generation(&self) -> u64 {
+        self.analysis_generation.load(Ordering::SeqCst)
+    }
+
     pub fn next_stream_generation(&self) -> u64 {
         self.stream_generation.fetch_add(1, Ordering::SeqCst) + 1
     }
@@ -116,6 +135,21 @@ impl AppState {
     ) -> Option<MutexGuard<'_, Option<Session>>> {
         let guard = self.lock_session();
         if self.generation.load(Ordering::SeqCst) == session_generation {
+            Some(guard)
+        } else {
+            None
+        }
+    }
+
+    pub fn lock_analysis_if_current(
+        &self,
+        session_generation: u64,
+        analysis_generation: u64,
+    ) -> Option<MutexGuard<'_, Option<Session>>> {
+        let guard = self.lock_session();
+        if self.generation.load(Ordering::SeqCst) == session_generation
+            && self.analysis_generation.load(Ordering::SeqCst) == analysis_generation
+        {
             Some(guard)
         } else {
             None
@@ -192,5 +226,23 @@ mod tests {
         let second = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
         assert!(state.lock_session_if_current(first).is_none());
         assert!(state.lock_session_if_current(second).is_some());
+    }
+
+    #[test]
+    fn analysis_lock_requires_both_session_and_analysis_generations() {
+        let state = AppState::new();
+        let session = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let first = state.next_analysis_generation();
+        assert!(state.lock_analysis_if_current(session, first).is_some());
+
+        let second = state.next_analysis_generation();
+        assert!(state.lock_analysis_if_current(session, first).is_none());
+        assert!(state.lock_analysis_if_current(session, second).is_some());
+
+        let replacement = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        assert!(state.lock_analysis_if_current(session, second).is_none());
+        assert!(state
+            .lock_analysis_if_current(replacement, second)
+            .is_some());
     }
 }
