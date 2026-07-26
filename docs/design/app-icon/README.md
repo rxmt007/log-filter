@@ -8,7 +8,7 @@
 - 深蓝目标色：`#0067C0`
 - 亮蓝目标色：`#22A7F0`
 - 背景：铺满画布的纯白色 `#FFFFFF`，四角保持不透明
-- 主图形约占画布宽高的 55%，兼顾 Dock 与 16/32px Finder 列表尺寸
+- 主图形约占画布宽高的 64%（横纵方向略有差异），兼顾 Dock 与 16/32px Finder 列表尺寸
 - 无文字、编号、描边、外部投影、环境阴影、光晕或 mockup 效果
 
 macOS 图标输入保持完整方形，不预先绘制圆角或透明裁切，显示时由系统施加平台圆角蒙版。这样避免透明外缘触发灰色兼容底板，也避免自绘圆角的半透明抗锯齿边缘在 Finder 选中背景上形成灰边。该做法遵循 [Apple App icons 设计指南](https://developer.apple.com/design/human-interface-guidelines/app-icons/)。
