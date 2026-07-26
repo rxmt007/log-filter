@@ -16,8 +16,9 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
+import { FilterBar } from "@/components/FilterBar";
 import { Button } from "@/components/ui/button";
-import { ColorSelect, DropdownMenu, type DropdownGroup } from "@/components/ui/dropdown";
+import { DropdownMenu, type DropdownGroup } from "@/components/ui/dropdown";
 import { ExportDialog, SettingsDialog, SplitDialog } from "@/components/ToolDialogs";
 import {
   clearLogcat,
@@ -37,43 +38,10 @@ import {
   normalizeCommandPresets,
   parseLogcatCommand,
 } from "@/lib/logcatCommand";
+import { LOG_LEVELS } from "@/lib/filterDefinitions";
 import type { TableScopeController } from "@/lib/tableScopeController";
-import { ALL_LEVELS, LEVEL_BITS, useSession } from "@/store/session";
-import type { FilterSpec, ThemeMode } from "@/types";
-
-const LEVELS = [
-  ["V", LEVEL_BITS.V],
-  ["D", LEVEL_BITS.D],
-  ["I", LEVEL_BITS.I],
-  ["W", LEVEL_BITS.W],
-  ["E", LEVEL_BITS.E],
-  ["F", LEVEL_BITS.F],
-] as const;
-
-const LEVEL_TOOLTIPS = {
-  V: "Verbose",
-  D: "Debug",
-  I: "Info",
-  W: "Warning",
-  E: "Error",
-  F: "Fatal",
-} as const;
-
-const FILTER_FIELDS: Array<{
-  key: keyof Omit<FilterSpec, "levels" | "markedOnly" | "highlights">;
-  label: string;
-  badge?: "+" | "-";
-  placeholder: string;
-}> = [
-  { key: "tagInclude", label: "Tag 包含", badge: "+", placeholder: "*Manager" },
-  { key: "tagExclude", label: "Tag 屏蔽", badge: "-", placeholder: "chatty|GC" },
-  { key: "pid", label: "PID", placeholder: "12043|146" },
-  { key: "tid", label: "TID", placeholder: "179|12095" },
-  { key: "wordInclude", label: "内容包含", badge: "+", placeholder: "network|支付" },
-  { key: "wordExclude", label: "内容屏蔽", badge: "-", placeholder: "heartbeat" },
-];
-
-const HIGHLIGHT_COLORS = ["yellow", "green", "blue", "purple"] as const;
+import { ALL_LEVELS, useSession } from "@/store/session";
+import type { ThemeMode } from "@/types";
 
 interface ToolbarProps {
   tableController: TableScopeController;
@@ -102,8 +70,6 @@ export function Toolbar({ tableController }: ToolbarProps) {
   const filter = useSession((s) => s.filter);
   const setFilter = useSession((s) => s.setFilter);
   const toggleLevel = useSession((s) => s.toggleLevel);
-  const setFilterField = useSession((s) => s.setFilterField);
-  const setHighlightRule = useSession((s) => s.setHighlightRule);
   const search = useSession((s) => s.search);
   const searchRevision = useSession((s) => s.searchRevision);
   const setSearch = useSession((s) => s.setSearch);
@@ -568,6 +534,7 @@ export function Toolbar({ tableController }: ToolbarProps) {
           <div className="lf-level-chips">
             <button
               aria-label="All levels"
+              aria-pressed={filter.levels === ALL_LEVELS}
               className="lf-level-chip lf-level-all"
               data-active={filter.levels === ALL_LEVELS}
               data-tooltip="All levels"
@@ -576,16 +543,17 @@ export function Toolbar({ tableController }: ToolbarProps) {
             >
               <b>全部</b>
             </button>
-            {LEVELS.map(([level, bit]) => {
+            {LOG_LEVELS.map(({ label: level, bit, tooltip }) => {
               const on = (filter.levels & bit) !== 0;
               return (
                 <button
-                  aria-label={LEVEL_TOOLTIPS[level]}
+                  aria-label={tooltip}
+                  aria-pressed={on}
                   key={level}
                   className="lf-level-chip"
                   data-level={level}
                   data-active={on}
-                  data-tooltip={LEVEL_TOOLTIPS[level]}
+                  data-tooltip={tooltip}
                   type="button"
                   onClick={() => toggleLevel(bit)}
                 >
@@ -596,6 +564,7 @@ export function Toolbar({ tableController }: ToolbarProps) {
             })}
             <button
               aria-label="Marked only"
+              aria-pressed={filter.markedOnly}
               className="lf-level-chip lf-marked-only-chip"
               data-active={filter.markedOnly}
               data-tooltip="Marked only"
@@ -682,117 +651,7 @@ export function Toolbar({ tableController }: ToolbarProps) {
           </div>
         </div>
 
-        <div className="lf-filter-bar">
-          <div className="lf-filter-title">
-            <span>过滤条件</span>
-          </div>
-          <div className="lf-filter-fields">
-            {FILTER_FIELDS.map((field) => {
-              const value = filter[field.key];
-              return (
-                <label className="lf-filter-field" data-enabled={value.enabled} key={field.key}>
-                  <button
-                    className="lf-switch"
-                    data-active={value.enabled}
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setFilterField(field.key, { enabled: !value.enabled });
-                    }}
-                  >
-                    <span />
-                  </button>
-                  <span className={field.badge === "-" ? "lf-badge lf-badge-exclude" : "lf-badge"}>
-                    {field.badge ?? ""}
-                  </span>
-                  <span className="lf-filter-label">{field.label}</span>
-                  <input
-                    value={value.pattern}
-                    placeholder={field.placeholder}
-                    onChange={(e) => setFilterField(field.key, { pattern: e.target.value })}
-                  />
-                  {(field.key === "tagInclude" ||
-                    field.key === "tagExclude" ||
-                    field.key === "wordInclude" ||
-                    field.key === "wordExclude") && (
-                    <button
-                      aria-label={`${field.label} 正则`}
-                      className="lf-mini-toggle"
-                      data-active={value.regex}
-                      data-tooltip="Regex filter"
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setFilterField(field.key, { regex: !value.regex });
-                      }}
-                    >
-                      .*
-                    </button>
-                  )}
-                </label>
-              );
-            })}
-          </div>
-          <div className="lf-highlight-fields">
-            {filter.highlights.map((rule, index) => (
-              <label
-                className="lf-filter-field lf-highlight-field"
-                data-enabled={rule.enabled}
-                key={index}
-              >
-                <button
-                  className="lf-switch"
-                  data-active={rule.enabled}
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    setHighlightRule(index, { enabled: !rule.enabled });
-                  }}
-                >
-                  <span />
-                </button>
-                <span className="lf-filter-label">高亮 {index + 1}</span>
-                <input
-                  value={rule.pattern}
-                  placeholder="keyword"
-                  onChange={(event) => setHighlightRule(index, { pattern: event.target.value })}
-                />
-                <button
-                  aria-label={`高亮 ${index + 1} 正则`}
-                  className="lf-mini-toggle"
-                  data-active={rule.regex}
-                  data-tooltip="Regex highlight"
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    setHighlightRule(index, { regex: !rule.regex });
-                  }}
-                >
-                  .*
-                </button>
-                <button
-                  aria-label={`高亮 ${index + 1} 大小写`}
-                  className="lf-mini-toggle"
-                  data-active={rule.caseSensitive}
-                  data-tooltip="Case sensitive"
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    setHighlightRule(index, { caseSensitive: !rule.caseSensitive });
-                  }}
-                >
-                  Aa
-                </button>
-                <ColorSelect
-                  value={rule.color}
-                  options={HIGHLIGHT_COLORS.map((color) => ({ value: color, label: color }))}
-                  onChange={(color) => setHighlightRule(index, { color })}
-                />
-                <span className="lf-highlight-color" data-color={rule.color} />
-              </label>
-            ))}
-          </div>
-        </div>
+        <FilterBar />
       </div>
       {dialog === "export" && <ExportDialog onClose={() => setDialog(null)} />}
       {dialog === "split" && <SplitDialog onClose={() => setDialog(null)} />}
