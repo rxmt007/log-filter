@@ -27,7 +27,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
-const INDEX_BUDGET: usize = 8 * 1024 * 1024; // 每步 8MB
+const INDEX_BUDGET: usize = 1024 * 1024; // 控制大文件索引期的 Session 锁尾延迟
+const INDEX_PROGRESS_STRIDE: usize = 8 * 1024 * 1024; // 保持既有 UI 进度事件频率
 const SCAN_CHUNK_LINES: usize = 4096;
 const PROBLEM_CATCH_UP_STEPS_PER_INDEX: usize = 32;
 const PROBLEM_PROGRESS_STRIDE: u64 = 65_536;
@@ -1500,6 +1501,7 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
     std::thread::spawn(move || {
         let mut problem_progress_gate = ProblemProgressGate::default();
         let mut last_analysis_generation = app_state.current_analysis_generation();
+        let mut last_index_progress_bytes = 0usize;
         'indexing: loop {
             let snapshot = {
                 let Some(mut guard) = app_state.lock_session_if_current(my_gen) else {
@@ -1512,15 +1514,25 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
                         if session.stable_lines() != previous_stable {
                             app_state.bump_source_data_revision();
                         }
-                        Some((status_from(session, my_gen, &app_state), done))
+                        let indexed_bytes = session.indexed_bytes();
+                        let status = should_emit_index_progress(
+                            last_index_progress_bytes,
+                            indexed_bytes,
+                            done,
+                        )
+                        .then(|| status_from(session, my_gen, &app_state));
+                        Some((status, indexed_bytes, done))
                     }
                     None => None, // 会话被清空,退出
                 }
             };
-            let Some((status, index_done)) = snapshot else {
+            let Some((status, indexed_bytes, index_done)) = snapshot else {
                 break;
             };
-            let _ = app.emit("index:progress", status);
+            if let Some(status) = status {
+                last_index_progress_bytes = indexed_bytes;
+                let _ = app.emit("index:progress", status);
+            }
 
             // 索引与 Problems 使用两个独立短临界区；encoding 切换时从当前
             // analysis generation 继续，旧 generation 的批次会被校验拒绝。
@@ -1580,6 +1592,10 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
     });
 
     Ok(status)
+}
+
+fn should_emit_index_progress(last_emitted: usize, indexed_bytes: usize, done: bool) -> bool {
+    done || indexed_bytes.saturating_sub(last_emitted) >= INDEX_PROGRESS_STRIDE
 }
 
 // adb 挂起时 `list_devices` 可能阻塞数秒(引擎侧 5s 超时),放到阻塞线程池避免冻结命令窗口。
@@ -3407,6 +3423,22 @@ pub fn set_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_progress_is_throttled_but_always_emits_terminal_state() {
+        assert!(!should_emit_index_progress(
+            0,
+            INDEX_PROGRESS_STRIDE - 1,
+            false
+        ));
+        assert!(should_emit_index_progress(0, INDEX_PROGRESS_STRIDE, false));
+        assert!(!should_emit_index_progress(
+            INDEX_PROGRESS_STRIDE,
+            INDEX_PROGRESS_STRIDE * 2 - 1,
+            false
+        ));
+        assert!(should_emit_index_progress(usize::MAX, usize::MAX, true));
+    }
 
     fn checked_state_with_session(
         contents: &str,
