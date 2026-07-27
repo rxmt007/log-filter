@@ -32,6 +32,16 @@ const CONTINUATION_INTERLEAVED: &str =
     include_str!("fixtures/problems/incremental/continuation_interleaved.log");
 const CONTINUATION_INTERLEAVED_GOLDEN: &str =
     include_str!("fixtures/problems/incremental/continuation_interleaved.golden");
+const BYTE_PARTITION_FIXTURE: &str = concat!(
+    "07-26 20:10:01.000  101  101 E AndroidRuntime: FATAL EXCEPTION: split\r\n",
+    "Process: com.example.incremental.split, PID: 101\r\n",
+    "java.lang.IllegalStateException: synthetic byte partition\r\n",
+    "    at com.example.incremental.Split.run(Split.kt:10)\r\n",
+    "07-26 20:10:01.010  101  101 I Example: closes the Java event\r\n",
+    "07-26 20:10:02.000  202  202 F libc: Fatal signal 11 (SIGSEGV), code 1 ",
+    "(SEGV_MAPERR), fault addr 0x0 in tid 202 (worker)\r\n",
+    "07-26 20:10:03.000  101  101 I Example: unterminated tail",
+);
 
 const SCAN_CHUNKS: [usize; 3] = [1, 4_096, usize::MAX];
 const MIXED_POSITIVE_SPANS: &[(u32, u32, LogBuffer)] = &[
@@ -118,6 +128,43 @@ fn growing_segmented_append_matches_static_public_snapshot_field_for_field() {
         expected,
         "growing append changed a public group, event, or observation field"
     );
+}
+
+#[test]
+fn every_single_byte_cut_matches_the_static_public_snapshot() {
+    let expected = analyze_and_render(BYTE_PARTITION_FIXTURE, usize::MAX, &[]);
+    let len = BYTE_PARTITION_FIXTURE.len();
+    for cut in 1..len {
+        let actual = analyze_growing_segments(BYTE_PARTITION_FIXTURE, &[cut, len]);
+        assert_eq!(
+            actual, expected,
+            "growing Problems snapshot changed at byte cut {cut}/{len}"
+        );
+    }
+}
+
+#[test]
+fn deterministic_random_byte_partitions_match_static_with_crlf_and_unterminated_tail() {
+    let expected = analyze_and_render(BYTE_PARTITION_FIXTURE, usize::MAX, &[]);
+    let len = BYTE_PARTITION_FIXTURE.len();
+    for seed in 1_u64..=32 {
+        let mut state = seed;
+        let mut offset = 0;
+        let mut ends = Vec::new();
+        while offset < len {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let size = usize::try_from((state >> 32) % 97 + 1).expect("bounded partition size");
+            offset = offset.saturating_add(size).min(len);
+            ends.push(offset);
+        }
+        let actual = analyze_growing_segments(BYTE_PARTITION_FIXTURE, &ends);
+        assert_eq!(
+            actual, expected,
+            "growing Problems snapshot changed for deterministic partition seed {seed}"
+        );
+    }
 }
 
 #[test]
@@ -244,6 +291,40 @@ fn analyze_and_render(
         "static fixture must finish after reaching the indexed frontier"
     );
 
+    render_public_snapshot(&mut session)
+}
+
+fn analyze_growing_segments(fixture: &str, segment_ends: &[usize]) -> String {
+    let bytes = fixture.as_bytes();
+    assert_eq!(
+        segment_ends.last().copied(),
+        Some(bytes.len()),
+        "partitions must cover the complete fixture"
+    );
+    let mut source = tempfile::NamedTempFile::new().expect("create growing fixture file");
+    let mut session = Session::open_growing(source.path()).expect("open growing fixture session");
+    let mut offset = 0;
+    for &end in segment_ends {
+        assert!((offset..=bytes.len()).contains(&end) && end >= offset);
+        source
+            .write_all(&bytes[offset..end])
+            .expect("append growing fixture segment");
+        source.flush().expect("flush growing fixture segment");
+        session
+            .remap_and_index_step(usize::MAX)
+            .expect("remap and index growing fixture segment");
+        scan_to_caught_up(&mut session, 1);
+        offset = end;
+    }
+    assert!(
+        !session.finish_problem_input().finished,
+        "growing input must not finalize pending events before seal"
+    );
+    session
+        .seal_growing_input()
+        .expect("seal fully indexed growing fixture");
+    scan_to_caught_up(&mut session, 1);
+    assert!(session.finish_problem_input().finished);
     render_public_snapshot(&mut session)
 }
 
