@@ -24,6 +24,10 @@
 07-26 13:00:00.022  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (BUS_ADRALN)
 07-26 13:00:00.023  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid nope (worker)
 07-26 13:00:00.024  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid 778 (worker), pid 999 (com.example.nearmiss)
+07-26 13:00:00.025  777  778 F libc: Fatal signal 11 (SIGSEGV), code 999 (SEGV_MAPERR)
+07-26 13:00:00.026  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (SI_TKILL)
+07-26 13:00:00.027  777  778 F libc: Fatal signal 31 (SIGSYS), code 2 (SYS_SECCOMP), syscall 172 in tid 778 (worker)
+07-26 13:00:00.028  777  778 F libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 172 in tid 778 (worker) junk
 --------- beginning of kernel
 07-26 13:00:01.000    0    0 W kernel: Out of memory pressure is rising
 07-26 13:00:01.001    0    0 W kernel: Killed process is a phrase in documentation

@@ -722,7 +722,14 @@ fn parse_fatal_signal(message: &str) -> Option<FatalSignalRecord<'_>> {
             return None;
         }
         rest = &after_address[address_end..];
-    };
+    } else if let Some(after_syscall) = rest.strip_prefix(", syscall ") {
+        if signal != FatalSignal::Sys || code_token != "SYS_SECCOMP" {
+            return None;
+        }
+        let syscall_end = after_syscall.find(" in tid ")?;
+        parse_nonnegative_i32(&after_syscall[..syscall_end])?;
+        rest = &after_syscall[syscall_end..];
+    }
 
     let (explicit_pid, explicit_process) = if rest.is_empty() {
         (None, None)
@@ -752,12 +759,12 @@ fn parse_signed_decimal(value: &str) -> Option<i32> {
     value.parse::<i32>().ok()
 }
 
-fn parse_signal_code(signal: FatalSignal, _code: i32, description: &str) -> Option<&str> {
+fn parse_signal_code(signal: FatalSignal, code: i32, description: &str) -> Option<&str> {
     let (token, sender) = match description.split_once(" from pid ") {
         Some((token, sender)) => (token, Some(sender)),
         None => (description, None),
     };
-    if !valid_signal_code_token(signal, token) {
+    if !valid_signal_code_token(signal, token) || !signal_code_matches_number(token, code) {
         return None;
     }
     if let Some(sender) = sender {
@@ -786,6 +793,56 @@ fn parse_unsigned_decimal(value: &str) -> Option<u32> {
         return None;
     }
     value.parse().ok()
+}
+
+fn parse_nonnegative_i32(value: &str) -> Option<i32> {
+    let value = parse_unsigned_decimal(value)?;
+    i32::try_from(value).ok()
+}
+
+fn signal_code_matches_number(token: &str, code: i32) -> bool {
+    // Linux UAPI si_code values consumed by AOSP debuggerd's get_sigcode().
+    // The names and values are stable ABI; "?" deliberately represents a
+    // platform value that this parser does not know yet.
+    let expected = match token {
+        "SI_USER" => 0,
+        "SI_KERNEL" => 128,
+        "SI_QUEUE" => -1,
+        "SI_TIMER" => -2,
+        "SI_MESGQ" => -3,
+        "SI_ASYNCIO" => -4,
+        "SI_SIGIO" => -5,
+        "SI_TKILL" => -6,
+        "SI_DETHREAD" => -7,
+        "ILL_ILLOPC" | "FPE_INTDIV" | "SEGV_MAPERR" | "BUS_ADRALN" | "TRAP_BRKPT"
+        | "SYS_SECCOMP" => 1,
+        "ILL_ILLOPN" | "FPE_INTOVF" | "SEGV_ACCERR" | "BUS_ADRERR" | "TRAP_TRACE"
+        | "SYS_USER_DISPATCH" => 2,
+        "ILL_ILLADR" | "FPE_FLTDIV" | "SEGV_BNDERR" | "BUS_OBJERR" | "TRAP_BRANCH" => 3,
+        "ILL_ILLTRP" | "FPE_FLTOVF" | "SEGV_PKUERR" | "BUS_MCEERR_AR" | "TRAP_HWBKPT" => 4,
+        "ILL_PRVOPC" | "FPE_FLTUND" | "SEGV_ACCADI" | "BUS_MCEERR_AO" | "TRAP_UNDIAGNOSED" => 5,
+        "ILL_PRVREG" | "FPE_FLTRES" | "SEGV_ADIDERR" | "TRAP_PERF" => 6,
+        "ILL_COPROC" | "FPE_FLTINV" | "SEGV_ADIPERR" => 7,
+        "ILL_BADSTK" | "FPE_FLTSUB" | "SEGV_MTEAERR" => 8,
+        "ILL_BADIADDR" | "FPE_DECOVF" | "SEGV_MTESERR" => 9,
+        "ILL_BREAK" | "FPE_DECDIV" | "SEGV_CPERR" => 10,
+        "ILL_BNDMOD" | "FPE_DECERR" => 11,
+        "FPE_INVASC" => 12,
+        "FPE_INVDEC" => 13,
+        "FPE_FLTUNK" => 14,
+        "FPE_CONDTRAP" => 15,
+        "PTRACE_EVENT_FORK" => 0x105,
+        "PTRACE_EVENT_VFORK" => 0x205,
+        "PTRACE_EVENT_CLONE" => 0x305,
+        "PTRACE_EVENT_EXEC" => 0x405,
+        "PTRACE_EVENT_VFORK_DONE" => 0x505,
+        "PTRACE_EVENT_EXIT" => 0x605,
+        "PTRACE_EVENT_SECCOMP" => 0x705,
+        "PTRACE_EVENT_STOP" => 0x8005,
+        "?" => return true,
+        _ => return false,
+    };
+    code == expected
 }
 
 fn valid_signal_code_token(signal: FatalSignal, token: &str) -> bool {
@@ -1071,8 +1128,8 @@ mod tests {
                 Some("com.example.native"),
             ),
             (
-                "07-26 12:00:00.001  901  901 F libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP)",
-                None,
+                "07-26 12:00:00.001  901  902 F libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 172 in tid 902 (seccomp-worker), pid 901 (com.example.seccomp)",
+                Some("com.example.seccomp"),
             ),
             (
                 "07-26 12:00:00.001  902  902 F libc: Fatal signal 7 (SIGBUS), code 1 (BUS_ADRALN), fault addr 00000000",
@@ -1118,6 +1175,15 @@ mod tests {
             "Fatal signal 6 (SIGABRT), code -6 (SI_TKILL from pid nope, uid 1000)",
             "Fatal signal 6 (SIGABRT), code -6 (SI_TKILL from pid 42, uid nope)",
             "Fatal signal 6 (SIGABRT), code -6 (anything goes)",
+            "Fatal signal 11 (SIGSEGV), code 999 (SEGV_MAPERR)",
+            "Fatal signal 11 (SIGSEGV), code 1 (SI_TKILL)",
+            "Fatal signal 31 (SIGSYS), code 2 (SYS_SECCOMP), syscall 172 in tid 322 (worker)",
+            "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall",
+            "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall -1 in tid 322 (worker)",
+            "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 2147483648 in tid 322 (worker)",
+            "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 172",
+            "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 172 in tid 322 (worker) junk",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), syscall 172 in tid 322 (worker)",
         ];
 
         for message in malformed {
