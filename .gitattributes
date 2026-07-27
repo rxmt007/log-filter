@@ -1,0 +1,2 @@
+# Problems fixtures are included at compile time and compared byte-for-byte.
+crates/logcore/tests/fixtures/problems/** text eol=lf
