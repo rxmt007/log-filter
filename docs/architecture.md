@@ -749,10 +749,10 @@ cargo run --release -p logcore --example bench -- [GB] [文件路径]
 27/8 MB/s;改为 `for_each_line_span` 单次前向扫描的批量原语后提升 21×/4.5×。
 新增行级读取路径时**务必复用批量原语**,不要逐行回退检查点。
 
-Problems production 交错调度的 10GiB 三次中位数为:index + 分析 31.65s、索引最大
-宏步 27.03ms、Problems 最大锁段 1.29ms、扫描期随机窗口 p99 1.404ms。索引完成后的
-standalone 重扫使用锁外 8MiB 滚动预取，中位数为 6.9M 行/s、Problems 最大锁段
-4.54ms、窗口 p99 3.356ms。事件风暴受控 retained heap 为 42.47MiB。未人为清理 page
+Problems production 交错调度的 10GiB 三次中位数为:index + 分析 28.28s、索引最大
+宏步 28.08ms、Problems 最大锁段 3.03ms、扫描期随机窗口 p99 0.974ms。索引完成后的
+standalone 重扫使用锁外 8MiB 滚动预取，中位数为 8.6M 行/s、Problems 最大锁段
+4.22ms、窗口 p99 2.692ms。事件风暴受控 retained heap 为 42.47MiB。未人为清理 page
 cache 的三轮中位数达到数值门槛，但仍保留单轮 OS 调度/I/O 尖峰；规范要求的可控冷/暖
 缓存、系统级内存对照和其他平台真机性能尚未完成，正式性能硬验收未闭环。测试口径、
 逐次数据与限制见

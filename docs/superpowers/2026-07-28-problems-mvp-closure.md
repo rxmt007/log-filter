@@ -38,12 +38,12 @@ cargo run --release -p logcore --example bench -- \
 
 | 指标 | Run 1 | Run 2 | Run 3 | 中位数 | 门槛 |
 |---|---:|---:|---:|---:|---:|
-| index 耗时 | 23.91s | 24.86s | 23.44s | **23.91s** | 诊断 |
-| index 最大宏步 | 13.30ms | 34.27ms | 27.03ms | **27.03ms** | ≤50ms ✅ |
-| Problems 热页吞吐 | 9.3M/s | 9.4M/s | 9.6M/s | **9.4M/s** | 诊断 |
-| index + Problems | 31.65s | 32.51s | 30.93s | **31.65s** | ≤37s ✅ |
-| Problems 最大锁段 | 0.99ms | 1.29ms | 1.53ms | **1.29ms** | ≤20ms ✅ |
-| 扫描期窗口 p99 | 1.392ms | 3.157ms | 1.404ms | **1.404ms** | ≤5ms ✅ |
+| index 耗时 | 23.69s | 21.53s | 21.72s | **21.72s** | 诊断 |
+| index 最大宏步 | 28.08ms | 21.64ms | 42.83ms | **28.08ms** | ≤50ms ✅ |
+| Problems 热页吞吐 | 10.8M/s | 11.0M/s | 11.0M/s | **11.0M/s** | 诊断 |
+| index + Problems | 30.49s | 28.09s | 28.28s | **28.28s** | ≤37s ✅ |
+| Problems 最大锁段 | 3.03ms | 1.72ms | 4.73ms | **3.03ms** | ≤20ms ✅ |
+| 扫描期窗口 p99 | 0.974ms | 0.958ms | 1.213ms | **0.974ms** | ≤5ms ✅ |
 
 三轮均得到同一 73/73/1 oracle，Problems retained 约 0.10MiB、high-water 约
 0.13MiB。正常打开文件不会启用 standalone 预取；它继续复用索引刚触达的热页。
@@ -52,20 +52,19 @@ cargo run --release -p logcore --example bench -- \
 
 | 指标 | Run 1 | Run 2 | Run 3 | 中位数 | 门槛 |
 |---|---:|---:|---:|---:|---:|
-| index 耗时 | 25.4s | 24.8s | 23.5s | **24.8s** | 诊断 |
-| index 最大宏步 | 34.39ms | 171.11ms | 31.41ms | **34.39ms** | ≤50ms ✅（中位数） |
-| Problems 墙钟 | 12.31s | 10.30s | 9.93s | **10.30s** | 诊断 |
-| Problems standalone 吞吐 | 5.8M/s | 6.9M/s | 7.2M/s | **6.9M/s** | ≥5M/s ✅ |
-| Problems 最大锁段 | 9.76ms | 4.24ms | 4.54ms | **4.54ms** | ≤20ms ✅ |
-| 扫描期窗口 p99 | 3.356ms | 3.033ms | 7.647ms | **3.356ms** | ≤5ms ✅（中位数） |
+| index 耗时 | 22.3s | 22.4s | 21.6s | **22.3s** | 诊断 |
+| index 最大宏步 | 19.10ms | 55.13ms | 27.71ms | **27.71ms** | ≤50ms ✅（中位数） |
+| Problems 墙钟 | 8.14s | 8.50s | 8.24s | **8.24s** | 诊断 |
+| Problems standalone 吞吐 | 8.7M/s | 8.4M/s | 8.6M/s | **8.6M/s** | ≥5M/s ✅ |
+| Problems 最大锁段 | 4.22ms | 5.60ms | 3.26ms | **4.22ms** | ≤20ms ✅ |
+| 扫描期窗口 p99 | 2.764ms | 2.692ms | 1.386ms | **2.692ms** | ≤5ms ✅ |
 
 每轮预取 1,281 段、累计覆盖 10.00GiB，失败 0 次；同一时刻的逻辑前视仍不超过
 8MiB。三轮 oracle 均为 73/73/1。
 
-这里保留两个真实尖峰：Run 2 的 index 最大宏步为 171.11ms，Run 3 的窗口 p99 为
-7.647ms。前者发生时该轮窗口 max 仍为 3.723ms，说明 64KiB 协作点保护了已排队读取，
-但 OS 调度仍可能拉长一个没有竞争者的宏步。结论是“三轮中位数通过”，不是“每轮绝无
-尖峰”。
+这里保留一个真实尖峰：Run 2 的 index 最大宏步为 55.13ms，但该轮窗口 p99 仍为
+2.692ms，说明 64KiB 协作点保护了已排队读取，而 OS 调度仍可能拉长一个没有竞争者的
+宏步。结论是“三轮中位数通过”，不是“每轮绝无尖峰”。
 
 ## 事件风暴
 
@@ -75,22 +74,40 @@ cargo run --release -p logcore --example bench -- \
 |---|---:|---|
 | observed / stored / groups | 120,161 / 100,000 / 100,000 | oracle 与结构上限一致 |
 | `limited` | `true` | ✅ |
-| Problems 最大锁段 | 5.84ms | ≤20ms ✅ |
-| 窗口 p99 | 4.886ms | ≤5ms ✅ |
+| Problems 最大锁段 | 7.68ms | ≤20ms ✅ |
+| 窗口 p99 | 4.176ms | ≤5ms ✅ |
 | retained / charged / high-water | 42.47 / 62.24 / 81.85MiB | ≤128MiB retained、≤112MiB 逻辑预算 ✅ |
 
 storm 来源声明只存在于 benchmark harness；生产 recognizer 仍拒绝来源未知的
 EventLog-shaped 文本，不因压力测试而放宽 provenance gate。
 
+## 收口期间发现并修复的热路径回归
+
+Kernel OOM 增加 512KiB 物理跨度后，初版会在没有任何候选事件时仍逐行遍历 8 个空槽。
+这笔固定成本落在 71,158,147 行主热路径上。验收复跑没有把它当成机器抖动：修复前的
+三轮中位数中，standalone 吞吐跌至 4.8M/s，且 Problems 锁段与窗口 p99 同时越过门槛。
+
+实现为 recognizer 增加固定大小的 active count；空候选时 O(1) 返回，仅在真实候选存续
+期间累计每条物理行的字节数。计数在插入、相邻 opener 合并、满表替换、过期、unmatched
+淘汰、命中、输入结束和 reset 路径保持守恒，不增加文件正文或无界状态。
+
+| 指标 | 空槽快路径前中位数 | 最终中位数 |
+|---|---:|---:|
+| production Problems 热页吞吐 | 7.6M/s | **11.0M/s** |
+| production combined | 35.52s | **28.28s** |
+| standalone Problems 吞吐 | 4.8M/s ❌ | **8.6M/s ✅** |
+| standalone Problems 最大锁段 | 26.43ms ❌ | **4.22ms ✅** |
+| standalone 窗口 p99 | 5.356ms ❌ | **2.692ms ✅** |
+
 ## 与 2026-07-26 基线相比
 
 | 口径 | 旧中位数 | 当前中位数 |
 |---|---:|---:|
-| production combined | 32.78s | **31.65s** |
-| production 窗口 p99 | 28.399ms | **1.404ms** |
-| standalone Problems | 2.62M/s | **6.9M/s** |
-| standalone Problems 最大锁段 | 34.91ms | **4.54ms** |
-| standalone 窗口 p99 | 96.684ms | **3.356ms** |
+| production combined | 32.78s | **28.28s** |
+| production 窗口 p99 | 28.399ms | **0.974ms** |
+| standalone Problems | 2.62M/s | **8.6M/s** |
+| standalone Problems 最大锁段 | 34.91ms | **4.22ms** |
+| standalone 窗口 p99 | 96.684ms | **2.692ms** |
 
 窗口延迟拆分证明旧尖峰主要来自无公平保证的 Session mutex 重抢；waiter-aware 交接和
 64KiB index 协作点解决了锁饥饿。standalone 吞吐则主要受冷 mmap 重读限制，由锁外有界
