@@ -752,9 +752,10 @@ cargo run --release -p logcore --example bench -- [GB] [文件路径]
 Problems production 交错调度的 10GiB 三次中位数为:index + 分析 31.65s、索引最大
 宏步 27.03ms、Problems 最大锁段 1.29ms、扫描期随机窗口 p99 1.404ms。索引完成后的
 standalone 重扫使用锁外 8MiB 滚动预取，中位数为 6.9M 行/s、Problems 最大锁段
-4.54ms、窗口 p99 3.356ms。事件风暴受控 retained heap 为 42.47MiB。实现硬门槛均按
-三轮中位数通过，但仍保留单轮 OS 调度/I/O 尖峰；可控冷/暖缓存、系统级内存对照和其他
-平台真机性能尚未完成。测试口径、逐次数据与限制见
+4.54ms、窗口 p99 3.356ms。事件风暴受控 retained heap 为 42.47MiB。未人为清理 page
+cache 的三轮中位数达到数值门槛，但仍保留单轮 OS 调度/I/O 尖峰；规范要求的可控冷/暖
+缓存、系统级内存对照和其他平台真机性能尚未完成，正式性能硬验收未闭环。测试口径、
+逐次数据与限制见
 [`docs/superpowers/2026-07-28-problems-mvp-closure.md`](superpowers/2026-07-28-problems-mvp-closure.md)。
 
 ---

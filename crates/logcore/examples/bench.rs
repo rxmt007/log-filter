@@ -1006,7 +1006,8 @@ fn print_window_phase_coverage(samples: &WindowLatencySamples) {
 ///
 /// 这里不包含 Tauri generation 校验、状态 DTO 和事件发送开销，因此锁计时仅代表
 /// logcore 核心调用。读取线程贯穿 Indexing、Problems catch-up 与最终 finish,
-/// 不向 worker 发优先级信号，所有样本都是真实的 Session 锁竞争。
+/// 只用 waiter 计数提示已有可见窗口排队，不模拟 OS 线程优先级；所有样本都是真实的
+/// Session 锁竞争。
 fn phase_interleaved(
     session: &mut Session,
     total_bytes: u64,
@@ -1315,7 +1316,7 @@ fn phase_interleaved(
     )
 }
 
-/// Phase 1:打开后按 8MiB 预算步进索引至完成。返回总行数与耗时。
+/// Phase 1:打开后按 1MiB 宏步预算索引至完成。返回总行数与耗时。
 fn phase_index(
     session: &mut Session,
     total_bytes: u64,

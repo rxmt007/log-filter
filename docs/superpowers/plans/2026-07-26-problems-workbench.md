@@ -12,9 +12,11 @@
 逐行 prefix、双 PID/tag 交错和 growing 任意字节分段 append 与 static 逐字段等价测试。
 本轮补齐 libc signal-only、kernel OOM 多行 opener/range、snapshot 幂等释放/冻结分页、
 旧 token 拒绝、过滤 revision 等待、context/follow-latest 和无障碍焦点/live-region
-缺口。10GiB production 与 standalone 三轮中位数达到实现硬门槛，完整数据见
-[`2026-07-28-problems-mvp-closure.md`](../2026-07-28-problems-mvp-closure.md)；可控
-冷/暖缓存、进程级内存对照和其他平台真机性能仍是外部验证项，不能从 macOS 数字外推。
+缺口。10GiB production 与 standalone 在未人为清理 page cache 的三轮中位数达到数值
+门槛，完整数据见
+[`2026-07-28-problems-mvp-closure.md`](../2026-07-28-problems-mvp-closure.md)；规范
+要求的可控冷/暖缓存各三次、进程级内存对照和其他平台真机性能仍是未完成验收项，不能
+从当前 macOS 数字外推，也不能据此声称完整性能硬验收。
 下方 checkbox 保留原始任务拆解和当时的逐项记录；没有可追溯 RED/GREEN 证据的旧条目不
 做事后补勾。最终 MVP 验收判断以本状态说明、收口报告和当前测试名为准。
 
