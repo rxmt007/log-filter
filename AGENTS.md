@@ -98,11 +98,13 @@ LogFilter/          原 Java 工程(只读参考,已忽略,将删除)
 - 窗口读 `get_rows` p99 1.6ms
 - 导出:All 576 MB/s,Filtered 36 MB/s;私有内存峰值 ≈1.4GiB
 - 完整数据与方法见 [`docs/superpowers/2026-07-06-benchmark-10gb.md`](docs/superpowers/2026-07-06-benchmark-10gb.md);性能改动以此为回归基线。
-- Problems production 中位数:index + 分析 32.78s、索引最大锁段 25.66ms、Problems
-  最大锁段 2.82ms、受控事件风暴 retained heap 42.47MiB;但扫描期窗口 p99 28.399ms
-  与 standalone 重扫 2.62M 行/s 尚未达标。完整口径与未完成项见
-  [`docs/superpowers/2026-07-26-benchmark-problems-10gb.md`](docs/superpowers/2026-07-26-benchmark-problems-10gb.md),
-  **不得宣称 Problems 性能已全部验收**。
+- Problems production 中位数:index + 分析 31.65s、索引最大宏步 27.03ms、
+  Problems 最大锁段 1.29ms、扫描期窗口
+  p99 1.404ms;standalone 重扫 6.9M 行/s、Problems 最大锁段 4.54ms、窗口 p99
+  3.356ms;受控事件风暴 retained heap 42.47MiB。以上为同机同 corpus 三轮中位数，
+  硬门槛通过，但仍保留单轮调度/I/O 尖峰，且未完成可控冷/暖缓存与其他平台真机复测。
+  完整口径见
+  [`docs/superpowers/2026-07-28-problems-mvp-closure.md`](docs/superpowers/2026-07-28-problems-mvp-closure.md)。
 
 ## 关键约定
 

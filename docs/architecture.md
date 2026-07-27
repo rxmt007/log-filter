@@ -749,13 +749,13 @@ cargo run --release -p logcore --example bench -- [GB] [文件路径]
 27/8 MB/s;改为 `for_each_line_span` 单次前向扫描的批量原语后提升 21×/4.5×。
 新增行级读取路径时**务必复用批量原语**,不要逐行回退检查点。
 
-Problems production 交错调度的 10GiB 三次中位数为:index + 分析 32.78s、索引最大锁段
-25.66ms、Problems 最大锁段 2.82ms、扫描期随机窗口 p99 28.399ms。事件风暴受控
-retained heap 为 42.47MiB；standalone 重扫仅 2.62M 行/s。总时长、短锁、事件 oracle
-与受控内存通过，但窗口 p99(目标 ≤5ms)和 standalone 吞吐(目标 ≥5M 行/s)未通过。
-测试口径、逐次数据与限制见
-[`docs/superpowers/2026-07-26-benchmark-problems-10gb.md`](superpowers/2026-07-26-benchmark-problems-10gb.md)；
-在这些缺口关闭前不得把 Problems 性能标为全部验收。
+Problems production 交错调度的 10GiB 三次中位数为:index + 分析 31.65s、索引最大
+宏步 27.03ms、Problems 最大锁段 1.29ms、扫描期随机窗口 p99 1.404ms。索引完成后的
+standalone 重扫使用锁外 8MiB 滚动预取，中位数为 6.9M 行/s、Problems 最大锁段
+4.54ms、窗口 p99 3.356ms。事件风暴受控 retained heap 为 42.47MiB。实现硬门槛均按
+三轮中位数通过，但仍保留单轮 OS 调度/I/O 尖峰；可控冷/暖缓存、系统级内存对照和其他
+平台真机性能尚未完成。测试口径、逐次数据与限制见
+[`docs/superpowers/2026-07-28-problems-mvp-closure.md`](superpowers/2026-07-28-problems-mvp-closure.md)。
 
 ---
 

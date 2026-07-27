@@ -6,14 +6,17 @@
 
 **设计依据:** `docs/superpowers/specs/2026-07-26-logfilter-problems-workbench-design.md`
 
-**状态说明（2026-07-26）:** 核心引擎、有界 IPC、TableScope、底部 Problems 工作台、
-上下文与原文导出已经实现，并完成 960×720 / 1180×720 视觉检查和独立 Standards/Spec
-终审。终审发现的来源越权、OOM 误升级、context/filter 竞态、边界语义、详情审计字段及
-键盘翻页竞态已修复。Java、ANR、native、lifecycle、memory 五个规则族已各补 10 个确定
-正例和 10 个高相似负例，并以 canonical public snapshot 的 BLAKE3 golden 固定输出；
-但 §19.2 要求的 raw/prefixed/interleaved 变体及 Java OOM/kernel OOM 独立矩阵、§19.1
-可逐字段人工审阅的完整 golden 仍未闭环。未完成项继续保持未勾选，尤其是这些 corpus
-缺口、standalone 吞吐和扫描期窗口 p99 性能硬门槛；在关闭前不得宣称 MVP 全部验收。
+**状态说明（2026-07-28）:** 核心引擎、有界 IPC、TableScope、底部 Problems 工作台、
+上下文与原文导出已经实现。Java、Java OOM、ANR、native、lifecycle、LMK 和 kernel OOM
+均有可逐字段审阅的 positive/high-similarity-negative golden；另有 raw continuation、
+逐行 prefix、双 PID/tag 交错和 growing 任意字节分段 append 与 static 逐字段等价测试。
+本轮补齐 libc signal-only、kernel OOM 多行 opener/range、snapshot 幂等释放/冻结分页、
+旧 token 拒绝、过滤 revision 等待、context/follow-latest 和无障碍焦点/live-region
+缺口。10GiB production 与 standalone 三轮中位数达到实现硬门槛，完整数据见
+[`2026-07-28-problems-mvp-closure.md`](../2026-07-28-problems-mvp-closure.md)；可控
+冷/暖缓存、进程级内存对照和其他平台真机性能仍是外部验证项，不能从 macOS 数字外推。
+下方 checkbox 保留原始任务拆解和当时的逐项记录；没有可追溯 RED/GREEN 证据的旧条目不
+做事后补勾。最终 MVP 验收判断以本状态说明、收口报告和当前测试名为准。
 
 **总体架构:** `crates/logcore/src/problems/` 是深模块,隐藏候选分类、多行状态机、证据关联、fingerprint、group 更新和内存上限。`Session` 只负责按稳定完整行顺序推进和提供有界查询。Tauri 只负责 generation 校验、调度、DTO 和事件。前端以唯一 `TableScope` 驱动主表,Problems 只保存分页元数据,原始日志继续通过 `get_rows(..., count≤512)` 窗口读取。
 
@@ -952,7 +955,7 @@ interface TableScopeController {
 **Final steps:**
 
 - [ ] 记录机器、文件大小、行数、release 命令、冷/暖缓存各 3 次与中位数、前后数字和 retained heap/RSS 口径。
-- [ ] 运行完整 positive/negative/mixed/incremental corpus。
+- [x] 运行完整 positive/negative/mixed/incremental corpus。
 - [x] 运行验证全集。
 - [x] 做隐私扫描,确认 fixtures/docs 无真实路径、姓名、设备标识和内网信息。
 - [x] 独立终审者检查:
