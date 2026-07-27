@@ -34,11 +34,22 @@ interface OpenProblemExport {
   returnFocus: HTMLElement | null;
 }
 
+function restoreProblemOccurrenceFocus(eventId: number): void {
+  const option = document.getElementById(`lf-problem-event-${eventId}`);
+  const listbox = option?.closest<HTMLElement>('[role="listbox"]');
+  if (listbox) {
+    listbox.focus();
+    return;
+  }
+  document.querySelector<HTMLButtonElement>(".lf-problems-toggle")?.focus();
+}
+
 export default function App() {
   const [configReady, setConfigReady] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [problemExport, setProblemExport] = useState<OpenProblemExport | null>(null);
   const toastSeqRef = useRef(0);
+  const problemContextReturnEventRef = useRef<number | null>(null);
   const dismissToast = useCallback(() => setToast(null), []);
   const setStatus = useSession((s) => s.setStatus);
   const filter = useSession((s) => s.filter);
@@ -275,11 +286,32 @@ export default function App() {
   }, [selectedLine, tableController]);
 
   const locateProblem = useCallback(
-    (occurrence: Parameters<typeof tableController.locateProblem>[0]) => {
-      void tableController.locateProblem(occurrence);
+    async (occurrence: Parameters<typeof tableController.locateProblem>[0]) => {
+      const outcome = await tableController.locateProblem(occurrence);
+      problemContextReturnEventRef.current =
+        outcome === "context-opened" ? occurrence.eventId : null;
     },
     [tableController],
   );
+
+  const openProblemContext = useCallback(
+    (occurrence: Parameters<typeof tableController.openProblemContext>[0]) => {
+      problemContextReturnEventRef.current = occurrence.eventId;
+      tableController.openProblemContext(occurrence);
+    },
+    [tableController],
+  );
+
+  const returnToResults = useCallback(async () => {
+    const currentScope = useSession.getState().tableScope;
+    const eventId =
+      problemContextReturnEventRef.current ??
+      (currentScope.kind === "problem-context" ? currentScope.occurrence.eventId : null);
+    await tableController.returnToResults();
+    if (useSession.getState().tableScope.kind !== "results" || eventId == null) return;
+    problemContextReturnEventRef.current = null;
+    restoreProblemOccurrenceFocus(eventId);
+  }, [tableController]);
 
   const exportProblem = useCallback((occurrence: ProblemOccurrence) => {
     const analysisToken = useProblems.getState().analysisToken;
@@ -304,7 +336,7 @@ export default function App() {
         <div className="lf-main">
           <Minimap />
           <LogTable
-            onReturnToResults={() => void tableController.returnToResults()}
+            onReturnToResults={() => void returnToResults()}
             onFollowLatest={(lineNo) =>
               void tableController.navigateToSourceLine(lineNo, "tail")
             }
@@ -312,8 +344,8 @@ export default function App() {
         </div>
         <ProblemsDock
           {...problemsBindings}
-          onLocateOccurrence={locateProblem}
-          onOpenContext={(occurrence) => tableController.openProblemContext(occurrence)}
+          onLocateOccurrence={(occurrence) => void locateProblem(occurrence)}
+          onOpenContext={openProblemContext}
           onExportOccurrence={exportProblem}
         />
       </div>

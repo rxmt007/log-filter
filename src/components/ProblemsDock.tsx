@@ -18,7 +18,11 @@ import {
   MapPin,
   RefreshCw,
 } from "lucide-react";
-import { problemKindLabel } from "@/lib/problems";
+import {
+  problemBoundaryLabel,
+  problemKindLabel,
+  problemProvenanceLabel,
+} from "@/lib/problems";
 import { useProblems, type ProblemsSort } from "@/store/problems";
 import type { InputCoverage, ProblemKind, ProblemOccurrence } from "@/types";
 
@@ -601,6 +605,14 @@ export function ProblemsDock({
   const occurrence = detail?.occurrence ?? null;
   const selectedGroup = groupPage?.items.find((group) => group.id === selectedGroupId) ?? null;
   const selectedKind = kindFilters.length === 1 ? kindFilters[0] : null;
+  const boundaryFlags = occurrence == null ? [] : [...occurrence.boundaryFlags];
+  if (detail?.factsTruncated && !boundaryFlags.includes("observation-refs-truncated")) {
+    boundaryFlags.push("observation-refs-truncated");
+  }
+  const provenanceLabels =
+    detail == null
+      ? []
+      : [...new Set(detail.facts.map((fact) => problemProvenanceLabel(fact.provenance)))];
 
   const panel = (
     <section
@@ -936,6 +948,21 @@ export function ProblemsDock({
                   </span>
                   <span>同组仅表示事件指纹相同，不代表根因相同。</span>
                 </div>
+              ) : null}
+              {boundaryFlags.length > 0 || provenanceLabels.length > 0 ? (
+                <section className="lf-problems-boundary-note" aria-labelledby="lf-boundary-title">
+                  <h3 id="lf-boundary-title">边界与覆盖</h3>
+                  {boundaryFlags.length > 0 ? (
+                    <ul>
+                      {boundaryFlags.map((flag) => (
+                        <li key={flag}>{problemBoundaryLabel(flag)}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {provenanceLabels.length > 0 ? (
+                    <p>证据来源：{provenanceLabels.join("、")}</p>
+                  ) : null}
+                </section>
               ) : null}
             </>
           ) : (

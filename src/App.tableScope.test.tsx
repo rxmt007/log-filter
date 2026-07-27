@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   searchProgressListener: null as ((progress: SearchProgress) => void) | null,
   streamAppendListener: null as ((append: StreamAppend) => void) | null,
   scrollToIndex: vi.fn(),
+  showOccurrenceOption: true,
 }));
 
 vi.mock("@/lib/ipc", () => ({
@@ -76,7 +77,68 @@ vi.mock("@/hooks/useProblemsLive", () => ({
 
 vi.mock("@/components/Toolbar", () => ({ Toolbar: () => null }));
 vi.mock("@/components/Minimap", () => ({ Minimap: () => null }));
-vi.mock("@/components/ProblemsDock", () => ({ ProblemsDock: () => null }));
+vi.mock("@/components/ProblemsDock", () => ({
+  ProblemsDock: ({
+    onLocateOccurrence,
+    onOpenContext,
+  }: {
+    onLocateOccurrence?: (occurrence: {
+      eventId: number;
+      groupId: number;
+      startLine: number;
+      endLine: number;
+      anchorLine: number;
+    }) => void;
+    onOpenContext?: (occurrence: {
+      eventId: number;
+      groupId: number;
+      startLine: number;
+      endLine: number;
+      anchorLine: number;
+    }) => void;
+  }) => (
+    <div>
+      <button type="button" className="lf-problems-toggle">
+        Problems
+      </button>
+      <div role="listbox" aria-label="发生记录" tabIndex={0}>
+        {mocks.showOccurrenceOption ? (
+          <div id="lf-problem-event-8" role="option" aria-selected="true">
+            事件 #8
+          </div>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        onClick={() =>
+          onOpenContext?.({
+            eventId: 8,
+            groupId: 2,
+            startLine: 50,
+            endLine: 55,
+            anchorLine: 52,
+          })
+        }
+      >
+        打开事件上下文
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onLocateOccurrence?.({
+            eventId: 8,
+            groupId: 2,
+            startLine: 50,
+            endLine: 55,
+            anchorLine: 52,
+          })
+        }
+      >
+        定位隐藏事件
+      </button>
+    </div>
+  ),
+}));
 vi.mock("@/components/ProblemExportDialog", () => ({ ProblemExportDialog: () => null }));
 vi.mock("@/components/StatusBar", () => ({ StatusBar: () => null }));
 vi.mock("@/components/Toast", () => ({ Toast: () => null }));
@@ -120,6 +182,7 @@ describe("App TableScope navigation", () => {
     vi.clearAllMocks();
     mocks.streamAppendListener = null;
     mocks.searchProgressListener = null;
+    mocks.showOccurrenceOption = true;
     mocks.getConfig.mockResolvedValue({
       ...structuredClone(useSession.getState().appConfig),
       lastFilter: null,
@@ -300,5 +363,50 @@ describe("App TableScope navigation", () => {
     );
     await waitFor(() => expect(mocks.scrollToIndex).toHaveBeenCalledWith(39, { align: "center" }));
     expect(mocks.scrollToIndex).not.toHaveBeenCalledWith(83, { align: "center" });
+  });
+
+  it("restores focus to the triggering occurrence listbox after returning from context", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开事件上下文" }));
+    expect(useSession.getState().tableScope).toMatchObject({
+      kind: "problem-context",
+      occurrence: { eventId: 8 },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "返回筛选结果" }));
+
+    await waitFor(() => expect(screen.getByRole("listbox", { name: "发生记录" })).toHaveFocus());
+  });
+
+  it("falls back to the Problems toggle when the triggering occurrence is virtualized out", async () => {
+    mocks.showOccurrenceOption = false;
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开事件上下文" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回筛选结果" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Problems" })).toHaveFocus());
+  });
+
+  it("restores focus after locate automatically opens context for a filtered-out anchor", async () => {
+    mocks.mapSourceLine.mockImplementation(async (request: LineMappingRequest) => ({
+      status: "ok",
+      analysisToken: request.expectedAnalysisToken,
+      filterResultRevision: request.expectedFilterResultRevision,
+      target: null,
+    }));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "定位隐藏事件" }));
+    await waitFor(() =>
+      expect(useSession.getState().tableScope).toMatchObject({
+        kind: "problem-context",
+        occurrence: { eventId: 8 },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "返回筛选结果" }));
+
+    await waitFor(() => expect(screen.getByRole("listbox", { name: "发生记录" })).toHaveFocus());
   });
 });

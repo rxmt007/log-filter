@@ -225,7 +225,7 @@ describe("LogTable live tail following", () => {
     expect(banner).not.toHaveTextContent("这里显示未经过当前筛选的原始日志窗口");
   });
 
-  it("announces the return to filtered results and moves focus into the main table", async () => {
+  it("announces the return without claiming the Problems focus-restoration responsibility", async () => {
     useSession.setState({
       sourceMode: "file",
       streamRunning: false,
@@ -261,6 +261,6 @@ describe("LogTable live tail following", () => {
     expect(screen.getByRole("status", { name: "日志表格状态" })).toHaveTextContent(
       "已返回筛选结果",
     );
-    expect(screen.getByRole("region", { name: "日志表格" })).toHaveFocus();
+    expect(screen.getByRole("region", { name: "日志表格" })).not.toHaveFocus();
   });
 });

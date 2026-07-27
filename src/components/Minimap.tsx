@@ -205,7 +205,7 @@ export function Minimap() {
     const observer = new ResizeObserver(updateHeight);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [tableScope.kind]);
 
   const trackRect = { top: 0, height: trackHeight };
   const viewportTop = indexToViewportTopPx(

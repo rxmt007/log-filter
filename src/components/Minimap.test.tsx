@@ -257,4 +257,49 @@ describe("Minimap filtered viewport", () => {
     expect(rail).not.toHaveAttribute("tabindex");
     expect(screen.queryByRole("scrollbar")).not.toBeInTheDocument();
   });
+
+  it("rebinds resize observation after returning from problem context", () => {
+    render(<Minimap />);
+    const originalTrack = screen.getByRole("scrollbar", { name: "日志小地图" });
+    const originalObserver = [...TestResizeObserver.instances].find((instance) =>
+      instance.observed.has(originalTrack),
+    );
+    expect(originalObserver).toBeDefined();
+
+    act(() => {
+      useSession.setState({
+        tableScope: {
+          kind: "problem-context",
+          occurrence: {
+            eventId: 8,
+            groupId: 2,
+            startLine: 50,
+            endLine: 55,
+            anchorLine: 52,
+          },
+          eventRange: { startLine: 50, endLine: 55 },
+          contextRange: { startLine: 20, endLine: 80 },
+          returnPoint: {
+            viewportLine: 12,
+            selectedLine: 14,
+            filterInputRevision: 3,
+          },
+        },
+      });
+    });
+    expect(originalObserver?.observed.size).toBe(0);
+
+    act(() => {
+      useSession.setState({
+        tableScope: { kind: "results", view: "filtered" },
+      });
+    });
+    const replacementTrack = screen.getByRole("scrollbar", { name: "日志小地图" });
+    expect(replacementTrack).not.toBe(originalTrack);
+    const replacementObserver = [...TestResizeObserver.instances].find((instance) =>
+      instance.observed.has(replacementTrack),
+    );
+    expect(replacementObserver).toBeDefined();
+    expect(replacementObserver?.observed.has(originalTrack)).toBe(false);
+  });
 });

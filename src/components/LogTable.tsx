@@ -159,7 +159,6 @@ export function LogTable({ onReturnToResults, onFollowLatest }: LogTableProps) {
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
   const previousScopeKindRef = useRef(tableScope.kind);
-  const returnFocusPendingRef = useRef(false);
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimerRef = useRef<number | null>(null);
   const cache = useRef(new RowBlockCache(64));
@@ -223,10 +222,6 @@ export function LogTable({ onReturnToResults, onFollowLatest }: LogTableProps) {
     const previousScopeKind = previousScopeKindRef.current;
     if (previousScopeKind === "problem-context" && tableScope.kind === "results") {
       setScopeAnnouncement("已返回筛选结果");
-      if (returnFocusPendingRef.current) {
-        parentRef.current?.focus();
-      }
-      returnFocusPendingRef.current = false;
     } else if (tableScope.kind === "problem-context") {
       setScopeAnnouncement("");
     }
@@ -679,13 +674,7 @@ export function LogTable({ onReturnToResults, onFollowLatest }: LogTableProps) {
             {tableScope.contextRange.endLine.toLocaleString()} 行
           </span>
           <span>当前过滤保持，但暂不应用于此上下文</span>
-          <button
-            type="button"
-            onClick={(event) => {
-              returnFocusPendingRef.current = document.activeElement === event.currentTarget;
-              onReturnToResults?.();
-            }}
-          >
+          <button type="button" onClick={onReturnToResults}>
             返回筛选结果
           </button>
         </div>

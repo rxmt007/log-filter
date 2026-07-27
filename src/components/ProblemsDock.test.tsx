@@ -396,7 +396,7 @@ describe("ProblemsDock", () => {
     expect(screen.getByRole("button", { name: /Problems/ })).toHaveFocus();
   });
 
-  it("keeps event actions, fingerprint, and the non-root-cause boundary only", () => {
+  it("shows compact boundary and provenance warnings without introducing root-cause claims", () => {
     seedOpenDock();
     render(<ProblemsDock />);
     const detailPane = within(screen.getByRole("region", { name: "事件详情" }));
@@ -417,7 +417,10 @@ describe("ProblemsDock", () => {
     expect(
       detailPane.queryByRole("heading", { name: "日志记录的结局" }),
     ).not.toBeInTheDocument();
-    expect(detailPane.queryByRole("heading", { name: "边界与覆盖" })).not.toBeInTheDocument();
+    expect(detailPane.getByRole("heading", { name: "边界与覆盖" })).toBeInTheDocument();
+    expect(detailPane.getByText("检测器在安全上限处截断了事件证据")).toBeInTheDocument();
+    expect(detailPane.getByText("详情只物化了有界的关键证据引用")).toBeInTheDocument();
+    expect(detailPane.getByText("证据来源：已证明来源：main")).toBeInTheDocument();
     expect(detailPane.queryByRole("heading", { name: "检测到的事实" })).not.toBeInTheDocument();
     expect(
       detailPane.queryByRole("heading", { name: "排查提示（非结论）" }),

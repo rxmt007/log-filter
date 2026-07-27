@@ -680,6 +680,28 @@
   font-size: 11px;
 }
 
+.lf-problems-boundary-note {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--lf-border);
+  color: var(--lf-text-dim);
+  font-size: 11px;
+}
+
+.lf-problems-boundary-note h3 {
+  margin: 0 0 4px;
+  color: var(--lf-text);
+  font-size: 11.5px;
+}
+
+.lf-problems-boundary-note ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.lf-problems-boundary-note p {
+  margin: 4px 0 0;
+}
+
 .lf-problems-fingerprint {
   overflow: hidden;
   color: var(--lf-text);
