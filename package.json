@@ -1,7 +1,7 @@
 {
   "name": "log-filter",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cross-platform desktop Android logcat viewer built with Rust, Tauri, and React",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/rxmt007/log-filter",

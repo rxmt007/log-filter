@@ -1,6 +1,6 @@
 [package]
 name = "logcore"
-version = "0.1.0"
+version = "0.1.1"
 description = "Core indexing, filtering, and search engine for LogFilter"
 edition = "2021"
 license = "GPL-3.0-or-later"

@@ -1,6 +1,6 @@
 [package]
 name = "log-filter"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cross-platform Android logcat viewer built with Tauri v2 and Rust"
 authors = ["rxmt007"]
 edition = "2021"
