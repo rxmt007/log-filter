@@ -1,4 +1,5 @@
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LogTable } from "@/components/LogTable";
 import { DEFAULT_FILTER, useSession } from "@/store/session";
@@ -191,5 +192,75 @@ describe("LogTable live tail following", () => {
     });
 
     expect(mocks.scrollToIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it("states that filters are preserved but temporarily not applied in problem context", () => {
+    useSession.setState({
+      sourceMode: "file",
+      streamRunning: false,
+      scrollRequest: null,
+      tableScope: {
+        kind: "problem-context",
+        occurrence: {
+          eventId: 8,
+          groupId: 2,
+          startLine: 50,
+          endLine: 55,
+          anchorLine: 52,
+        },
+        eventRange: { startLine: 50, endLine: 55 },
+        contextRange: { startLine: 20, endLine: 80 },
+        returnPoint: {
+          viewportLine: 12,
+          selectedLine: 14,
+          filterInputRevision: 3,
+        },
+      },
+    });
+
+    render(<LogTable />);
+
+    const banner = screen.getByRole("status");
+    expect(banner).toHaveTextContent("当前过滤保持，但暂不应用于此上下文");
+    expect(banner).not.toHaveTextContent("这里显示未经过当前筛选的原始日志窗口");
+  });
+
+  it("announces the return to filtered results and moves focus into the main table", async () => {
+    useSession.setState({
+      sourceMode: "file",
+      streamRunning: false,
+      scrollRequest: null,
+      tableScope: {
+        kind: "problem-context",
+        occurrence: {
+          eventId: 8,
+          groupId: 2,
+          startLine: 50,
+          endLine: 55,
+          anchorLine: 52,
+        },
+        eventRange: { startLine: 50, endLine: 55 },
+        contextRange: { startLine: 20, endLine: 80 },
+        returnPoint: {
+          viewportLine: 12,
+          selectedLine: 14,
+          filterInputRevision: 3,
+        },
+      },
+    });
+    const onReturnToResults = vi.fn(() => {
+      useSession.setState({ tableScope: { kind: "results", view: "filtered" } });
+    });
+    render(<LogTable onReturnToResults={onReturnToResults} />);
+    const returnButton = screen.getByRole("button", { name: "返回筛选结果" });
+    returnButton.focus();
+
+    await userEvent.click(returnButton);
+
+    expect(onReturnToResults).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status", { name: "日志表格状态" })).toHaveTextContent(
+      "已返回筛选结果",
+    );
+    expect(screen.getByRole("region", { name: "日志表格" })).toHaveFocus();
   });
 });

@@ -213,6 +213,164 @@ describe("ProblemsDock", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("keeps one polite live region while folded and announces only status transitions", async () => {
+    const scanningStatus: ProblemsStatus = {
+      ...status,
+      scannedLines: 100,
+      scanning: true,
+      finished: false,
+      stats: {
+        ...status.stats,
+        observedOccurrenceCount: 0,
+        storedOccurrenceCount: 0,
+        droppedOccurrenceCount: 0,
+        revision: 1,
+        limited: false,
+        correlationLimited: false,
+      },
+    };
+    useProblems.getState().acceptStatus(scanningStatus);
+    render(<ProblemsDock />);
+
+    const liveRegion = screen.getByRole("status", { name: "Problems 状态通知" });
+    expect(screen.getAllByRole("status", { name: "Problems 状态通知" })).toHaveLength(1);
+    expect(liveRegion).toHaveAttribute("aria-live", "polite");
+    expect(liveRegion).toHaveTextContent("");
+
+    act(() => {
+      useProblems.getState().acceptStatus({
+        ...scanningStatus,
+        scannedLines: 200,
+        stats: {
+          ...scanningStatus.stats,
+          observedOccurrenceCount: 1,
+          storedOccurrenceCount: 1,
+          revision: 2,
+        },
+      });
+    });
+    expect(liveRegion).toHaveTextContent("");
+
+    act(() => {
+      useProblems.getState().acceptStatus({
+        ...scanningStatus,
+        scannedLines: 1_000,
+        scanning: false,
+        finished: true,
+        stats: {
+          ...scanningStatus.stats,
+          observedOccurrenceCount: 1,
+          storedOccurrenceCount: 1,
+          revision: 3,
+        },
+      });
+    });
+    expect(liveRegion).toHaveTextContent("故障分析完成");
+
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(liveRegion, { childList: true, characterData: true, subtree: true });
+    act(() => {
+      useProblems.getState().acceptStatus({
+        ...scanningStatus,
+        scannedLines: 1_000,
+        scanning: false,
+        finished: true,
+        stats: {
+          ...scanningStatus.stats,
+          observedOccurrenceCount: 2,
+          storedOccurrenceCount: 2,
+          revision: 4,
+        },
+      });
+    });
+    await Promise.resolve();
+    expect(mutations).toHaveLength(0);
+    observer.disconnect();
+
+    act(() => {
+      useProblems.getState().acceptStatus({
+        ...scanningStatus,
+        scannedLines: 1_000,
+        scanning: false,
+        finished: true,
+        stats: {
+          ...scanningStatus.stats,
+          observedOccurrenceCount: 3,
+          storedOccurrenceCount: 2,
+          droppedOccurrenceCount: 1,
+          revision: 5,
+          limited: true,
+        },
+      });
+    });
+    expect(liveRegion).toHaveTextContent("故障索引达到限制");
+
+    act(() => useProblems.setState({ statusError: "status unavailable" }));
+    expect(liveRegion).toHaveTextContent("故障分析发生错误：status unavailable");
+
+    act(() => useProblems.setState({ statusError: null, hasNewResults: false }));
+    expect(liveRegion).toHaveTextContent("");
+    act(() => useProblems.setState({ hasNewResults: true }));
+    expect(liveRegion).toHaveTextContent("故障分析有新结果");
+  });
+
+  it("announces an open-panel status error only through the polite live region", () => {
+    useProblems.getState().acceptStatus(status);
+    useProblems.getState().setPanelOpen(true);
+    render(<ProblemsDock />);
+
+    act(() => useProblems.setState({ statusError: "status unavailable" }));
+
+    expect(screen.getByRole("status", { name: "Problems 状态通知" })).toHaveTextContent(
+      "故障分析发生错误：status unavailable",
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps correlation limits accessible while folded without adding batch live regions", async () => {
+    useProblems.getState().acceptStatus({
+      ...status,
+      stats: {
+        ...status.stats,
+        limited: false,
+        correlationLimited: true,
+        droppedRecentObservationCount: 3,
+      },
+    });
+    render(<ProblemsDock />);
+
+    const warning = screen.getByRole("note", {
+      name: "部分晚到关联证据可能未保留，已淘汰 3 条紧凑观察引用",
+    });
+    expect(warning).toHaveTextContent("部分晚到关联证据可能未保留");
+    expect(warning).not.toHaveAttribute("aria-live");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /Problems/ }));
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+
+    const liveRegion = screen.getByRole("status", { name: "Problems 状态通知" });
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(liveRegion, { childList: true, characterData: true, subtree: true });
+    act(() => {
+      useProblems.getState().acceptStatus({
+        ...status,
+        stats: {
+          ...status.stats,
+          revision: status.stats.revision + 1,
+          limited: false,
+          correlationLimited: true,
+          droppedRecentObservationCount: 4,
+        },
+      });
+    });
+    await Promise.resolve();
+    expect(mutations).toHaveLength(0);
+    observer.disconnect();
+  });
+
   it("requests the first group page only after the user expands it", async () => {
     useProblems.getState().acceptStatus(status);
     const onOpen = vi.fn();
@@ -222,6 +380,20 @@ describe("ProblemsDock", () => {
 
     expect(screen.getByRole("region", { name: "故障调查工作台" })).toBeInTheDocument();
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps keyboard focus on the Problems toggle across expansion and collapse", async () => {
+    useProblems.getState().acceptStatus(status);
+    render(<ProblemsDock />);
+
+    let toggle = screen.getByRole("button", { name: /Problems/ });
+    toggle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    toggle = screen.getByRole("button", { name: /Problems/ });
+    expect(toggle).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: /Problems/ })).toHaveFocus();
   });
 
   it("keeps event actions, fingerprint, and the non-root-cause boundary only", () => {
@@ -325,6 +497,43 @@ describe("ProblemsDock", () => {
     expect(screen.getByText("结果快照已过期；当前内容已保留，请手动刷新。")).toBeInTheDocument();
     expect(screen.getAllByText("Java/Kotlin 崩溃")).not.toHaveLength(0);
   });
+
+  it.each([
+    {
+      label: "group",
+      listboxName: "故障分组",
+      expire: () =>
+        useProblems.setState({
+          groupLoading: false,
+          groupPageError: "snapshot-expired",
+        }),
+    },
+    {
+      label: "occurrence",
+      listboxName: "发生记录",
+      expire: () =>
+        useProblems.setState({
+          occurrenceLoading: false,
+          occurrencePageError: "snapshot-expired",
+        }),
+    },
+  ])(
+    "offers a focused refresh action when the $label snapshot expires",
+    async ({ listboxName, expire }) => {
+      seedOpenDock();
+      const onRefresh = vi.fn();
+      render(<ProblemsDock onRefresh={onRefresh} />);
+      const listbox = screen.getByRole("listbox", { name: listboxName });
+      listbox.focus();
+
+      act(expire);
+
+      const refresh = screen.getByRole("button", { name: "刷新结果" });
+      expect(refresh).toHaveFocus();
+      await userEvent.click(refresh);
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("renders distinct loading and failure states", () => {
     useProblems.getState().setPanelOpen(true);
@@ -595,6 +804,25 @@ describe("ProblemsDock", () => {
 
     act(() => observer.emit(workbench, 1_180, 640));
     expect(screen.getByRole("region", { name: "故障调查工作台" })).toBeInTheDocument();
+    expect(useProblems.getState().panelOpen).toBe(true);
+  });
+
+  it("returns focus to the toggle when the focused panel auto-collapses", () => {
+    useProblems.getState().setPanelOpen(true);
+    const { container } = render(
+      <div className="lf-workbench">
+        <ProblemsDock />
+      </div>,
+    );
+    const workbench = container.querySelector(".lf-workbench");
+    if (!workbench) throw new Error("missing workbench");
+    const observer = [...TestResizeObserver.instances].find((item) => item.observed.has(workbench));
+    if (!observer) throw new Error("workbench is not observed");
+
+    screen.getByRole("separator", { name: "调整 Problems 面板高度" }).focus();
+    act(() => observer.emit(workbench, 960, 330));
+
+    expect(screen.getByRole("button", { name: /Problems/ })).toHaveFocus();
     expect(useProblems.getState().panelOpen).toBe(true);
   });
 });

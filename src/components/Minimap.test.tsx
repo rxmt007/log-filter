@@ -223,4 +223,38 @@ describe("Minimap filtered viewport", () => {
       }),
     );
   });
+
+  it("keeps a non-focusable presentation rail without requesting minimap data in context", async () => {
+    vi.useFakeTimers();
+    useSession.setState({
+      tableScope: {
+        kind: "problem-context",
+        occurrence: {
+          eventId: 8,
+          groupId: 2,
+          startLine: 50,
+          endLine: 55,
+          anchorLine: 52,
+        },
+        eventRange: { startLine: 50, endLine: 55 },
+        contextRange: { startLine: 20, endLine: 80 },
+        returnPoint: {
+          viewportLine: 12,
+          selectedLine: 14,
+          filterInputRevision: 3,
+        },
+      },
+    });
+
+    render(<Minimap />);
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(mocks.getMinimap).not.toHaveBeenCalled();
+    const rail = screen.getByRole("presentation");
+    expect(rail).toHaveClass("lf-minimap");
+    expect(rail).not.toHaveAttribute("tabindex");
+    expect(screen.queryByRole("scrollbar")).not.toBeInTheDocument();
+  });
 });

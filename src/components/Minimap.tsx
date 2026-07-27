@@ -220,7 +220,9 @@ export function Minimap() {
     ? Math.min(100, Math.max(0.7, ((resultCount * rowHeight) / trackHeight) * 100))
     : 100;
 
-  if (tableScope.kind !== "results") return null;
+  if (tableScope.kind !== "results") {
+    return <div className="lf-minimap" data-context-rail role="presentation" />;
+  }
 
   return (
     <button

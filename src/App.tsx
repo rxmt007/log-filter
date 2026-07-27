@@ -50,7 +50,6 @@ export default function App() {
   const setSearchResult = useSession((s) => s.setSearchResult);
   const bookmarkRevision = useSession((s) => s.bookmarkRevision);
   const selectedLine = useSession((s) => s.selectedLine);
-  const requestTailFollow = useSession((s) => s.requestTailFollow);
   const appConfig = useSession((s) => s.appConfig);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setLogcatBuffers = useSession((s) => s.setLogcatBuffers);
@@ -113,11 +112,14 @@ export default function App() {
         return;
       }
       setSearchResult(progress.matches, progress.firstLine);
+      if (progress.firstLine != null) {
+        void tableController.navigateToSourceLine(progress.firstLine, "search");
+      }
     });
     return () => {
       un.then((f) => f());
     };
-  }, [setSearchResult]);
+  }, [setSearchResult, tableController]);
 
   // 导出完成/取消的全局提示:即使导出对话框已关闭也能收到(对话框自身仍监听进度做内联显示)。
   useEffect(() => {
@@ -156,8 +158,8 @@ export default function App() {
         const state = useSession.getState();
         if (append.status.generation < state.status.generation) return;
         setStatus(append.status);
-        if (state.sourceMode === "adb" && state.tailFollowing && append.status.filteredLines > 0) {
-          requestTailFollow(append.status.filteredLines - 1);
+        if (state.sourceMode === "adb" && state.tailFollowing && append.status.stableLines > 0) {
+          void tableController.navigateToSourceLine(append.status.stableLines, "tail");
         }
       },
     });
@@ -168,7 +170,7 @@ export default function App() {
       appendBatcher.dispose();
       un.then((f) => f());
     };
-  }, [requestTailFollow, setStatus]);
+  }, [setStatus, tableController]);
 
   useEffect(() => {
     const controlUnlisten = onStreamControl((control) => {
@@ -301,7 +303,12 @@ export default function App() {
       <div className="lf-workbench">
         <div className="lf-main">
           <Minimap />
-          <LogTable onReturnToResults={() => void tableController.returnToResults()} />
+          <LogTable
+            onReturnToResults={() => void tableController.returnToResults()}
+            onFollowLatest={(lineNo) =>
+              void tableController.navigateToSourceLine(lineNo, "tail")
+            }
+          />
         </div>
         <ProblemsDock
           {...problemsBindings}

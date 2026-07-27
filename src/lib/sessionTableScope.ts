@@ -29,9 +29,7 @@ function controllerState(): TableScopeControllerState {
   };
 }
 
-function waitForFilterResult(
-  request: FilterResultWaitRequest,
-): Promise<FilterResultWaitResponse> {
+function waitForFilterResult(request: FilterResultWaitRequest): Promise<FilterResultWaitResponse> {
   return new Promise((resolve, reject) => {
     let unsubscribe = () => {};
     const inspect = () => {
@@ -47,6 +45,7 @@ function waitForFilterResult(
         return;
       }
       if (state.appliedFilterInputRevision !== request.filterInputRevision) return;
+      if (state.filterResultRevision < request.minimumFilterResultRevision) return;
       unsubscribe();
       resolve({
         analysisToken: state.analysisToken,

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -353,12 +354,43 @@ export function ProblemsDock({
   const setSort = useProblems((state) => state.setSort);
   const openRequestArmed = useRef(true);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const refreshRef = useRef<HTMLButtonElement>(null);
+  const restoreToggleFocusRef = useRef(false);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const [panelMaximum, setPanelMaximum] = useState(() =>
     Math.max(MIN_PANEL_HEIGHT, Math.floor(window.innerHeight * 0.45)),
   );
   const [layoutCollapsed, setLayoutCollapsed] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const announcementStateRef = useRef({
+    finished: false,
+    limited: false,
+    hasNewResults: false,
+    error: null as string | null,
+  });
   const visibleOpen = panelOpen && !layoutCollapsed;
+  const snapshotExpired =
+    groupPageError === "snapshot-expired" || occurrencePageError === "snapshot-expired";
+
+  useLayoutEffect(() => {
+    if (!visibleOpen || !snapshotExpired) return;
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      activeElement.getAttribute("role") === "listbox" &&
+      (activeElement.getAttribute("aria-label") === "故障分组" ||
+        activeElement.getAttribute("aria-label") === "发生记录")
+    ) {
+      refreshRef.current?.focus();
+    }
+  }, [snapshotExpired, visibleOpen]);
+
+  useLayoutEffect(() => {
+    if (!restoreToggleFocusRef.current) return;
+    restoreToggleFocusRef.current = false;
+    toggleRef.current?.focus();
+  }, [visibleOpen]);
 
   useEffect(() => {
     if (!visibleOpen) {
@@ -378,6 +410,13 @@ export function ProblemsDock({
       const height = entries[entries.length - 1]?.contentRect.height ?? 0;
       if (height <= 0) return;
       const shouldCollapse = height < MIN_MAIN_HEIGHT + MIN_PANEL_HEIGHT;
+      if (
+        shouldCollapse &&
+        document.activeElement instanceof HTMLElement &&
+        panelRef.current?.contains(document.activeElement)
+      ) {
+        restoreToggleFocusRef.current = true;
+      }
       setLayoutCollapsed(shouldCollapse);
       const maximum = Math.max(
         MIN_PANEL_HEIGHT,
@@ -486,6 +525,37 @@ export function ProblemsDock({
       }`
     : scanLabel;
 
+  useEffect(() => {
+    const previous = announcementStateRef.current;
+    const next = {
+      finished: status?.finished ?? false,
+      limited: stats?.limited ?? false,
+      hasNewResults,
+      error: statusError,
+    };
+    const messages: string[] = [];
+    if (next.finished && !previous.finished) messages.push("故障分析完成");
+    if (next.limited && !previous.limited) messages.push("故障索引达到限制");
+    if (next.error && next.error !== previous.error) {
+      messages.push(`故障分析发生错误：${next.error}`);
+    }
+    if (next.hasNewResults && !previous.hasNewResults) messages.push("故障分析有新结果");
+    announcementStateRef.current = next;
+    setAnnouncement(messages.join("；"));
+  }, [hasNewResults, stats?.limited, status?.finished, statusError]);
+
+  const liveRegion = (
+    <div
+      className="sr-only"
+      role="status"
+      aria-label="Problems 状态通知"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      {announcement}
+    </div>
+  );
+
   const toggle = (
     <button
       ref={toggleRef}
@@ -494,7 +564,10 @@ export function ProblemsDock({
       aria-expanded={visibleOpen}
       aria-controls="lf-problems-panel"
       aria-label={`Problems，${badge}`}
-      onClick={() => setPanelOpen(!panelOpen)}
+      onClick={(event) => {
+        restoreToggleFocusRef.current = document.activeElement === event.currentTarget;
+        setPanelOpen(!panelOpen);
+      }}
     >
       <AlertTriangle aria-hidden="true" />
       <span>Problems</span>
@@ -505,10 +578,23 @@ export function ProblemsDock({
 
   if (!visibleOpen) {
     return (
-      <div className="lf-problems-collapsed" data-layout-collapsed={layoutCollapsed || undefined}>
-        {toggle}
-        <span className="lf-problems-coverage">{coverageLabel}</span>
-      </div>
+      <>
+        {liveRegion}
+        <div className="lf-problems-collapsed" data-layout-collapsed={layoutCollapsed || undefined}>
+          {toggle}
+          <span className="lf-problems-coverage">{coverageLabel}</span>
+          {stats?.correlationLimited ? (
+            <span
+              className="lf-problems-correlation-warning"
+              role="note"
+              aria-label={`部分晚到关联证据可能未保留，已淘汰 ${stats.droppedRecentObservationCount.toLocaleString()} 条紧凑观察引用`}
+              title={`已淘汰 ${stats.droppedRecentObservationCount.toLocaleString()} 条紧凑观察引用`}
+            >
+              部分晚到关联证据可能未保留
+            </span>
+          ) : null}
+        </div>
+      </>
     );
   }
 
@@ -516,8 +602,9 @@ export function ProblemsDock({
   const selectedGroup = groupPage?.items.find((group) => group.id === selectedGroupId) ?? null;
   const selectedKind = kindFilters.length === 1 ? kindFilters[0] : null;
 
-  return (
+  const panel = (
     <section
+      ref={panelRef}
       id="lf-problems-panel"
       className="lf-problems-dock"
       style={{ height: panelHeight }}
@@ -539,16 +626,21 @@ export function ProblemsDock({
       <header className="lf-problems-header">
         {toggle}
         <div className="lf-problems-coverage">{coverageLabel}</div>
-        {hasNewResults ? (
-          <button type="button" className="lf-problems-refresh" onClick={onRefresh}>
+        {hasNewResults || snapshotExpired ? (
+          <button
+            ref={refreshRef}
+            type="button"
+            className="lf-problems-refresh"
+            onClick={onRefresh}
+          >
             <RefreshCw aria-hidden="true" />
-            有新结果，刷新
+            {snapshotExpired ? "刷新结果" : "有新结果，刷新"}
           </button>
         ) : null}
       </header>
 
       {statusError ? (
-        <div className="lf-problems-limit-note" role="alert">
+        <div className="lf-problems-limit-note">
           故障分析状态读取失败：{statusError}
           {onRetryStatus ? (
             <button type="button" aria-label="重试故障分析状态" onClick={onRetryStatus}>
@@ -559,14 +651,14 @@ export function ProblemsDock({
       ) : null}
 
       {stats?.correlationLimited ? (
-        <div className="lf-problems-limit-note" role="status">
+        <div className="lf-problems-limit-note">
           部分晚到关联证据可能未保留（已淘汰 {stats.droppedRecentObservationCount.toLocaleString()}{" "}
           条紧凑观察引用）
         </div>
       ) : null}
 
       {stats?.limited ? (
-        <div className="lf-problems-limit-note" role="status">
+        <div className="lf-problems-limit-note">
           容量限制：检出 {stats.observedOccurrenceCount.toLocaleString()} 项，可展开{" "}
           {stats.storedOccurrenceCount.toLocaleString()} 项，未保存{" "}
           {stats.droppedOccurrenceCount.toLocaleString()} 项。
@@ -859,16 +951,13 @@ export function ProblemsDock({
           )}
         </div>
       </div>
-
-      <div className="sr-only" aria-live="polite">
-        {status?.finished
-          ? `故障分析完成，检出 ${detected} 项`
-          : stats?.limited
-            ? `故障索引达到限制，可展开 ${expandable} 项`
-            : hasNewResults
-              ? "故障分析有新结果"
-              : ""}
-      </div>
     </section>
+  );
+
+  return (
+    <>
+      {liveRegion}
+      {panel}
+    </>
   );
 }

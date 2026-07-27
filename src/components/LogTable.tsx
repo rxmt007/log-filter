@@ -22,7 +22,7 @@ import {
   type ColumnState,
 } from "@/lib/table";
 import type { AppConfig, FilterSpec, Row, SearchSpec } from "@/types";
-import { ALL_LEVELS, useSession } from "@/store/session";
+import { useSession } from "@/store/session";
 
 const WINDOW = 200;
 
@@ -96,10 +96,6 @@ function highlightText(
   });
 }
 
-function fieldActive(field: { enabled: boolean; pattern: string }) {
-  return field.enabled && field.pattern.trim().length > 0;
-}
-
 function renderCell(
   column: ColumnState,
   row: Row,
@@ -136,9 +132,10 @@ function renderCell(
 
 interface LogTableProps {
   onReturnToResults?: () => void;
+  onFollowLatest?: (lineNo: number) => void;
 }
 
-export function LogTable({ onReturnToResults }: LogTableProps) {
+export function LogTable({ onReturnToResults, onFollowLatest }: LogTableProps) {
   const status = useSession((s) => s.status);
   const tableScope = useSession((s) => s.tableScope);
   const sourceMode = useSession((s) => s.sourceMode);
@@ -157,12 +154,12 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
   const pauseTailFollowing = useSession((s) => s.pauseTailFollowing);
   const streamRunning = useSession((s) => s.streamRunning);
   const tailFollowing = useSession((s) => s.tailFollowing);
-  const setTailFollowing = useSession((s) => s.setTailFollowing);
-  const requestTailFollow = useSession((s) => s.requestTailFollow);
   const acknowledgeScrollRequest = useSession((s) => s.acknowledgeScrollRequest);
   const setAppConfig = useSession((s) => s.setAppConfig);
   const setBookmarks = useSession((s) => s.setBookmarks);
   const parentRef = useRef<HTMLDivElement>(null);
+  const previousScopeKindRef = useRef(tableScope.kind);
+  const returnFocusPendingRef = useRef(false);
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimerRef = useRef<number | null>(null);
   const cache = useRef(new RowBlockCache(64));
@@ -175,6 +172,7 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [selectionRange, setSelectionRange] = useState<SelectionRange | null>(null);
   const [bookmarkMenu, setBookmarkMenu] = useState<BookmarkMenuState | null>(null);
+  const [scopeAnnouncement, setScopeAnnouncement] = useState("");
   const rowHeight = appConfig.rowHeight;
   const dataset = useMemo(
     () =>
@@ -189,15 +187,6 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
     [filterResultRevision, status, tableScope],
   );
   const total = dataset.rowCount;
-  const defaultResultOrder =
-    filter.levels === ALL_LEVELS &&
-    !filter.markedOnly &&
-    !fieldActive(filter.pid) &&
-    !fieldActive(filter.tid) &&
-    !fieldActive(filter.tagInclude) &&
-    !fieldActive(filter.tagExclude) &&
-    !fieldActive(filter.wordInclude) &&
-    !fieldActive(filter.wordExclude);
   const columns = useMemo(
     () => normalizeColumns(appConfig.table.columns),
     [appConfig.table.columns],
@@ -229,6 +218,20 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
     observer.observe(element);
     return () => observer.disconnect();
   }, [setTableViewportHeight]);
+
+  useLayoutEffect(() => {
+    const previousScopeKind = previousScopeKindRef.current;
+    if (previousScopeKind === "problem-context" && tableScope.kind === "results") {
+      setScopeAnnouncement("已返回筛选结果");
+      if (returnFocusPendingRef.current) {
+        parentRef.current?.focus();
+      }
+      returnFocusPendingRef.current = false;
+    } else if (tableScope.kind === "problem-context") {
+      setScopeAnnouncement("");
+    }
+    previousScopeKindRef.current = tableScope.kind;
+  }, [tableScope.kind]);
 
   const markProgrammaticScroll = useCallback(() => {
     programmaticScrollRef.current = true;
@@ -528,12 +531,6 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
   });
 
   useEffect(() => {
-    if (tableScope.kind !== "results" || !currentSearchLine || !defaultResultOrder) return;
-    markProgrammaticScroll();
-    rv.scrollToIndex(Math.max(0, currentSearchLine - 1), { align: "center" });
-  }, [currentSearchLine, defaultResultOrder, markProgrammaticScroll, rv, tableScope.kind]);
-
-  useEffect(() => {
     if (!scrollRequest || !total) return;
     let canceled = false;
     const scroll = () => {
@@ -604,11 +601,10 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
   }, [status.totalBytes, tableScope.kind]);
 
   const resumeTailFollow = useCallback(() => {
-    const count = useSession.getState().status.filteredLines;
-    if (count <= 0) return;
-    setTailFollowing(true);
-    requestTailFollow(count - 1);
-  }, [requestTailFollow, setTailFollowing]);
+    const latestLine = useSession.getState().status.stableLines;
+    if (latestLine <= 0) return;
+    onFollowLatest?.(latestLine);
+  }, [onFollowLatest]);
 
   const toggleRowBookmark = useCallback(
     async (row: Row) => {
@@ -663,6 +659,17 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
 
   return (
     <div className="lf-table-shell" data-scope={tableScope.kind}>
+      {scopeAnnouncement ? (
+        <div
+          className="sr-only"
+          role="status"
+          aria-label="日志表格状态"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {scopeAnnouncement}
+        </div>
+      ) : null}
       {tableScope.kind === "problem-context" ? (
         <div className="lf-context-banner" role="status">
           <span>
@@ -671,8 +678,14 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
             {tableScope.contextRange.startLine.toLocaleString()}–
             {tableScope.contextRange.endLine.toLocaleString()} 行
           </span>
-          <span>这里显示未经过当前筛选的原始日志窗口。</span>
-          <button type="button" onClick={onReturnToResults}>
+          <span>当前过滤保持，但暂不应用于此上下文</span>
+          <button
+            type="button"
+            onClick={(event) => {
+              returnFocusPendingRef.current = document.activeElement === event.currentTarget;
+              onReturnToResults?.();
+            }}
+          >
             返回筛选结果
           </button>
         </div>
@@ -722,6 +735,9 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
         id="lf-log-table-scroll"
         ref={parentRef}
         className="lf-table-scroll"
+        role="region"
+        aria-label="日志表格"
+        tabIndex={-1}
         onCopy={handleTableCopy}
         onPointerDownCapture={beginUserScrollInteraction}
         onScroll={syncTailFollowingFromScroll}
@@ -822,11 +838,10 @@ export function LogTable({ onReturnToResults }: LogTableProps) {
           </div>
         )}
       </div>
-      {tableScope.kind === "results" &&
-        sourceMode === "adb" &&
+      {sourceMode === "adb" &&
         streamRunning &&
         !tailFollowing &&
-        total > 0 && (
+        status.stableLines > 0 && (
         <button
           aria-label="Follow latest"
           className="lf-follow-tail"

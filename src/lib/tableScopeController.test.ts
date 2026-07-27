@@ -313,6 +313,7 @@ describe("table scope controller", () => {
     await vi.waitFor(() => expect(waitForFilterResult).toHaveBeenCalledTimes(1));
     expect(waitForFilterResult).toHaveBeenCalledWith({
       filterInputRevision: 6,
+      minimumFilterResultRevision: 10,
       expectedAnalysisToken: token,
       requestNonce: 2,
     });
@@ -600,6 +601,7 @@ describe("table scope controller", () => {
     await vi.waitFor(() => expect(waitForFilterResult).toHaveBeenCalledTimes(2));
     expect(waitForFilterResult.mock.calls[1][0]).toEqual({
       filterInputRevision: 6,
+      minimumFilterResultRevision: 9,
       expectedAnalysisToken: token,
       requestNonce: 2,
     });

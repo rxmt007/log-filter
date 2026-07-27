@@ -36,7 +36,7 @@ export function StatusBar() {
           <span>已加载 {status.totalLines.toLocaleString()} 行</span>
           {tableScope.kind === "problem-context" ? (
             <span className="lf-status-accent">
-              临时原始上下文 · 事件第 {tableScope.eventRange.startLine.toLocaleString()}–
+              临时未过滤上下文 · 事件第 {tableScope.eventRange.startLine.toLocaleString()}–
               {tableScope.eventRange.endLine.toLocaleString()} 行
             </span>
           ) : (

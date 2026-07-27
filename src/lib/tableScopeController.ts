@@ -40,6 +40,7 @@ export type LineMappingResponse =
 
 export interface FilterResultWaitRequest {
   filterInputRevision: number;
+  minimumFilterResultRevision: number;
   expectedAnalysisToken: AnalysisToken;
   requestNonce: number;
 }
@@ -284,6 +285,7 @@ export function createTableScopeController(
     operation: number,
     token: AnalysisToken,
     forceWait: boolean,
+    minimumFilterResultRevision: number,
   ): Promise<DatasetOutcome> => {
     let mustWait = forceWait;
     while (operationIsCurrent(operation, token)) {
@@ -294,6 +296,10 @@ export function createTableScopeController(
       }
       mustWait = false;
       const expectedInputRevision = state.filterInputRevision;
+      const minimumResultRevision = Math.max(
+        state.filterResultRevision,
+        minimumFilterResultRevision,
+      );
       const nonce = ++requestNonce;
       let wakeWait: (() => void) | undefined;
       let unsubscribe: (() => void) | undefined;
@@ -315,6 +321,7 @@ export function createTableScopeController(
       const waited = dependencies
         .waitForFilterResult({
           filterInputRevision: expectedInputRevision,
+          minimumFilterResultRevision: minimumResultRevision,
           expectedAnalysisToken: token,
           requestNonce: nonce,
         })
@@ -351,7 +358,8 @@ export function createTableScopeController(
       }
       if (
         current.appliedFilterInputRevision === response.filterInputRevision &&
-        current.filterResultRevision === response.filterResultRevision
+        current.filterResultRevision === response.filterResultRevision &&
+        response.filterResultRevision >= minimumResultRevision
       ) {
         return { status: "ready", state: current };
       }
@@ -366,12 +374,19 @@ export function createTableScopeController(
     requests: ReadonlyArray<{ lineNo: number; bias: MappingBias }>,
   ): Promise<MappingOutcome> => {
     let forceWait = false;
+    let minimumFilterResultRevision = 0;
     while (operationIsCurrent(operation, token)) {
-      const datasetOutcome = await currentResultDataset(operation, token, forceWait);
+      const datasetOutcome = await currentResultDataset(
+        operation,
+        token,
+        forceWait,
+        minimumFilterResultRevision,
+      );
       if (datasetOutcome.status !== "ready") return datasetOutcome;
       const dataset = datasetOutcome.state;
       const identity = datasetIdentity(dataset);
       forceWait = false;
+      minimumFilterResultRevision = 0;
       const nonce = ++requestNonce;
       let wakeMapping: (() => void) | undefined;
       let unsubscribe: (() => void) | undefined;
@@ -435,6 +450,16 @@ export function createTableScopeController(
       }
       if (responses.some((response) => response.status === "stale-filter-result")) {
         forceWait = true;
+        minimumFilterResultRevision = Math.max(
+          ...responses
+            .filter(
+              (
+                response,
+              ): response is Extract<LineMappingResponse, { status: "stale-filter-result" }> =>
+                response.status === "stale-filter-result",
+            )
+            .map((response) => response.actualFilterResultRevision),
+        );
         continue;
       }
       const successful = responses.filter(
