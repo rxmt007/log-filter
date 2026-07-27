@@ -273,6 +273,12 @@ pub(crate) fn step_problem_analysis(
     finish_if_terminal: bool,
 ) -> Option<ProblemsProgressDto> {
     let mut guard = state.lock_analysis_if_current(session_generation, analysis_generation)?;
+    if let Some(plan) = guard.as_mut()?.take_problem_read_ahead_plan() {
+        drop(guard);
+        state.cooperate_with_foreground_session_reader();
+        let _ = plan.execute();
+        guard = state.lock_analysis_if_current(session_generation, analysis_generation)?;
+    }
     let session = guard.as_mut()?;
     let step = session.scan_problems_step(PROBLEM_SCAN_CHUNK_LINES);
     if finish_if_terminal && step.caught_up {
@@ -710,7 +716,11 @@ pub fn release_problem_snapshot(
         .problem_cursors
         .resolve_snapshot_handle(&request.snapshot_handle, problem_analysis_identity(token));
     drain_problem_snapshot_releases(state.inner(), token);
-    let lease = lease.map_err(problem_cursor_error)?;
+    let lease = match lease {
+        Ok(lease) => lease,
+        Err(ProblemCursorError::Released) => return Ok(false),
+        Err(error) => return Err(problem_cursor_error(error)),
+    };
     let Some(mut guard) =
         state.lock_analysis_if_current(token.session_generation, token.analysis_generation)
     else {
