@@ -100,8 +100,11 @@ struct PendingKernelOom {
 #[derive(Debug)]
 pub struct KernelOomRecognizer {
     pending: [Option<PendingKernelOom>; MAX_PENDING_KERNEL_OOM],
+    pending_count: u8,
     pending_eviction_count: u64,
     ambiguity_count: u64,
+    #[cfg(test)]
+    pending_slot_scan_count: u64,
 }
 
 impl Default for KernelOomRecognizer {
@@ -114,8 +117,11 @@ impl KernelOomRecognizer {
     pub const fn new() -> Self {
         Self {
             pending: [None; MAX_PENDING_KERNEL_OOM],
+            pending_count: 0,
             pending_eviction_count: 0,
             ambiguity_count: 0,
+            #[cfg(test)]
+            pending_slot_scan_count: 0,
         }
     }
 
@@ -151,11 +157,11 @@ impl KernelOomRecognizer {
         if let Some(victim) =
             parse_prefixed_victim(message, b"Memory cgroup out of memory: Killed process ")
         {
-            self.pending.fill(None);
+            self.clear_pending();
             return Some(occurrence(line, line, victim, KernelOomMechanism::Memcg));
         }
         if let Some(victim) = parse_prefixed_victim(message, b"Out of memory: Killed process ") {
-            self.pending.fill(None);
+            self.clear_pending();
             return Some(occurrence(line, line, victim, KernelOomMechanism::Global));
         }
         if let Some(mechanism) = parse_constraint(message) {
@@ -187,7 +193,7 @@ impl KernelOomRecognizer {
                 self.ambiguity_count = self.ambiguity_count.saturating_add(1);
                 return None;
             }
-            self.pending.fill(None);
+            self.clear_pending();
             return Some(occurrence(
                 candidate.start_line,
                 line,
@@ -200,7 +206,7 @@ impl KernelOomRecognizer {
     }
 
     pub fn pending_count(&self) -> usize {
-        self.pending.iter().flatten().count()
+        usize::from(self.pending_count)
     }
 
     pub(crate) const fn pending_eviction_count(&self) -> u64 {
@@ -213,8 +219,8 @@ impl KernelOomRecognizer {
     }
 
     pub fn finish_input(&mut self) -> u8 {
-        let count = self.pending_count().min(usize::from(u8::MAX)) as u8;
-        self.pending.fill(None);
+        let count = self.pending_count;
+        self.clear_pending();
         count
     }
 
@@ -240,6 +246,7 @@ impl KernelOomRecognizer {
         }
         if let Some(slot) = self.pending.iter_mut().find(|slot| slot.is_none()) {
             *slot = Some(pending);
+            self.pending_count += 1;
             return;
         }
         let oldest = self
@@ -260,6 +267,16 @@ impl KernelOomRecognizer {
     fn advance_pending(&mut self, line: u32, raw_len: usize) {
         // The byte contract follows the physical source span, so interleaved
         // lines from other buffers/tags cannot bypass the candidate budget.
+        if self.pending_count == 0 {
+            return;
+        }
+        #[cfg(test)]
+        {
+            self.pending_slot_scan_count = self
+                .pending_slot_scan_count
+                .saturating_add(MAX_PENDING_KERNEL_OOM as u64);
+        }
+        let mut removed = 0_u8;
         for pending in &mut self.pending {
             if pending.is_some_and(|candidate| {
                 line.saturating_sub(candidate.start_line) > MAX_KERNEL_OOM_SPAN_LINES
@@ -269,16 +286,22 @@ impl KernelOomRecognizer {
                         .is_none_or(|bytes| bytes > MAX_KERNEL_OOM_SPAN_BYTES)
             }) {
                 *pending = None;
+                removed += 1;
             } else if let Some(candidate) = pending {
                 candidate.bytes_seen += raw_len;
             }
         }
+        self.pending_count -= removed;
     }
 
     fn mark_unmatched(&mut self) {
         // Callers reach this only for a Known(kernel) line with a compatible
         // tag that yielded no kernel OOM grammar, including bounded parse
         // rejection. Other provenance advances bytes but not this counter.
+        if self.pending_count == 0 {
+            return;
+        }
+        let mut removed = 0_u8;
         for pending in &mut self.pending {
             let Some(candidate) = pending else {
                 continue;
@@ -286,8 +309,20 @@ impl KernelOomRecognizer {
             candidate.unmatched = candidate.unmatched.saturating_add(1);
             if candidate.unmatched > MAX_KERNEL_OOM_UNMATCHED {
                 *pending = None;
+                removed += 1;
             }
         }
+        self.pending_count -= removed;
+    }
+
+    fn clear_pending(&mut self) {
+        self.pending.fill(None);
+        self.pending_count = 0;
+    }
+
+    #[cfg(test)]
+    const fn pending_slot_scan_count(&self) -> u64 {
+        self.pending_slot_scan_count
     }
 }
 
@@ -656,6 +691,46 @@ mod tests {
                 LineProvenance::Known(LogBuffer::Kernel),
             )
             .is_none());
+    }
+
+    #[test]
+    fn empty_pending_state_skips_the_physical_span_slot_scan() {
+        let mut recognizer = KernelOomRecognizer::new();
+        for line in 0..10_000 {
+            assert!(recognizer
+                .observe_line(
+                    line,
+                    128,
+                    "ActivityManager",
+                    b"ordinary line",
+                    LineProvenance::Unknown,
+                )
+                .is_none());
+        }
+        assert_eq!(recognizer.pending_slot_scan_count(), 0);
+
+        assert!(recognizer
+            .observe_line(
+                10_000,
+                128,
+                "kernel",
+                b"oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null)",
+                LineProvenance::Known(LogBuffer::Kernel),
+            )
+            .is_none());
+        assert!(recognizer
+            .observe_line(
+                10_001,
+                128,
+                "ActivityManager",
+                b"ordinary interleaved line",
+                LineProvenance::Unknown,
+            )
+            .is_none());
+        assert_eq!(
+            recognizer.pending_slot_scan_count(),
+            MAX_PENDING_KERNEL_OOM as u64
+        );
     }
 
     #[test]
