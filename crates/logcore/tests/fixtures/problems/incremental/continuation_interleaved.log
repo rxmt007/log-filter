@@ -1,0 +1,28 @@
+# raw-continuation variant
+07-26 20:00:01.000  101  101 E AndroidRuntime: FATAL EXCEPTION: raw
+Process: com.example.incremental.raw, PID: 101
+java.lang.IllegalStateException: synthetic raw continuation
+    at com.example.incremental.Raw.run(Raw.kt:10)
+# every-line-prefixed variant reuses the producer only to close the prior event
+07-26 20:00:02.000 E/AndroidRuntime( 101): FATAL EXCEPTION: prefixed
+07-26 20:00:02.001 E/AndroidRuntime( 101): Process: com.example.incremental.prefixed, PID: 101
+07-26 20:00:02.002 E/AndroidRuntime( 101): java.lang.IllegalArgumentException: synthetic prefixed continuation
+07-26 20:00:02.003 E/AndroidRuntime( 101):     at com.example.incremental.Prefixed.run(Prefixed.kt:20)
+# two producer-PID interleaved variant
+07-26 20:00:03.000  101  101 E AndroidRuntime: FATAL EXCEPTION: first
+07-26 20:00:03.000  202  202 E AndroidRuntime: FATAL EXCEPTION: second
+07-26 20:00:03.001  101  101 E AndroidRuntime: Process: com.example.incremental.first, PID: 101
+07-26 20:00:03.001  202  202 E AndroidRuntime: Process: com.example.incremental.second, PID: 202
+07-26 20:00:03.002  202  202 E AndroidRuntime: java.lang.UnsupportedOperationException: synthetic second
+07-26 20:00:03.002  101  101 E AndroidRuntime: java.lang.IllegalStateException: synthetic first
+07-26 20:00:03.003  101  101 E AndroidRuntime:     at com.example.incremental.First.run(First.kt:30)
+07-26 20:00:03.003  202  202 E AndroidRuntime:     at com.example.incremental.Second.run(Second.kt:40)
+# two Problem-tag interleaved variant
+07-26 20:00:04.000  101  101 E AndroidRuntime: FATAL EXCEPTION: cross-tag
+07-26 20:00:04.000  100  110 E ActivityManager: ANR in com.example.incremental.anr
+07-26 20:00:04.001  101  101 E AndroidRuntime: Process: com.example.incremental.cross, PID: 101
+07-26 20:00:04.001  100  110 E ActivityManager: PID: 303
+07-26 20:00:04.002  101  101 E AndroidRuntime: java.lang.SecurityException: synthetic cross-tag
+07-26 20:00:04.002  100  110 E ActivityManager: Reason: Input dispatching timed out (synthetic interleave)
+07-26 20:00:04.003  101  101 E AndroidRuntime:     at com.example.incremental.Cross.run(Cross.kt:50)
+07-26 20:00:04.004   10   10 I ExampleApp: deterministic boundary

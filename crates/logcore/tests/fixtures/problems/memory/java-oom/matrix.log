@@ -1,0 +1,64 @@
+# positive-case-01 raw continuation baseline
+07-26 19:00:01.000  701  701 E AndroidRuntime: FATAL EXCEPTION: main
+Process: com.example.oom.same, PID: 701
+07-26 19:00:01.002  701  701 E art: Throwing OutOfMemoryError "synthetic allocation"
+java.lang.OutOfMemoryError: Failed to allocate synthetic buffer one
+    at com.example.oom.Cache.fill(Cache.kt:10)
+# positive-case-02 time format and art support preserve grouping
+07-26 19:00:02.000 E/AndroidRuntime( 701): FATAL EXCEPTION: worker
+07-26 19:00:02.001 E/AndroidRuntime( 701): Process: com.example.oom.same, PID: 701
+07-26 19:00:02.002 E/art( 701): Throwing OutOfMemoryError: synthetic allocation
+07-26 19:00:02.003 E/AndroidRuntime( 701): java.lang.OutOfMemoryError: Failed to allocate synthetic buffer two
+07-26 19:00:02.004 E/AndroidRuntime( 701):     at com.example.oom.Cache.fill(Cache.kt:999)
+# positive-case-03 dalvik support belongs to the fatal occurrence
+07-26 19:00:03.000  701  701 E AndroidRuntime: FATAL EXCEPTION: background
+07-26 19:00:03.001  701  701 E AndroidRuntime: Process: com.example.oom.dalvik, PID: 701
+07-26 19:00:03.002  701  701 E dalvikvm: Throwing OutOfMemoryError "synthetic heap"
+07-26 19:00:03.003  701  701 E AndroidRuntime: java.lang.OutOfMemoryError: synthetic heap exhausted
+07-26 19:00:03.004  701  701 E AndroidRuntime:     at com.example.oom.Worker.run(Worker.java:30)
+# positive-case-04 system process envelope
+07-26 19:00:04.000  100  100 F AndroidRuntime: *** FATAL EXCEPTION IN SYSTEM PROCESS: system_server
+07-26 19:00:04.001  100  100 E AndroidRuntime: java.lang.OutOfMemoryError: synthetic system allocation
+07-26 19:00:04.002  100  100 E AndroidRuntime:     at com.android.server.example.Synthetic.run(Synthetic.java:40)
+--------- beginning of events
+# positive-case-05 legacy no-user am_crash
+07-26 19:00:05.000  100  100 I am_crash: [705,com.example.oom.event.same,0,java.lang.OutOfMemoryError,synthetic five,Cache.java,50]
+# positive-case-06 legacy user-prefixed am_crash
+07-26 19:00:06.000 I/am_crash( 100): [10,706,com.example.oom.event.same,0,java.lang.OutOfMemoryError,synthetic six,Cache.java,600]
+# positive-case-07 modern no-user tail
+07-26 19:00:07.000  100  100 I am_crash: [707,com.example.oom.modern,0,java.lang.OutOfMemoryError,synthetic seven,Modern.kt,70,0]
+# positive-case-08 modern user tail with recoverable flag
+07-26 19:00:08.000 I/am_crash( 100): [10,708,com.example.oom.recoverable,0,java.lang.OutOfMemoryError,synthetic eight,Recoverable.kt,80,1]
+--------- beginning of main
+# positive-case-09 a different top frame splits the group
+07-26 19:00:09.000  701  701 E AndroidRuntime: FATAL EXCEPTION: allocator
+07-26 19:00:09.001  701  701 E AndroidRuntime: Process: com.example.oom.same, PID: 701
+07-26 19:00:09.002  701  701 E AndroidRuntime: java.lang.OutOfMemoryError: synthetic ninth allocation
+07-26 19:00:09.003  701  701 E AndroidRuntime:     at com.example.oom.Other.allocate(Other.kt:90)
+# positive-case-10 no frame remains a lower-quality distinct group
+07-26 19:00:10.000 E/AndroidRuntime( 701): FATAL EXCEPTION: minimal
+07-26 19:00:10.001 E/AndroidRuntime( 701): Process: com.example.oom.same, PID: 701
+07-26 19:00:10.002 E/AndroidRuntime( 701): java.lang.OutOfMemoryError: synthetic tenth allocation
+07-26 19:00:10.003 I/ExampleApp( 900): ordinary boundary
+--------- beginning of main
+# negative-case-01 standalone art throw is only supporting text
+07-26 19:01:01.000  801  801 E art: Throwing OutOfMemoryError "caught synthetic allocation"
+# negative-case-02 standalone dalvik throw is only supporting text
+07-26 19:01:02.000 E/dalvikvm( 802): Throwing OutOfMemoryError: caught synthetic heap
+# negative-case-03 caught application OOME
+07-26 19:01:03.000  803  803 E ExampleApp: caught java.lang.OutOfMemoryError while decoding synthetic data
+# negative-case-04 ordinary AndroidRuntime mention without a fatal envelope
+07-26 19:01:04.000  804  804 E AndroidRuntime: java.lang.OutOfMemoryError threshold is monitored
+# negative-case-05 GC activity is not a fatal OOME
+07-26 19:01:05.000  805  805 I art: Explicit concurrent copying GC freed synthetic objects
+# negative-case-06 trim callback is not a fatal OOME
+07-26 19:01:06.000 I/ActivityThread( 806): onTrimMemory level=80 for com.example.oom.trim
+# negative-case-08 incomplete fatal envelope
+07-26 19:01:08.000  808  808 E AndroidRuntime: FATAL EXCEPTION: incomplete
+# negative-case-09 main-only capture cannot authenticate am_crash
+07-26 19:01:09.000  100  100 I am_crash: [809,com.example.oom.mainonly,0,java.lang.OutOfMemoryError,synthetic nine,Main.java,90]
+--------- beginning of events
+# negative-case-07 am_low_memory is advisory
+07-26 19:01:07.000  100  100 I am_low_memory: [8]
+# negative-case-10 malformed am_crash in an authenticated events span
+07-26 19:01:10.000  100  100 I am_crash: [810,com.example.oom.malformed,0,java.lang.OutOfMemoryError,synthetic ten,Malformed.java,100
