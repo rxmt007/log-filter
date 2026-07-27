@@ -99,6 +99,7 @@ impl CorrelationProcessName {
 enum CorrelationSource {
     Body,
     Structured,
+    Signal,
     Direct,
 }
 
@@ -107,7 +108,8 @@ impl CorrelationSource {
         match self {
             Self::Body => 1 << 0,
             Self::Structured => 1 << 1,
-            Self::Direct => 1 << 2,
+            Self::Signal => 1 << 2,
+            Self::Direct => 1 << 3,
         }
     }
 
@@ -115,7 +117,8 @@ impl CorrelationSource {
         match self {
             Self::Body => 0,
             Self::Structured => 1,
-            Self::Direct => 2,
+            Self::Signal => 2,
+            Self::Direct => 3,
         }
     }
 }
@@ -309,7 +312,9 @@ impl RecognizedProblem {
 
     fn correlation_source(&self) -> CorrelationSource {
         let primary = self.observations[0].reference;
-        if primary.format() == EvidenceFormat::EventLogShapedText
+        if primary.rule() == RuleId::NativeLibcSignalV1 {
+            CorrelationSource::Signal
+        } else if primary.format() == EvidenceFormat::EventLogShapedText
             || primary.rule() == RuleId::ManagedAmCrashV1
         {
             CorrelationSource::Structured
@@ -458,7 +463,7 @@ struct ProvisionalOccurrence {
     problem: RecognizedProblem,
     identity: CorrelationIdentity,
     source_mask: u8,
-    clocks: [Option<CorrelationClock>; 3],
+    clocks: [Option<CorrelationClock>; 4],
     ambiguity_recorded: bool,
 }
 
@@ -469,7 +474,7 @@ impl ProvisionalOccurrence {
         source: CorrelationSource,
         clock: Option<CorrelationClock>,
     ) -> Self {
-        let mut clocks = [None; 3];
+        let mut clocks = [None; 4];
         clocks[source.slot()] = clock;
         Self {
             problem,
@@ -1130,6 +1135,36 @@ impl ProblemEngine {
         }
         while let Some(problem) = self.native.pop_ready() {
             self.admit_provisional(problem, clock, delta);
+        }
+        while let Some(signal) = self.native.pop_signal_ready() {
+            let explicit_process = signal.explicit_process_ref();
+            let (process, process_instance) = match explicit_process {
+                Some(explicit_process) => {
+                    let instance = self
+                        .lifecycle
+                        .tracker()
+                        .active_for_pid(signal.pid())
+                        .filter(|active| active.process_name() == explicit_process)
+                        .map_or(ProcessInstanceKey(0), |active| active.instance().key());
+                    (ProcessFingerprintKey::new(Some(explicit_process)), instance)
+                }
+                None => self
+                    .lifecycle
+                    .tracker()
+                    .active_for_pid(signal.pid())
+                    .map(|active| {
+                        (
+                            ProcessFingerprintKey::new(Some(active.process_name())),
+                            active.instance().key(),
+                        )
+                    })
+                    .unwrap_or_else(|| (ProcessFingerprintKey::unknown(), ProcessInstanceKey(0))),
+            };
+            self.admit_provisional(
+                signal.into_problem(&process, process_instance),
+                clock,
+                delta,
+            );
         }
     }
 
@@ -2329,15 +2364,20 @@ fn recognized_kernel_oom(
         identity_quality,
         fingerprint.finish(),
     );
+    let is_multiline = occurrence.start_line != occurrence.line;
+    let mut evidence = EvidenceFlags::PRIMARY | EvidenceFlags::STRUCTURED;
+    if is_multiline {
+        evidence.insert(EvidenceFlags::MULTILINE);
+    }
     let draft = ProblemEventDraft {
-        start_line: occurrence.line,
+        start_line: occurrence.start_line,
         end_line: occurrence.line,
         anchor_line: occurrence.line,
         anchor_timestamp,
         pid: occurrence.victim_pid,
         process_instance,
         kind: ProblemKind::KernelOomKill,
-        evidence: EvidenceFlags::PRIMARY | EvidenceFlags::STRUCTURED,
+        evidence,
         outcome: OutcomeFlags::KILL_ISSUED,
         boundary: BoundaryFlags::NONE,
     };
@@ -2369,6 +2409,16 @@ fn recognized_kernel_oom(
         provenance,
         EvidencePriority::Outcome,
     ));
+    if is_multiline {
+        problem.push_observation(compact_observation(
+            occurrence.start_line,
+            RuleId::KernelOomKillV1,
+            ObservationRole::Supporting,
+            EvidenceFormat::KernelShapedText,
+            provenance,
+            EvidencePriority::Supporting,
+        ));
+    }
     problem.set_correlation_identity(&process, Some(occurrence.mechanism.token().as_bytes()));
     problem.set_display_summary(&process, Some(occurrence.mechanism.token()));
     problem
@@ -2835,6 +2885,43 @@ mod tests {
     }
 
     #[test]
+    fn kernel_oom_event_range_and_supporting_fact_include_the_earliest_opener() {
+        let kernel = LineProvenance::Known(crate::problems::LogBuffer::Kernel);
+        let mut engine = ProblemEngine::new();
+        for (line, raw) in [
+            (
+                0,
+                "07-26 12:00:00.000  0  0 E kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null)",
+            ),
+            (
+                1,
+                "07-26 12:00:00.001  0  0 I kernel: synthetic kernel task dump",
+            ),
+            (
+                2,
+                "07-26 12:00:00.002  0  0 E kernel: Killed process 333 (com.example.kernel) total-vm:42kB",
+            ),
+        ] {
+            feed_with_provenance(&mut engine, line, raw, kernel);
+        }
+        engine.finish_input();
+
+        assert_eq!(engine.stats().stored_occurrence_count, 1);
+        let event = engine.event(ProblemEventId(0)).unwrap();
+        assert_eq!(
+            (event.start_line(), event.end_line(), event.anchor_line()),
+            (0, 2, 2)
+        );
+        assert!(event.evidence().contains(EvidenceFlags::MULTILINE));
+        let observations = engine.event_observations(ProblemEventId(0)).unwrap();
+        assert!(observations.iter().any(|fact| {
+            fact.line() == 0
+                && fact.rule() == RuleId::KernelOomKillV1
+                && fact.role() == ObservationRole::Supporting
+        }));
+    }
+
+    #[test]
     fn restart_group_ignores_pid_elapsed_time_and_thirty_second_facet() {
         let mut engine = ProblemEngine::new();
         for (line, raw) in [
@@ -3023,6 +3110,113 @@ mod tests {
         assert!(observations
             .iter()
             .any(|fact| fact.rule() == RuleId::ManagedAmCrashV1));
+    }
+
+    #[test]
+    fn libc_fatal_signal_uses_the_active_process_and_merges_with_its_tombstone() {
+        let mut engine = ProblemEngine::new();
+        for (line, raw, provenance) in [
+            (
+                0,
+                "07-26 12:00:00.000  100  100 I ActivityManager: Start proc 321:com.example.native/u0a123 for service",
+                LineProvenance::Known(crate::problems::LogBuffer::System),
+            ),
+            (
+                1,
+                "07-26 12:00:00.001  321  322 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0 in tid 322 (worker)",
+                LineProvenance::Known(crate::problems::LogBuffer::Crash),
+            ),
+            (
+                2,
+                "07-26 12:00:00.002   99   99 F DEBUG: *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***",
+                LineProvenance::Known(crate::problems::LogBuffer::Crash),
+            ),
+            (
+                3,
+                "07-26 12:00:00.003   99   99 F DEBUG: pid: 321, tid: 322, name: worker  >>> com.example.native <<<",
+                LineProvenance::Known(crate::problems::LogBuffer::Crash),
+            ),
+            (
+                4,
+                "07-26 12:00:00.004   99   99 F DEBUG: signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0",
+                LineProvenance::Known(crate::problems::LogBuffer::Crash),
+            ),
+        ] {
+            feed_with_provenance(&mut engine, line, raw, provenance);
+        }
+        engine.finish_input();
+
+        assert_eq!(engine.stats().stored_occurrence_count, 1);
+        let event = engine.event(ProblemEventId(0)).unwrap();
+        assert_eq!(event.kind(), ProblemKind::NativeCrash);
+        assert_eq!((event.start_line(), event.end_line()), (1, 4));
+        assert_ne!(event.process_instance(), ProcessInstanceKey(0));
+        let group = engine
+            .group(GroupId::from_raw(event.group_id_raw()))
+            .unwrap();
+        assert_eq!(group.key.signature_quality(), SignatureQuality::SignalOnly);
+        assert_eq!(group.key.identity_quality(), IdentityQuality::KnownProcess);
+        assert_eq!(group.process_summary.as_str(), "com.example.native");
+        let observations = engine.event_observations(ProblemEventId(0)).unwrap();
+        assert!(observations
+            .iter()
+            .any(|fact| fact.rule() == RuleId::NativeLibcSignalV1));
+        assert!(observations
+            .iter()
+            .any(|fact| fact.rule() == RuleId::NativeTombstoneV1));
+    }
+
+    #[test]
+    fn unmapped_libc_signals_are_unknown_separate_occurrences_and_spoofs_are_rejected() {
+        let mut engine = ProblemEngine::new();
+        for (line, raw) in [
+            (
+                0,
+                "07-26 12:00:00.000  777  778 F libc: Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 778 (worker)",
+            ),
+            (
+                1,
+                "07-26 12:00:00.001  777  778 F libc: Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 778 (worker)",
+            ),
+            (
+                2,
+                "07-26 12:00:00.002  777  778 E libc: Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE)",
+            ),
+            (
+                3,
+                "07-26 12:00:00.003  777  778 F libc: Fatal signal 11 (SIGABRT), code 1 (SEGV_MAPERR)",
+            ),
+            (
+                4,
+                "07-26 12:00:00.004  777  778 F App: Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE)",
+            ),
+        ] {
+            feed_with_provenance(&mut engine, line, raw, LineProvenance::Unknown);
+        }
+        engine.finish_input();
+
+        assert_eq!(engine.stats().stored_occurrence_count, 2);
+        assert_eq!(engine.stats().stored_group_count, 1);
+        for event in stored_events(&engine) {
+            assert_eq!(event.kind(), ProblemKind::NativeCrash);
+            assert_eq!(event.process_instance(), ProcessInstanceKey(0));
+        }
+        let event = engine.event(ProblemEventId(0)).unwrap();
+        let group = engine
+            .group(GroupId::from_raw(event.group_id_raw()))
+            .unwrap();
+        assert_eq!(group.key.signature_quality(), SignatureQuality::SignalOnly);
+        assert_eq!(
+            group.key.identity_quality(),
+            IdentityQuality::UnknownProcess
+        );
+        assert_eq!(group.observed_occurrence_count, 2);
+        assert_eq!(group.process_summary.as_str(), "");
+        assert!(engine
+            .event_observations(ProblemEventId(0))
+            .unwrap()
+            .iter()
+            .all(|fact| fact.rule() == RuleId::NativeLibcSignalV1));
     }
 
     #[test]
@@ -3319,6 +3513,94 @@ mod tests {
         assert!(observations
             .iter()
             .any(|fact| fact.role() == ObservationRole::Death));
+    }
+
+    #[test]
+    fn recoverable_native_crash_preserves_recovery_death_and_conflict_facts() {
+        let events = LineProvenance::Known(crate::problems::LogBuffer::Events);
+        let mut engine = ProblemEngine::new();
+        for (line, raw) in [
+            (
+                0,
+                "07-26 12:00:00.000  100  100 I am_proc_start: [321,10321,com.example.native,activity,com.example/.Main]",
+            ),
+            (
+                1,
+                "07-26 12:00:00.001  100  100 I am_crash: [321,com.example.native,0,Native crash,signal 11,libexample.so,60,1]",
+            ),
+            (
+                2,
+                "07-26 12:00:00.002  100  100 I am_proc_died: [321,com.example.native]",
+            ),
+        ] {
+            feed_with_provenance(&mut engine, line, raw, events);
+        }
+        engine.finish_input();
+
+        assert_eq!(engine.stats().stored_occurrence_count, 1);
+        let event = engine.event(ProblemEventId(0)).unwrap();
+        assert_eq!(event.kind(), ProblemKind::NativeCrash);
+        assert!(event
+            .outcome()
+            .contains(OutcomeFlags::EXPLICITLY_RECOVERABLE));
+        assert!(event.outcome().contains(OutcomeFlags::DEATH_OBSERVED));
+        assert!(event.outcome().contains(OutcomeFlags::CONFLICT));
+        assert!(engine
+            .event_observations(ProblemEventId(0))
+            .unwrap()
+            .iter()
+            .any(|fact| fact.role() == ObservationRole::Death));
+    }
+
+    #[test]
+    fn lmk_and_kernel_oom_kills_keep_kill_issued_separate_from_observed_death() {
+        let events = LineProvenance::Known(crate::problems::LogBuffer::Events);
+        for (expected_kind, kill_line, kill_provenance, pid, process) in [
+            (
+                ProblemKind::LmkKill,
+                "07-26 12:00:00.001  900  900 I lmkd: Kill 'com.example.lmk' (222), uid 10222, oom_score_adj 900 to free 42kB rss, 0kB swap; reason: low watermark",
+                LineProvenance::Unknown,
+                222,
+                "com.example.lmk",
+            ),
+            (
+                ProblemKind::KernelOomKill,
+                "07-26 12:00:00.001    0    0 E kernel: Out of memory: Killed process 333 (com.example.kernel) total-vm:42kB",
+                LineProvenance::Known(crate::problems::LogBuffer::Kernel),
+                333,
+                "com.example.kernel",
+            ),
+        ] {
+            let mut engine = ProblemEngine::new();
+            let start = format!(
+                "07-26 12:00:00.000  100  100 I am_proc_start: [{pid},{},\
+                 {process},activity,com.example/.Main]",
+                10_000 + pid
+            );
+            let death = format!(
+                "07-26 12:00:00.002  100  100 I am_proc_died: [{pid},{process}]"
+            );
+            feed_with_provenance(&mut engine, 0, &start, events);
+            feed_with_provenance(&mut engine, 1, kill_line, kill_provenance);
+            feed_with_provenance(&mut engine, 2, &death, events);
+            engine.finish_input();
+
+            assert_eq!(
+                engine.stats().stored_occurrence_count,
+                1,
+                "{expected_kind:?}"
+            );
+            let event = engine.event(ProblemEventId(0)).unwrap();
+            assert_eq!(event.kind(), expected_kind);
+            assert!(event.outcome().contains(OutcomeFlags::KILL_ISSUED));
+            assert!(event.outcome().contains(OutcomeFlags::DEATH_OBSERVED));
+            assert!(!event.outcome().contains(OutcomeFlags::CONFLICT));
+            assert!(engine
+                .event_observations(ProblemEventId(0))
+                .unwrap()
+                .iter()
+                .any(|fact| fact.role() == ObservationRole::Death));
+        }
     }
 
     #[test]

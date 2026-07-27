@@ -1,2 +1,50 @@
-observed=10 stored=10 kind=Anr
-snapshot-blake3=d16be64b7b80c9326dc29f3bc539af292473816a3fcc4e685995faf59bd56c5d
+stats observed=10 stored=10 groups=9 dropped=0 correlation_limited=false identity_limited=false
+group id=3 kind=Anr fingerprint_version=1 fingerprint=10962acc6294c2b71d52fafef55f0e2c quality=StructuredFields/KnownProcess process="com.example.anr.commas" signature="input-dispatch-timeout" count=1/1/0 first=10 last=10 first_ts=21654005001 last_ts=21654005001
+  event id=4 kind=Anr range=10..=10 anchor=10 pid=205 instance=5 group=3 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=10 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=10 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=10 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=7 kind=Anr fingerprint_version=1 fingerprint=35fe4c714b82bbaba58eaa341fb2ac36 quality=Minimal/KnownProcess process="com.example.anr.dashed-process" signature="ANR" count=1/1/0 first=18 last=18 first_ts=21654009001 last_ts=21654009001
+  event id=8 kind=Anr range=18..=18 anchor=18 pid=209 instance=9 group=7 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=18 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=18 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=18 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=8 kind=Anr fingerprint_version=1 fingerprint=e48d80277332c2fbc1c7e0de84ad3cbc quality=Minimal/KnownProcess process="com.example.anr.distinct" signature="ANR" count=1/1/0 first=20 last=20 first_ts=21654010001 last_ts=21654010001
+  event id=9 kind=Anr range=20..=20 anchor=20 pid=210 instance=10 group=8 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=20 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=20 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=20 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=5 kind=Anr fingerprint_version=1 fingerprint=599145115ee31dfa7a857c51db57f446 quality=Minimal/KnownProcess process="com.example.anr.generic" signature="ANR" count=1/1/0 first=14 last=14 first_ts=21654007001 last_ts=21654007001
+  event id=6 kind=Anr range=14..=14 anchor=14 pid=207 instance=7 group=5 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=14 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=14 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=14 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=4 kind=Anr fingerprint_version=1 fingerprint=6ed263ea95ee243e1ea2bb4585b48efc quality=StructuredFields/KnownProcess process="com.example.anr.provider" signature="content-provider-timeout" count=1/1/0 first=12 last=12 first_ts=21654006001 last_ts=21654006001
+  event id=5 kind=Anr range=12..=12 anchor=12 pid=206 instance=6 group=4 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=12 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=12 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=12 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=6 kind=Anr fingerprint_version=1 fingerprint=1ab626d8d35a0770a247deac5afad2f5 quality=StructuredFields/KnownProcess process="com.example.anr.remote:worker" signature="input-dispatch-timeout" count=1/1/0 first=16 last=16 first_ts=21654008001 last_ts=21654008001
+  event id=7 kind=Anr range=16..=16 anchor=16 pid=208 instance=8 group=6 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=16 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=16 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=16 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=1 kind=Anr fingerprint_version=1 fingerprint=466fa957984aabad5ccd0b0b8c34e0f3 quality=Minimal/KnownProcess process="com.example.anr.same" signature="ANR" count=1/1/0 first=6 last=6 first_ts=21654003001 last_ts=21654003001
+  event id=2 kind=Anr range=6..=6 anchor=6 pid=203 instance=3 group=1 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=6 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=6 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=6 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=0 kind=Anr fingerprint_version=1 fingerprint=9649eb1a6958a9f9e117a1c4eaf118b1 quality=StructuredFields/KnownProcess process="com.example.anr.same" signature="input-dispatch-timeout" count=2/2/0 first=2 last=4 first_ts=21654001001 last_ts=21654002001
+  event id=0 kind=Anr range=2..=2 anchor=2 pid=201 instance=1 group=0 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=2 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=2 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=2 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+  event id=1 kind=Anr range=4..=4 anchor=4 pid=202 instance=2 group=0 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=4 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=4 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=4 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
+group id=2 kind=Anr fingerprint_version=1 fingerprint=284a481fb69fa333fb3bc3b6b5dd4448 quality=StructuredFields/KnownProcess process="com.example.anr.user" signature="service:com.example.anr.user/.Worker" count=1/1/0 first=8 last=8 first_ts=21654004001 last_ts=21654004001
+  event id=3 kind=Anr range=8..=8 anchor=8 pid=204 instance=4 group=2 observations=3/3 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=8 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=8 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=8 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)

@@ -1,2 +1,50 @@
-observed=10 stored=10 kind=LmkKill
-snapshot-blake3=7a07439524fdf87206dcd9755572e0f4312e6771caba7a4c1b00402400b7eaad
+stats observed=10 stored=10 groups=9 dropped=0 correlation_limited=false identity_limited=false
+group id=6 kind=LmkKill fingerprint_version=1 fingerprint=c7d52ead0778a01ba737557155296f0c quality=StructuredFields/KnownProcess process="com.example.memory.dashed-process" signature="userspace-lmkd" count=1/1/0 first=16 last=16 first_ts=21664808001 last_ts=21664808001
+  event id=7 kind=LmkKill range=16..=16 anchor=16 pid=608 instance=8 group=6 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=16 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=16 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=16 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
+group id=7 kind=LmkKill fingerprint_version=1 fingerprint=d3e95a54d6c55e2f5153bba6da7fcce0 quality=StructuredFields/KnownProcess process="com.example.memory.legacy" signature="legacy-kernel-lowmemorykiller" count=1/1/0 first=18 last=18 first_ts=21664809001 last_ts=21664809001
+  event id=8 kind=LmkKill range=18..=18 anchor=18 pid=609 instance=9 group=7 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=18 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=18 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=18 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+group id=8 kind=LmkKill fingerprint_version=1 fingerprint=50d0c523a2fd202e31ef9b47fe8bb920 quality=StructuredFields/KnownProcess process="com.example.memory.legacy2" signature="legacy-kernel-lowmemorykiller" count=1/1/0 first=20 last=20 first_ts=21664810001 last_ts=21664810001
+  event id=9 kind=LmkKill range=20..=20 anchor=20 pid=610 instance=10 group=8 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=20 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=20 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=20 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+group id=2 kind=LmkKill fingerprint_version=1 fingerprint=ed1b78a1a5c40c4b542a80dc0c16426d quality=StructuredFields/KnownProcess process="com.example.memory.pressure" signature="userspace-lmkd" count=1/1/0 first=8 last=8 first_ts=21664804001 last_ts=21664804001
+  event id=3 kind=LmkKill range=8..=8 anchor=8 pid=604 instance=4 group=2 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=8 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=8 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=8 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
+group id=4 kind=LmkKill fingerprint_version=1 fingerprint=1171891bc9fb59b75b2f76dba1a9d16d quality=StructuredFields/KnownProcess process="com.example.memory.reclaim" signature="userspace-lmkd" count=1/1/0 first=12 last=12 first_ts=21664806001 last_ts=21664806001
+  event id=5 kind=LmkKill range=12..=12 anchor=12 pid=606 instance=6 group=4 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=12 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=12 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=12 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
+group id=5 kind=LmkKill fingerprint_version=1 fingerprint=dcb0971f997f48c7704971e22c80c572 quality=StructuredFields/KnownProcess process="com.example.memory.remote:worker" signature="userspace-lmkd" count=1/1/0 first=14 last=14 first_ts=21664807001 last_ts=21664807001
+  event id=6 kind=LmkKill range=14..=14 anchor=14 pid=607 instance=7 group=5 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=14 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=14 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=14 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
+group id=0 kind=LmkKill fingerprint_version=1 fingerprint=c52d9a4557ca66349fb4fec5369c9036 quality=StructuredFields/KnownProcess process="com.example.memory.same" signature="userspace-lmkd" count=2/2/0 first=2 last=4 first_ts=21664801001 last_ts=21664802001
+  event id=0 kind=LmkKill range=2..=2 anchor=2 pid=601 instance=1 group=0 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=2 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=2 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=2 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
+  event id=1 kind=LmkKill range=4..=4 anchor=4 pid=602 instance=2 group=0 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=4 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=4 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=4 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
+group id=3 kind=LmkKill fingerprint_version=1 fingerprint=b54a9fe4ea9d7e046a4b312e81c612c5 quality=StructuredFields/KnownProcess process="com.example.memory.swap" signature="userspace-lmkd" count=1/1/0 first=10 last=10 first_ts=21664805001 last_ts=21664805001
+  event id=4 kind=LmkKill range=10..=10 anchor=10 pid=605 instance=5 group=3 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=10 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=10 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=10 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
+group id=1 kind=LmkKill fingerprint_version=1 fingerprint=0e8e1e255efe62dcd1f5c135677e7710 quality=StructuredFields/KnownProcess process="com.example.memory.thrashing" signature="userspace-lmkd" count=1/1/0 first=6 last=6 first_ts=21664803001 last_ts=21664803001
+  event id=2 kind=LmkKill range=6..=6 anchor=6 pid=603 instance=3 group=1 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=6 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=6 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=6 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)

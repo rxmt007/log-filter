@@ -4,7 +4,10 @@ use std::str;
 pub const MAX_KERNEL_OOM_INPUT_BYTES: usize = 64 * 1024;
 pub const MAX_KERNEL_PROCESS_NAME_BYTES: usize = 256;
 pub const MAX_PENDING_KERNEL_OOM: usize = 8;
-pub const MAX_KERNEL_OOM_SPAN_LINES: u32 = 64;
+pub const MAX_KERNEL_OOM_SPAN_LINES: u32 = 512;
+
+const OPENER_INVOKED: u8 = 1 << 0;
+const OPENER_CONSTRAINT: u8 = 1 << 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KernelOomMechanism {
@@ -73,6 +76,7 @@ pub struct KernelOomOutcome {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KernelOomOccurrence {
+    pub start_line: u32,
     pub line: u32,
     pub victim_pid: u32,
     pub process: KernelProcessToken,
@@ -83,8 +87,10 @@ pub struct KernelOomOccurrence {
 
 #[derive(Debug, Clone, Copy)]
 struct PendingKernelOom {
-    line: u32,
+    start_line: u32,
+    last_opener_line: u32,
     mechanism: KernelOomMechanism,
+    opener_kinds: u8,
 }
 
 #[derive(Debug)]
@@ -124,26 +130,33 @@ impl KernelOomRecognizer {
             return None;
         }
         self.expire_pending(line);
-        let message = trim_ascii(message);
+        let message = normalize_kernel_message(tag, message);
 
         if let Some(victim) =
             parse_prefixed_victim(message, b"Memory cgroup out of memory: Killed process ")
         {
             self.pending.fill(None);
-            return Some(occurrence(line, victim, KernelOomMechanism::Memcg));
+            return Some(occurrence(line, line, victim, KernelOomMechanism::Memcg));
         }
         if let Some(victim) = parse_prefixed_victim(message, b"Out of memory: Killed process ") {
             self.pending.fill(None);
-            return Some(occurrence(line, victim, KernelOomMechanism::Global));
+            return Some(occurrence(line, line, victim, KernelOomMechanism::Global));
         }
         if let Some(mechanism) = parse_constraint(message) {
-            self.insert_pending(PendingKernelOom { line, mechanism });
+            self.insert_pending(PendingKernelOom {
+                start_line: line,
+                last_opener_line: line,
+                mechanism,
+                opener_kinds: OPENER_CONSTRAINT,
+            });
             return None;
         }
         if contains(message, b"invoked oom-killer:") {
             self.insert_pending(PendingKernelOom {
-                line,
+                start_line: line,
+                last_opener_line: line,
                 mechanism: KernelOomMechanism::Global,
+                opener_kinds: OPENER_INVOKED,
             });
             return None;
         }
@@ -155,7 +168,12 @@ impl KernelOomRecognizer {
                 return None;
             }
             self.pending.fill(None);
-            return Some(occurrence(line, victim, candidate.mechanism));
+            return Some(occurrence(
+                candidate.start_line,
+                line,
+                victim,
+                candidate.mechanism,
+            ));
         }
         None
     }
@@ -184,6 +202,17 @@ impl KernelOomRecognizer {
     }
 
     fn insert_pending(&mut self, pending: PendingKernelOom) {
+        if pending.opener_kinds == OPENER_CONSTRAINT {
+            if let Some(invoked) = self.pending.iter_mut().flatten().find(|candidate| {
+                candidate.opener_kinds == OPENER_INVOKED
+                    && candidate.last_opener_line.checked_add(1) == Some(pending.start_line)
+            }) {
+                invoked.last_opener_line = pending.last_opener_line;
+                invoked.mechanism = pending.mechanism;
+                invoked.opener_kinds |= OPENER_CONSTRAINT;
+                return;
+            }
+        }
         if let Some(slot) = self.pending.iter_mut().find(|slot| slot.is_none()) {
             *slot = Some(pending);
             return;
@@ -194,7 +223,7 @@ impl KernelOomRecognizer {
             .enumerate()
             .min_by_key(|(_, candidate)| {
                 candidate
-                    .map(|candidate| candidate.line)
+                    .map(|candidate| candidate.start_line)
                     .unwrap_or(u32::MAX)
             })
             .map(|(index, _)| index)
@@ -206,7 +235,7 @@ impl KernelOomRecognizer {
     fn expire_pending(&mut self, line: u32) {
         for pending in &mut self.pending {
             if pending.is_some_and(|candidate| {
-                line.saturating_sub(candidate.line) > MAX_KERNEL_OOM_SPAN_LINES
+                line.saturating_sub(candidate.start_line) > MAX_KERNEL_OOM_SPAN_LINES
             }) {
                 *pending = None;
             }
@@ -221,6 +250,7 @@ struct ParsedVictim {
 }
 
 fn occurrence(
+    start_line: u32,
     line: u32,
     victim: ParsedVictim,
     mechanism: KernelOomMechanism,
@@ -230,6 +260,7 @@ fn occurrence(
         mechanism,
     };
     KernelOomOccurrence {
+        start_line,
         line,
         victim_pid: victim.pid,
         process: victim.process,
@@ -240,6 +271,44 @@ fn occurrence(
         },
         fingerprint,
     }
+}
+
+fn normalize_kernel_message<'a>(tag: &str, message: &'a [u8]) -> &'a [u8] {
+    let message = trim_ascii(message);
+    if tag.is_empty() {
+        strip_printk_prefix(message).unwrap_or(message)
+    } else {
+        message
+    }
+}
+
+fn strip_printk_prefix(message: &[u8]) -> Option<&[u8]> {
+    let after_open = message.strip_prefix(b"<")?;
+    let after_level = match after_open {
+        [level @ b'0'..=b'7', b'>', remaining @ ..] => {
+            let _ = level;
+            remaining
+        }
+        _ => return None,
+    };
+    let timestamp_and_message = after_level.strip_prefix(b"[")?;
+    let close = timestamp_and_message
+        .iter()
+        .position(|byte| *byte == b']')?;
+    let timestamp = trim_ascii(&timestamp_and_message[..close]);
+    if timestamp.is_empty()
+        || !timestamp.iter().any(u8::is_ascii_digit)
+        || !timestamp
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || *byte == b'.')
+    {
+        return None;
+    }
+    let after_timestamp = &timestamp_and_message[close + 1..];
+    if !after_timestamp.first().is_some_and(u8::is_ascii_whitespace) {
+        return None;
+    }
+    Some(trim_ascii(after_timestamp))
 }
 
 fn parse_constraint(message: &[u8]) -> Option<KernelOomMechanism> {
@@ -357,6 +426,112 @@ mod tests {
         assert_ne!(global.fingerprint, memcg.fingerprint);
         assert!(!global.outcome.death_observed);
         assert!(!memcg.outcome.death_observed);
+    }
+
+    #[test]
+    fn known_raw_printk_prefix_is_removed_before_exact_grammar_but_unknown_is_rejected() {
+        let kernel = LineProvenance::Known(LogBuffer::Kernel);
+        let direct = KernelOomRecognizer::new()
+            .observe(
+                1,
+                "",
+                b"<3>[  12.345678] Out of memory: Killed process 42 (com.example.raw) total-vm:99999kB",
+                kernel,
+            )
+            .expect("known raw printk direct victim");
+        assert_eq!(direct.mechanism, KernelOomMechanism::Global);
+        assert_eq!(direct.process.as_str(), "com.example.raw");
+
+        let mut paired = KernelOomRecognizer::new();
+        assert!(paired
+            .observe(
+                10,
+                "",
+                b"<3>[  12.400000] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null)",
+                kernel,
+            )
+            .is_none());
+        let memcg = paired
+            .observe(
+                11,
+                "",
+                b"<3>[  12.400001] Killed process 43 (com.example.raw.memcg) total-vm:1kB",
+                kernel,
+            )
+            .expect("known raw printk constraint and victim");
+        assert_eq!(memcg.mechanism, KernelOomMechanism::Memcg);
+
+        assert!(KernelOomRecognizer::new()
+            .observe(
+                1,
+                "",
+                b"<3>[  12.345678] Out of memory: Killed process 42 (com.example.raw)",
+                LineProvenance::Unknown,
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn consecutive_invoked_and_constraint_openers_form_one_episode() {
+        let kernel = LineProvenance::Known(LogBuffer::Kernel);
+        let mut recognizer = KernelOomRecognizer::new();
+        assert!(recognizer
+            .observe(
+                10,
+                "kernel",
+                b"synthetic-worker invoked oom-killer: gfp_mask=0x0",
+                kernel,
+            )
+            .is_none());
+        assert!(recognizer
+            .observe(
+                11,
+                "kernel",
+                b"oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null)",
+                kernel,
+            )
+            .is_none());
+        assert_eq!(recognizer.pending_count(), 1);
+
+        let occurrence = recognizer
+            .observe(
+                12,
+                "kernel",
+                b"Killed process 44 (com.example.combined) total-vm:42kB",
+                kernel,
+            )
+            .expect("one victim resolves the combined episode");
+        assert_eq!(occurrence.mechanism, KernelOomMechanism::Memcg);
+        assert_eq!(recognizer.ambiguity_count(), 0);
+        assert_eq!(recognizer.pending_count(), 0);
+    }
+
+    #[test]
+    fn pending_episode_accepts_511_and_512_lines_but_expires_at_513() {
+        let kernel = LineProvenance::Known(LogBuffer::Kernel);
+        for (victim_line, expected) in [(511, true), (512, true), (513, false)] {
+            let mut recognizer = KernelOomRecognizer::new();
+            assert!(recognizer
+                .observe(
+                    0,
+                    "kernel",
+                    b"oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null)",
+                    kernel,
+                )
+                .is_none());
+            assert_eq!(
+                recognizer
+                    .observe(
+                        victim_line,
+                        "kernel",
+                        b"Killed process 45 (com.example.boundary) total-vm:42kB",
+                        kernel,
+                    )
+                    .is_some(),
+                expected,
+                "victim at source-line distance {victim_line}"
+            );
+        }
     }
 
     #[test]
@@ -495,8 +670,10 @@ mod tests {
         }
         assert_eq!(recognizer.pending_count(), MAX_PENDING_KERNEL_OOM);
         assert_eq!(recognizer.pending_eviction_count(), 1);
+        let after_all_pending_windows =
+            MAX_KERNEL_OOM_SPAN_LINES + MAX_PENDING_KERNEL_OOM as u32 + 2;
         recognizer.observe(
-            100,
+            after_all_pending_windows,
             "kernel",
             b"unrelated",
             LineProvenance::Known(LogBuffer::Kernel),

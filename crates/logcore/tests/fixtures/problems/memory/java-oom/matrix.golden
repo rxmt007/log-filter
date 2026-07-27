@@ -1,0 +1,52 @@
+stats observed=10 stored=10 groups=8 dropped=0 correlation_limited=false identity_limited=false
+group id=0 kind=JavaOom fingerprint_version=1 fingerprint=38a6324cd0bf927712e1fab7110d6f6c quality=FullStack/UnknownProcess process="" signature="java.lang.OutOfMemoryError" count=1/1/0 first=20 last=20 first_ts=21668404001 last_ts=21668404001
+  event id=0 kind=JavaOom range=20..=22 anchor=20 pid=100 instance=0 group=0 observations=3/3 evidence=0x5 outcome=0x0 boundary=0x1
+    fact line=20 code=JavaOutOfMemoryError rule=JavaOomV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=21 code=ExceptionTypeRecorded rule=JavaOomV1 role=ExceptionType format=AospText provenance=Known(Main)
+    fact line=22 code=StackFrameRecorded rule=JavaOomV1 role=StackFrame format=AospText provenance=Known(Main)
+group id=2 kind=JavaOom fingerprint_version=1 fingerprint=12aaa402409ac7a386f2a1bd08e6d6ca quality=FullStack/KnownProcess process="com.example.oom.dalvik" signature="java.lang.OutOfMemoryError" count=1/1/0 first=14 last=14 first_ts=21668403001 last_ts=21668403001
+  event id=3 kind=JavaOom range=14..=18 anchor=14 pid=701 instance=0 group=2 observations=5/5 evidence=0x5 outcome=0x0 boundary=0x0
+    fact line=14 code=JavaOutOfMemoryError rule=JavaOomV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=15 code=ProcessIdentityRecorded rule=JavaOomV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=17 code=ExceptionTypeRecorded rule=JavaOomV1 role=ExceptionType format=AospText provenance=Known(Main)
+    fact line=18 code=StackFrameRecorded rule=JavaOomV1 role=StackFrame format=AospText provenance=Known(Main)
+    fact line=16 code=SupportingEvidenceRecorded rule=JavaOomV1 role=Supporting format=AospText provenance=Known(Main)
+group id=3 kind=JavaOom fingerprint_version=1 fingerprint=16dcf9d0acd9e7700b6644e103c584e6 quality=TypeFile/KnownProcess process="com.example.oom.event.same" signature="java.lang.OutOfMemoryError" count=2/2/0 first=25 last=27 first_ts=0 last_ts=0
+  event id=4 kind=JavaOom range=25..=25 anchor=25 pid=705 instance=2 group=3 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=25 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=25 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+  event id=5 kind=JavaOom range=27..=27 anchor=27 pid=706 instance=3 group=3 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=27 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=27 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=4 kind=JavaOom fingerprint_version=1 fingerprint=92b5ed823305a3d2b52503afcbcd8a5d quality=TypeFile/KnownProcess process="com.example.oom.modern" signature="java.lang.OutOfMemoryError" count=1/1/0 first=29 last=29 first_ts=0 last_ts=0
+  event id=6 kind=JavaOom range=29..=29 anchor=29 pid=707 instance=4 group=4 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=29 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=29 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=5 kind=JavaOom fingerprint_version=1 fingerprint=0e881a83edc27301ed9201a3c353cf16 quality=TypeFile/KnownProcess process="com.example.oom.recoverable" signature="java.lang.OutOfMemoryError" count=1/1/0 first=31 last=31 first_ts=0 last_ts=0
+  event id=7 kind=JavaOom range=31..=31 anchor=31 pid=708 instance=5 group=5 observations=2/2 evidence=0x3 outcome=0x10 boundary=0x0
+    fact line=31 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=31 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=7 kind=JavaOom fingerprint_version=1 fingerprint=18f3ecab54cf7a87005eb6e3abb16ae1 quality=TypeOnly/KnownProcess process="com.example.oom.same" signature="java.lang.OutOfMemoryError" count=1/1/0 first=39 last=39 first_ts=21668410001 last_ts=21668410001
+  event id=9 kind=JavaOom range=39..=41 anchor=39 pid=701 instance=1 group=7 observations=3/3 evidence=0x5 outcome=0x0 boundary=0x1
+    fact line=39 code=JavaOutOfMemoryError rule=JavaOomV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=40 code=ProcessIdentityRecorded rule=JavaOomV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=41 code=ExceptionTypeRecorded rule=JavaOomV1 role=ExceptionType format=AospText provenance=Known(Main)
+group id=6 kind=JavaOom fingerprint_version=1 fingerprint=6356a934bcbdac98d9219bb814d0fd08 quality=FullStack/KnownProcess process="com.example.oom.same" signature="java.lang.OutOfMemoryError" count=1/1/0 first=34 last=34 first_ts=21668409001 last_ts=21668409001
+  event id=8 kind=JavaOom range=34..=37 anchor=34 pid=701 instance=1 group=6 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x0
+    fact line=34 code=JavaOutOfMemoryError rule=JavaOomV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=35 code=ProcessIdentityRecorded rule=JavaOomV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=36 code=ExceptionTypeRecorded rule=JavaOomV1 role=ExceptionType format=AospText provenance=Known(Main)
+    fact line=37 code=StackFrameRecorded rule=JavaOomV1 role=StackFrame format=AospText provenance=Known(Main)
+group id=1 kind=JavaOom fingerprint_version=1 fingerprint=2ab0264ef92dd35f8d899b34abde4515 quality=FullStack/KnownProcess process="com.example.oom.same" signature="java.lang.OutOfMemoryError" count=2/2/0 first=2 last=8 first_ts=21668401001 last_ts=21668402001
+  event id=1 kind=JavaOom range=2..=6 anchor=2 pid=701 instance=1 group=1 observations=5/5 evidence=0x5 outcome=0x0 boundary=0x0
+    fact line=2 code=JavaOutOfMemoryError rule=JavaOomV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=3 code=ProcessIdentityRecorded rule=JavaOomV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=5 code=ExceptionTypeRecorded rule=JavaOomV1 role=ExceptionType format=AospText provenance=Known(Main)
+    fact line=6 code=StackFrameRecorded rule=JavaOomV1 role=StackFrame format=AospText provenance=Known(Main)
+    fact line=4 code=SupportingEvidenceRecorded rule=JavaOomV1 role=Supporting format=AospText provenance=Known(Main)
+  event id=2 kind=JavaOom range=8..=12 anchor=8 pid=701 instance=1 group=1 observations=5/5 evidence=0x5 outcome=0x0 boundary=0x0
+    fact line=8 code=JavaOutOfMemoryError rule=JavaOomV1 role=Primary format=AospText provenance=Known(Main)
+    fact line=9 code=ProcessIdentityRecorded rule=JavaOomV1 role=ProcessIdentity format=AospText provenance=Known(Main)
+    fact line=11 code=ExceptionTypeRecorded rule=JavaOomV1 role=ExceptionType format=AospText provenance=Known(Main)
+    fact line=12 code=StackFrameRecorded rule=JavaOomV1 role=StackFrame format=AospText provenance=Known(Main)
+    fact line=10 code=SupportingEvidenceRecorded rule=JavaOomV1 role=Supporting format=AospText provenance=Known(Main)

@@ -1,2 +1,40 @@
-observed=10 stored=10 kind=JavaCrash
-snapshot-blake3=5aaff25f2a226ad6182bb88676ebd5ae5e6bd467d9d90bee3cc9dc4b59fe9f92
+stats observed=10 stored=10 groups=9 dropped=0 correlation_limited=false identity_limited=false
+group id=5 kind=JavaCrash fingerprint_version=1 fingerprint=e34480b92e5aac4a30fe4066d57c9b86 quality=TypeFile/KnownProcess process="com.example.java.commas" signature="java.lang.UnsupportedOperationException" count=1/1/0 first=14 last=14 first_ts=0 last_ts=0
+  event id=6 kind=JavaCrash range=14..=14 anchor=14 pid=107 instance=7 group=5 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=14 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=14 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=8 kind=JavaCrash fingerprint_version=1 fingerprint=60acc82763469da0f60f7d4a55bd27cc quality=TypeFile/KnownProcess process="com.example.java.distinct" signature="java.lang.IllegalStateException" count=1/1/0 first=20 last=20 first_ts=0 last_ts=0
+  event id=9 kind=JavaCrash range=20..=20 anchor=20 pid=110 instance=10 group=8 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=20 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=20 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=3 kind=JavaCrash fingerprint_version=1 fingerprint=cbbaf716b6a20b23b84eccd0a29f0822 quality=TypeFile/KnownProcess process="com.example.java.modern" signature="java.lang.IndexOutOfBoundsException" count=1/1/0 first=10 last=10 first_ts=0 last_ts=0
+  event id=4 kind=JavaCrash range=10..=10 anchor=10 pid=105 instance=5 group=3 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=10 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=10 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=7 kind=JavaCrash fingerprint_version=1 fingerprint=0db163e512c51880d6557cdaf1344d20 quality=TypeFile/KnownProcess process="com.example.java.nested" signature="com.example.java.SyntheticException" count=1/1/0 first=18 last=18 first_ts=0 last_ts=0
+  event id=8 kind=JavaCrash range=18..=18 anchor=18 pid=109 instance=9 group=7 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=18 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=18 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=4 kind=JavaCrash fingerprint_version=1 fingerprint=8bf47d249b8bdbf683d5ba027cc4a17b quality=TypeFile/KnownProcess process="com.example.java.recoverable" signature="java.lang.SecurityException" count=1/1/0 first=12 last=12 first_ts=0 last_ts=0
+  event id=5 kind=JavaCrash range=12..=12 anchor=12 pid=106 instance=6 group=4 observations=2/2 evidence=0x3 outcome=0x10 boundary=0x0
+    fact line=12 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=12 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=1 kind=JavaCrash fingerprint_version=1 fingerprint=0c1d447ad99f3e7091c679e9b6c62b55 quality=TypeFile/KnownProcess process="com.example.java.same" signature="java.lang.IllegalStateException" count=1/1/0 first=6 last=6 first_ts=0 last_ts=0
+  event id=2 kind=JavaCrash range=6..=6 anchor=6 pid=103 instance=3 group=1 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=6 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=6 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=0 kind=JavaCrash fingerprint_version=1 fingerprint=acde479feadd11677f07f6b3885ca3b9 quality=TypeFile/KnownProcess process="com.example.java.same" signature="java.lang.IllegalStateException" count=2/2/0 first=2 last=4 first_ts=0 last_ts=0
+  event id=0 kind=JavaCrash range=2..=2 anchor=2 pid=101 instance=1 group=0 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=2 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=2 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+  event id=1 kind=JavaCrash range=4..=4 anchor=4 pid=102 instance=2 group=0 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=4 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=4 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=6 kind=JavaCrash fingerprint_version=1 fingerprint=84f8832bfebb045c76c832465f2cf564 quality=TypeOnly/KnownProcess process="com.example.java.typeonly" signature="java.lang.AssertionError" count=1/1/0 first=16 last=16 first_ts=0 last_ts=0
+  event id=7 kind=JavaCrash range=16..=16 anchor=16 pid=108 instance=8 group=6 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=16 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=16 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=2 kind=JavaCrash fingerprint_version=1 fingerprint=26cce7bd351441d3d4cab0f786088b22 quality=TypeFile/KnownProcess process="com.example.java.user" signature="java.lang.IllegalArgumentException" count=1/1/0 first=8 last=8 first_ts=0 last_ts=0
+  event id=3 kind=JavaCrash range=8..=8 anchor=8 pid=104 instance=4 group=2 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=8 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=8 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)

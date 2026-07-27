@@ -25,6 +25,84 @@ struct EvidencePoint {
     provenance: LineProvenance,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LibcSignalObservation {
+    point: EvidencePoint,
+    anchor_timestamp: PackedLogTimestamp,
+    pid: u32,
+    signal: FatalSignal,
+    explicit_process: FixedText<MAX_PROCESS_NAME>,
+}
+
+impl LibcSignalObservation {
+    pub(crate) const fn pid(self) -> u32 {
+        self.pid
+    }
+
+    pub(crate) fn explicit_process_ref(&self) -> Option<&str> {
+        (!self.explicit_process.is_empty()).then(|| self.explicit_process.as_str())
+    }
+
+    pub(crate) fn into_problem(
+        self,
+        process: &ProcessFingerprintKey,
+        process_instance: ProcessInstanceKey,
+    ) -> RecognizedProblem {
+        let identity_quality = process.identity_quality();
+        let signature_quality = SignatureQuality::SignalOnly;
+        let mut fingerprint = FingerprintBuilder::new(
+            ProblemKind::NativeCrash,
+            FINGERPRINT_VERSION,
+            signature_quality,
+            identity_quality,
+            process,
+        );
+        fingerprint.token(FingerprintTokenKind::Signal, self.signal.canonical());
+        let group_key = GroupKey::new(
+            ProblemKind::NativeCrash,
+            FINGERPRINT_VERSION,
+            signature_quality,
+            identity_quality,
+            fingerprint.finish(),
+        );
+        let draft = ProblemEventDraft {
+            start_line: self.point.line,
+            end_line: self.point.line,
+            anchor_line: self.point.line,
+            anchor_timestamp: self.anchor_timestamp,
+            pid: self.pid,
+            process_instance,
+            kind: ProblemKind::NativeCrash,
+            evidence: EvidenceFlags::PRIMARY,
+            outcome: OutcomeFlags::NONE,
+            boundary: BoundaryFlags::NONE,
+        };
+        let primary = libc_observation(
+            self.point,
+            ObservationRole::Primary,
+            EvidencePriority::MinimumGrammar,
+        );
+        let mut problem = RecognizedProblem::new(draft, group_key, primary);
+        problem.push_observation(libc_observation(
+            self.point,
+            ObservationRole::Signal,
+            EvidencePriority::MinimumGrammar,
+        ));
+        if !self.explicit_process.is_empty() {
+            problem.push_observation(libc_observation(
+                self.point,
+                ObservationRole::ProcessIdentity,
+                EvidencePriority::MinimumGrammar,
+            ));
+        }
+        if !process.is_unknown() {
+            problem.set_correlation_identity(process, Some(self.signal.canonical()));
+        }
+        problem.set_display_summary(process, std::str::from_utf8(self.signal.canonical()).ok());
+        problem
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FatalSignal {
     Ill,
@@ -281,6 +359,7 @@ impl NativePending {
 #[derive(Debug, Default)]
 pub(crate) struct NativeRecognizer {
     pending: Option<NativePending>,
+    signal_ready: Option<LibcSignalObservation>,
     ready: VecDeque<RecognizedProblem>,
 }
 
@@ -288,12 +367,17 @@ impl NativeRecognizer {
     pub(crate) const fn new() -> Self {
         Self {
             pending: None,
+            signal_ready: None,
             ready: VecDeque::new(),
         }
     }
 
     pub(crate) const fn has_pending(&self) -> bool {
         self.pending.is_some()
+    }
+
+    pub(crate) fn pop_signal_ready(&mut self) -> Option<LibcSignalObservation> {
+        self.signal_ready.take()
     }
 
     fn finalize(&mut self, boundary: BoundaryFlags) {
@@ -309,6 +393,10 @@ impl NativeRecognizer {
 
 impl ProblemRecognizer for NativeRecognizer {
     fn observe(&mut self, line: &ObservedLine<'_>) {
+        if let Some(signal) = recognize_libc_signal(line) {
+            self.signal_ready = Some(signal);
+            return;
+        }
         if let Some(problem) = recognize_native_am_crash(line) {
             self.finalize(BoundaryFlags::NONE);
             self.ready.push_back(problem);
@@ -379,12 +467,41 @@ impl ProblemRecognizer for NativeRecognizer {
 
     fn reset(&mut self) {
         self.pending = None;
+        self.signal_ready = None;
         self.ready.clear();
     }
 
     fn pop_ready(&mut self) -> Option<RecognizedProblem> {
         self.ready.pop_front()
     }
+}
+
+fn recognize_libc_signal(line: &ObservedLine<'_>) -> Option<LibcSignalObservation> {
+    if line.parsed.tag != "libc"
+        || line.parsed.level != "F"
+        || line.raw.len() > MAX_NATIVE_LINE_BYTES
+    {
+        return None;
+    }
+    let message = trim_ascii(line.parsed.message);
+    let signal = parse_fatal_signal(message.strip_prefix("Fatal ")?)?;
+    let pid = parse_pid(line.parsed.pid)?;
+    let explicit_process = parse_libc_process(message, pid)?;
+    let mut process = FixedText::default();
+    if let Some(explicit_process) = explicit_process {
+        process.set(explicit_process).then_some(())?;
+    }
+    Some(LibcSignalObservation {
+        point: EvidencePoint {
+            line: line.line,
+            provenance: line.provenance,
+        },
+        anchor_timestamp: parse_log_timestamp(line.parsed.date, line.parsed.time)
+            .unwrap_or_default(),
+        pid,
+        signal,
+        explicit_process: process,
+    })
 }
 
 fn recognize_native_am_crash(line: &ObservedLine<'_>) -> Option<RecognizedProblem> {
@@ -470,6 +587,24 @@ fn recognize_native_am_crash(line: &ObservedLine<'_>) -> Option<RecognizedProble
     Some(problem)
 }
 
+fn libc_observation(
+    point: EvidencePoint,
+    role: ObservationRole,
+    priority: EvidencePriority,
+) -> ObservationCandidate {
+    ObservationCandidate::new(
+        ObservationRef::new(
+            point.line,
+            RuleId::NativeLibcSignalV1,
+            role,
+            EvidenceFormat::AospText,
+            point.provenance,
+        )
+        .expect("libc fatal-signal roles are covered by the fact map"),
+        priority,
+    )
+}
+
 fn observation(
     point: EvidencePoint,
     role: ObservationRole,
@@ -544,6 +679,18 @@ fn parse_fatal_signal(message: &str) -> Option<FatalSignal> {
         (31, "SIGSYS") => Some(FatalSignal::Sys),
         _ => None,
     }
+}
+
+fn parse_libc_process(message: &str, expected_pid: u32) -> Option<Option<&str>> {
+    let Some((_, rest)) = message.rsplit_once(", pid ") else {
+        return Some(None);
+    };
+    let (pid, process) = rest.split_once(" (")?;
+    if parse_pid(pid)? != expected_pid {
+        return None;
+    }
+    let process = process.strip_suffix(')')?;
+    valid_process_name(process).then_some(Some(process))
 }
 
 fn normalize_native_frame(message: &str) -> Option<FixedText<MAX_FRAME_TOKEN>> {

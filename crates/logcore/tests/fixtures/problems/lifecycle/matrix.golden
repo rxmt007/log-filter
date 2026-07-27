@@ -1,2 +1,61 @@
-observed=10 stored=10 kind=ProcessRestart
-snapshot-blake3=024f7c286d380a17f6c7b8c16f806acceaf4b66ef83ec553ef877c10a1449cbc
+stats observed=10 stored=10 groups=10 dropped=0 correlation_limited=false identity_limited=false
+group id=5 kind=ProcessRestart fingerprint_version=1 fingerprint=4eac83782e23d73e93c1ae083e88cf3a quality=StructuredFields/KnownProcess process="com.example.lifecycle.activity" signature="start-after-death" count=1/1/0 first=24 last=24 first_ts=21661206201 last_ts=21661206201
+  event id=5 kind=ProcessRestart range=23..=24 anchor=24 pid=451 instance=11 group=5 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=24 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=24 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=23 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=24 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=8 kind=ProcessRestart fingerprint_version=1 fingerprint=c13226394c8b783c104bb0dab83dfd85 quality=StructuredFields/KnownProcess process="com.example.lifecycle.broadcast" signature="start-after-death" count=1/1/0 first=36 last=36 first_ts=21661209201 last_ts=21661209201
+  event id=8 kind=ProcessRestart range=35..=36 anchor=36 pid=481 instance=17 group=8 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=36 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=36 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=35 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=36 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=9 kind=ProcessRestart fingerprint_version=1 fingerprint=5d4e7f591176b181cb78a33451a251c3 quality=StructuredFields/KnownProcess process="com.example.lifecycle.final" signature="start-after-death" count=1/1/0 first=40 last=40 first_ts=21661210201 last_ts=21661210201
+  event id=9 kind=ProcessRestart range=39..=40 anchor=40 pid=491 instance=19 group=9 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=40 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=40 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=39 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=40 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=2 kind=ProcessRestart fingerprint_version=1 fingerprint=3fb6e6c1855d5b4d664816d86283a617 quality=StructuredFields/KnownProcess process="com.example.lifecycle.legacy" signature="start-after-death" count=1/1/0 first=12 last=12 first_ts=21661203201 last_ts=21661203201
+  event id=2 kind=ProcessRestart range=11..=12 anchor=12 pid=421 instance=5 group=2 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=12 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=12 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=11 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=12 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=3 kind=ProcessRestart fingerprint_version=1 fingerprint=1fa5721a3062629958023f6781677ea3 quality=StructuredFields/KnownProcess process="com.example.lifecycle.modern" signature="start-after-death" count=1/1/0 first=16 last=16 first_ts=21661204201 last_ts=21661204201
+  event id=3 kind=ProcessRestart range=15..=16 anchor=16 pid=431 instance=7 group=3 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=16 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=16 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=15 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=16 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=7 kind=ProcessRestart fingerprint_version=1 fingerprint=d066bf7101d3ec96aa1fdf783f08d7d4 quality=StructuredFields/KnownProcess process="com.example.lifecycle.provider" signature="start-after-death" count=1/1/0 first=32 last=32 first_ts=21661208201 last_ts=21661208201
+  event id=7 kind=ProcessRestart range=31..=32 anchor=32 pid=471 instance=15 group=7 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=32 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=32 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=31 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=32 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=4 kind=ProcessRestart fingerprint_version=1 fingerprint=318149891e39a25b78d6ecaa8faf3d06 quality=StructuredFields/KnownProcess process="com.example.lifecycle.remote:worker" signature="start-after-death" count=1/1/0 first=20 last=20 first_ts=21661205201 last_ts=21661205201
+  event id=4 kind=ProcessRestart range=19..=20 anchor=20 pid=441 instance=9 group=4 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=20 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=20 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=19 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=20 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=0 kind=ProcessRestart fingerprint_version=1 fingerprint=7b2ed611a6ccc896ccb0b60bfbfec2bb quality=StructuredFields/KnownProcess process="com.example.lifecycle.same" signature="start-after-death" count=1/1/0 first=4 last=4 first_ts=21661201201 last_ts=21661201201
+  event id=0 kind=ProcessRestart range=3..=4 anchor=4 pid=401 instance=1 group=0 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=4 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=4 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=3 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=4 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=1 kind=ProcessRestart fingerprint_version=1 fingerprint=3c779449036842356faf04dea7c400f5 quality=StructuredFields/KnownProcess process="com.example.lifecycle.sameagain" signature="start-after-death" count=1/1/0 first=8 last=8 first_ts=21661202201 last_ts=21661202201
+  event id=1 kind=ProcessRestart range=7..=8 anchor=8 pid=411 instance=3 group=1 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=8 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=8 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=7 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=8 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
+group id=6 kind=ProcessRestart fingerprint_version=1 fingerprint=17f5541c140ad544e1886f35f1e43d0b quality=StructuredFields/KnownProcess process="com.example.lifecycle.service" signature="start-after-death" count=1/1/0 first=28 last=28 first_ts=21661207201 last_ts=21661207201
+  event id=6 kind=ProcessRestart range=27..=28 anchor=28 pid=461 instance=13 group=6 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
+    fact line=28 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=28 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+    fact line=27 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
+    fact line=28 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)

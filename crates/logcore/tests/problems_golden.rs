@@ -14,6 +14,9 @@ const HIGH_SIMILARITY_NEGATIVE_GOLDEN: &str =
     include_str!("fixtures/problems/high_similarity_negative.golden");
 const JAVA_MATRIX: &str = include_str!("fixtures/problems/java/matrix.log");
 const JAVA_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/java/matrix.golden");
+const JAVA_OOM_MATRIX: &str = include_str!("fixtures/problems/memory/java-oom/matrix.log");
+const JAVA_OOM_MATRIX_GOLDEN: &str =
+    include_str!("fixtures/problems/memory/java-oom/matrix.golden");
 const ANR_MATRIX: &str = include_str!("fixtures/problems/anr/matrix.log");
 const ANR_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/anr/matrix.golden");
 const NATIVE_MATRIX: &str = include_str!("fixtures/problems/native/matrix.log");
@@ -22,6 +25,13 @@ const LIFECYCLE_MATRIX: &str = include_str!("fixtures/problems/lifecycle/matrix.
 const LIFECYCLE_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/lifecycle/matrix.golden");
 const MEMORY_MATRIX: &str = include_str!("fixtures/problems/memory/matrix.log");
 const MEMORY_MATRIX_GOLDEN: &str = include_str!("fixtures/problems/memory/matrix.golden");
+const KERNEL_OOM_MATRIX: &str = include_str!("fixtures/problems/memory/kernel-oom/matrix.log");
+const KERNEL_OOM_MATRIX_GOLDEN: &str =
+    include_str!("fixtures/problems/memory/kernel-oom/matrix.golden");
+const CONTINUATION_INTERLEAVED: &str =
+    include_str!("fixtures/problems/incremental/continuation_interleaved.log");
+const CONTINUATION_INTERLEAVED_GOLDEN: &str =
+    include_str!("fixtures/problems/incremental/continuation_interleaved.golden");
 
 const SCAN_CHUNKS: [usize; 3] = [1, 4_096, usize::MAX];
 const MIXED_POSITIVE_SPANS: &[(u32, u32, LogBuffer)] = &[
@@ -57,84 +67,132 @@ fn high_similarity_negative_fixture_stays_empty_for_every_scan_chunk() {
 }
 
 #[test]
+fn continuation_and_interleaving_fixture_matches_golden_for_every_scan_chunk() {
+    for chunk in SCAN_CHUNKS {
+        let actual = analyze_and_render(CONTINUATION_INTERLEAVED, chunk, &[]);
+        assert_eq!(
+            actual, CONTINUATION_INTERLEAVED_GOLDEN,
+            "continuation/interleaving fixture changed for scan chunk {chunk}"
+        );
+    }
+}
+
+#[test]
+fn growing_segmented_append_matches_static_public_snapshot_field_for_field() {
+    let expected = analyze_and_render(CONTINUATION_INTERLEAVED, usize::MAX, &[]);
+    let mut source = tempfile::NamedTempFile::new().expect("create growing fixture file");
+    let mut session = Session::open_growing(source.path()).expect("open growing fixture session");
+    let bytes = CONTINUATION_INTERLEAVED.as_bytes();
+    let append_sizes = [1, 7, 31, 2, 113, 5, 257, 17];
+    let mut offset = 0;
+    let mut append_index = 0;
+
+    while offset < bytes.len() {
+        let end = offset
+            .saturating_add(append_sizes[append_index % append_sizes.len()])
+            .min(bytes.len());
+        source
+            .write_all(&bytes[offset..end])
+            .expect("append growing fixture segment");
+        source.flush().expect("flush growing fixture segment");
+        session
+            .remap_and_index_step(usize::MAX)
+            .expect("remap and index growing fixture segment");
+        scan_to_caught_up(&mut session, 1);
+        offset = end;
+        append_index += 1;
+    }
+
+    assert!(
+        !session.finish_problem_input().finished,
+        "growing input must not finalize pending events before seal"
+    );
+    session
+        .seal_growing_input()
+        .expect("seal fully indexed growing fixture");
+    scan_to_caught_up(&mut session, 1);
+    assert!(session.finish_problem_input().finished);
+
+    assert_eq!(
+        render_public_snapshot(&mut session),
+        expected,
+        "growing append changed a public group, event, or observation field"
+    );
+}
+
+#[test]
 fn per_kind_positive_and_high_similarity_negative_matrices_are_chunk_invariant() {
     let matrices = [
         (
             "java",
             JAVA_MATRIX,
             ProblemKind::JavaCrash,
-            vec![(0, 19, LogBuffer::Events)],
+            vec![(0, 19, LogBuffer::Events), (20, 40, LogBuffer::Main)],
             JAVA_MATRIX_GOLDEN,
         ),
         (
             "anr",
             ANR_MATRIX,
             ProblemKind::Anr,
-            vec![(0, 19, LogBuffer::Events)],
+            vec![(0, 19, LogBuffer::Events), (20, 40, LogBuffer::Main)],
             ANR_MATRIX_GOLDEN,
+        ),
+        (
+            "java-oom",
+            JAVA_OOM_MATRIX,
+            ProblemKind::JavaOom,
+            vec![
+                (0, 21, LogBuffer::Main),
+                (22, 30, LogBuffer::Events),
+                (31, 58, LogBuffer::Main),
+                (59, 63, LogBuffer::Events),
+            ],
+            JAVA_OOM_MATRIX_GOLDEN,
         ),
         (
             "native",
             NATIVE_MATRIX,
             ProblemKind::NativeCrash,
-            vec![(0, 19, LogBuffer::Events)],
+            vec![(0, 19, LogBuffer::Events), (20, 40, LogBuffer::Main)],
             NATIVE_MATRIX_GOLDEN,
         ),
         (
             "lifecycle",
             LIFECYCLE_MATRIX,
             ProblemKind::ProcessRestart,
-            vec![(0, 39, LogBuffer::Events)],
+            vec![(0, 39, LogBuffer::Events), (40, 60, LogBuffer::Main)],
             LIFECYCLE_MATRIX_GOLDEN,
         ),
         (
             "memory",
             MEMORY_MATRIX,
             ProblemKind::LmkKill,
-            vec![(0, 15, LogBuffer::Main), (16, 19, LogBuffer::Kernel)],
+            vec![
+                (0, 15, LogBuffer::Main),
+                (16, 19, LogBuffer::Kernel),
+                (20, 40, LogBuffer::Main),
+            ],
             MEMORY_MATRIX_GOLDEN,
+        ),
+        (
+            "kernel-oom",
+            KERNEL_OOM_MATRIX,
+            ProblemKind::KernelOomKill,
+            vec![(0, 32, LogBuffer::Kernel), (35, 42, LogBuffer::Kernel)],
+            KERNEL_OOM_MATRIX_GOLDEN,
         ),
     ];
 
-    for (name, fixture, expected_kind, positive_spans, golden) in matrices {
-        let (positive, negative_tail) = fixture
-            .split_once("--------- beginning")
-            .expect("matrix fixture separates positive and negative cases");
-        let positive = positive.trim_end_matches('\n');
-        let expected = analyze_and_render(positive, usize::MAX, &positive_spans);
-        assert_eq!(
-            matrix_contract(&expected, expected_kind, 10),
-            golden,
-            "{name} canonical public snapshot changed:\n{expected}"
-        );
-        assert_matrix_events(name, &expected, expected_kind, 10);
+    for (name, fixture, expected_kind, source_spans, golden) in matrices {
         for chunk in SCAN_CHUNKS {
+            let actual = analyze_and_render(fixture, chunk, &source_spans);
             assert_eq!(
-                analyze_and_render(positive, chunk, &positive_spans),
-                expected,
-                "{name} positive matrix changed for scan chunk {chunk}"
+                actual, golden,
+                "{name} canonical public snapshot changed for scan chunk {chunk}"
             );
-        }
-
-        let negative = format!("--------- beginning{negative_tail}");
-        let negative_last_line =
-            u32::try_from(negative.lines().count().saturating_sub(1)).expect("small fixture");
-        let negative_spans = [(0, negative_last_line, LogBuffer::Main)];
-        for chunk in SCAN_CHUNKS {
-            let actual = analyze_and_render(&negative, chunk, &negative_spans);
-            assert_eq!(
-                actual, HIGH_SIMILARITY_NEGATIVE_GOLDEN,
-                "{name} negative matrix changed for scan chunk {chunk}"
-            );
+            assert_matrix_events(name, &actual, expected_kind, 10);
         }
     }
-}
-
-fn matrix_contract(rendered: &str, expected_kind: ProblemKind, count: usize) -> String {
-    format!(
-        "observed={count} stored={count} kind={expected_kind:?}\nsnapshot-blake3={}\n",
-        blake3::hash(rendered.as_bytes()).to_hex()
-    )
 }
 
 fn assert_matrix_events(name: &str, rendered: &str, expected_kind: ProblemKind, count: usize) {
@@ -180,7 +238,17 @@ fn analyze_and_render(
     }
     session.index_all();
 
-    let mut previous = 0;
+    scan_to_caught_up(&mut session, chunk);
+    assert!(
+        session.finish_problem_input().finished,
+        "static fixture must finish after reaching the indexed frontier"
+    );
+
+    render_public_snapshot(&mut session)
+}
+
+fn scan_to_caught_up(session: &mut Session, chunk: usize) {
+    let mut previous = session.problem_scanned_lines();
     loop {
         let step = session.scan_problems_step(chunk);
         if step.caught_up {
@@ -192,12 +260,6 @@ fn analyze_and_render(
         );
         previous = step.scanned_lines;
     }
-    assert!(
-        session.finish_problem_input().finished,
-        "static fixture must finish after reaching the indexed frontier"
-    );
-
-    render_public_snapshot(&mut session)
 }
 
 fn render_public_snapshot(session: &mut Session) -> String {
@@ -259,9 +321,10 @@ fn kind_order(kind: ProblemKind) -> u8 {
 fn render_group(output: &mut String, session: &mut Session, group: ProblemGroupSummary) {
     writeln!(
         output,
-        "group id={} kind={:?} fingerprint={} quality={:?}/{:?} process={:?} signature={:?} count={}/{}/{} first={} last={} first_ts={} last_ts={}",
+        "group id={} kind={:?} fingerprint_version={} fingerprint={} quality={:?}/{:?} process={:?} signature={:?} count={}/{}/{} first={} last={} first_ts={} last_ts={}",
         group.id.raw(),
         group.key.kind(),
+        group.key.fingerprint_version(),
         group.key.fingerprint().to_hex(),
         group.key.signature_quality(),
         group.key.identity_quality(),

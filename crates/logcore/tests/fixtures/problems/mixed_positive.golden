@@ -1,5 +1,5 @@
 stats observed=8 stored=8 groups=7 dropped=0 correlation_limited=false identity_limited=false
-group id=0 kind=JavaCrash fingerprint=ba5eae38a0f3c3c94457c30f84a70b3d quality=FullStack/KnownProcess process="com.example.alpha" signature="java.lang.IllegalStateException" count=2/2/0 first=3 last=8 first_ts=21643201001 last_ts=21643202001
+group id=0 kind=JavaCrash fingerprint_version=1 fingerprint=ba5eae38a0f3c3c94457c30f84a70b3d quality=FullStack/KnownProcess process="com.example.alpha" signature="java.lang.IllegalStateException" count=2/2/0 first=3 last=8 first_ts=21643201001 last_ts=21643202001
   event id=0 kind=JavaCrash range=3..=6 anchor=3 pid=111 instance=7 group=0 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x1
     fact line=3 code=JavaUncaughtException rule=JavaUncaughtV1 role=Primary format=AospText provenance=Known(Main)
     fact line=4 code=ProcessIdentityRecorded rule=JavaUncaughtV1 role=ProcessIdentity format=AospText provenance=Known(Main)
@@ -10,13 +10,13 @@ group id=0 kind=JavaCrash fingerprint=ba5eae38a0f3c3c94457c30f84a70b3d quality=F
     fact line=9 code=ProcessIdentityRecorded rule=JavaUncaughtV1 role=ProcessIdentity format=AospText provenance=Known(Main)
     fact line=10 code=ExceptionTypeRecorded rule=JavaUncaughtV1 role=ExceptionType format=AospText provenance=Known(Main)
     fact line=11 code=StackFrameRecorded rule=JavaUncaughtV1 role=StackFrame format=AospText provenance=Known(Main)
-group id=1 kind=JavaOom fingerprint=5bdbf3de7fd7b6ad53aaa9bcafeabad8 quality=FullStack/KnownProcess process="com.example.memory" signature="java.lang.OutOfMemoryError" count=1/1/0 first=13 last=13 first_ts=21643203001 last_ts=21643203001
+group id=1 kind=JavaOom fingerprint_version=1 fingerprint=5bdbf3de7fd7b6ad53aaa9bcafeabad8 quality=FullStack/KnownProcess process="com.example.memory" signature="java.lang.OutOfMemoryError" count=1/1/0 first=13 last=13 first_ts=21643203001 last_ts=21643203001
   event id=2 kind=JavaOom range=13..=16 anchor=13 pid=121 instance=9 group=1 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x1
     fact line=13 code=JavaOutOfMemoryError rule=JavaOomV1 role=Primary format=AospText provenance=Known(Main)
     fact line=14 code=ProcessIdentityRecorded rule=JavaOomV1 role=ProcessIdentity format=AospText provenance=Known(Main)
     fact line=15 code=ExceptionTypeRecorded rule=JavaOomV1 role=ExceptionType format=AospText provenance=Known(Main)
     fact line=16 code=StackFrameRecorded rule=JavaOomV1 role=StackFrame format=AospText provenance=Known(Main)
-group id=2 kind=Anr fingerprint=5c5bc20954636bad0d8a02a2f4099db8 quality=StructuredFields/KnownProcess process="com.example.unresponsive" signature="input-dispatch-timeout" count=1/1/0 first=19 last=19 first_ts=21643260001 last_ts=21643260001
+group id=2 kind=Anr fingerprint_version=1 fingerprint=5c5bc20954636bad0d8a02a2f4099db8 quality=StructuredFields/KnownProcess process="com.example.unresponsive" signature="input-dispatch-timeout" count=1/1/0 first=19 last=19 first_ts=21643260001 last_ts=21643260001
   event id=3 kind=Anr range=19..=24 anchor=19 pid=210 instance=1 group=2 observations=6/6 evidence=0xf outcome=0x0 boundary=0x0
     fact line=19 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=AospText provenance=Known(System)
     fact line=20 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=AospText provenance=Known(System)
@@ -24,7 +24,7 @@ group id=2 kind=Anr fingerprint=5c5bc20954636bad0d8a02a2f4099db8 quality=Structu
     fact line=24 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
     fact line=21 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=AospText provenance=Known(System)
     fact line=24 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
-group id=5 kind=NativeCrash fingerprint=c3b1d33caa330d080a43930fd77545e7 quality=FullStack/KnownProcess process="com.example.native" signature="SIGSEGV" count=1/1/0 first=33 last=33 first_ts=0 last_ts=0
+group id=5 kind=NativeCrash fingerprint_version=1 fingerprint=c3b1d33caa330d080a43930fd77545e7 quality=FullStack/KnownProcess process="com.example.native" signature="SIGSEGV" count=1/1/0 first=33 last=33 first_ts=0 last_ts=0
   event id=6 kind=NativeCrash range=31..=37 anchor=33 pid=501 instance=5 group=5 observations=6/6 evidence=0xf outcome=0x0 boundary=0x0
     fact line=31 code=NativeCrashDetected rule=NativeTombstoneV1 role=Primary format=TombstoneShapedText provenance=Known(Crash)
     fact line=32 code=ProcessIdentityRecorded rule=NativeTombstoneV1 role=ProcessIdentity format=TombstoneShapedText provenance=Known(Crash)
@@ -32,18 +32,18 @@ group id=5 kind=NativeCrash fingerprint=c3b1d33caa330d080a43930fd77545e7 quality
     fact line=37 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
     fact line=37 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
     fact line=35 code=NativeFrameRecorded rule=NativeTombstoneV1 role=BacktraceFrame format=TombstoneShapedText provenance=Known(Crash)
-group id=3 kind=ProcessRestart fingerprint=7a36f30b973dac3ca5fac9da025dedfa quality=StructuredFields/KnownProcess process="com.example.worker" signature="start-after-death" count=1/1/0 first=27 last=27 first_ts=21643322001 last_ts=21643322001
+group id=3 kind=ProcessRestart fingerprint_version=1 fingerprint=7a36f30b973dac3ca5fac9da025dedfa quality=StructuredFields/KnownProcess process="com.example.worker" signature="start-after-death" count=1/1/0 first=27 last=27 first_ts=21643322001 last_ts=21643322001
   event id=4 kind=ProcessRestart range=26..=27 anchor=27 pid=301 instance=2 group=3 observations=4/4 evidence=0xf outcome=0xc boundary=0x0
     fact line=27 code=ProcessRestarted rule=ProcessRestartV1 role=Primary format=EventLogShapedText provenance=Known(Events)
     fact line=27 code=ProcessIdentityRecorded rule=ProcessRestartV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
     fact line=26 code=ProcessDeathObserved rule=ProcessRestartV1 role=Death format=EventLogShapedText provenance=Known(Events)
     fact line=27 code=StartAfterDeathObserved rule=ProcessRestartV1 role=Restart format=EventLogShapedText provenance=Known(Events)
-group id=4 kind=LmkKill fingerprint=e639fb2b43ab2ccbe29c97a3874fbda4 quality=StructuredFields/KnownProcess process="com.example.background" signature="userspace-lmkd" count=1/1/0 first=29 last=29 first_ts=21643380001 last_ts=21643380001
+group id=4 kind=LmkKill fingerprint_version=1 fingerprint=e639fb2b43ab2ccbe29c97a3874fbda4 quality=StructuredFields/KnownProcess process="com.example.background" signature="userspace-lmkd" count=1/1/0 first=29 last=29 first_ts=21643380001 last_ts=21643380001
   event id=5 kind=LmkKill range=29..=29 anchor=29 pid=401 instance=4 group=4 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
     fact line=29 code=LmkKillIssued rule=LmkdKillV1 role=Primary format=AospText provenance=Known(Main)
     fact line=29 code=ProcessIdentityRecorded rule=LmkdKillV1 role=ProcessIdentity format=AospText provenance=Known(Main)
     fact line=29 code=LmkKillIssued rule=LmkdKillV1 role=KillIssued format=AospText provenance=Known(Main)
-group id=6 kind=KernelOomKill fingerprint=88c8e0794667ec57060d242510ed4e1c quality=StructuredFields/KnownProcess process="com.example.kernelvictim" signature="global" count=1/1/0 first=39 last=39 first_ts=21643500001 last_ts=21643500001
+group id=6 kind=KernelOomKill fingerprint_version=1 fingerprint=88c8e0794667ec57060d242510ed4e1c quality=StructuredFields/KnownProcess process="com.example.kernelvictim" signature="global" count=1/1/0 first=39 last=39 first_ts=21643500001 last_ts=21643500001
   event id=7 kind=KernelOomKill range=39..=39 anchor=39 pid=601 instance=6 group=6 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
     fact line=39 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
     fact line=39 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)

@@ -1,0 +1,52 @@
+stats observed=10 stored=10 groups=8 dropped=0 correlation_limited=false identity_limited=false
+group id=7 kind=KernelOomKill fingerprint_version=1 fingerprint=dbe8e412a2fd015a176093ddb6afb975 quality=StructuredFields/KnownProcess process="com.example.kernel.Worker$Child" signature="global" count=1/1/0 first=23 last=23 first_ts=21668410001 last_ts=21668410001
+  event id=9 kind=KernelOomKill range=23..=23 anchor=23 pid=810 instance=10 group=7 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=23 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=23 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=23 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+group id=3 kind=KernelOomKill fingerprint_version=1 fingerprint=0443ceabc527541189d1f9137a0525e5 quality=StructuredFields/KnownProcess process="com.example.kernel.constraint.global" signature="global" count=1/1/0 first=14 last=14 first_ts=21668406002 last_ts=21668406002
+  event id=5 kind=KernelOomKill range=13..=14 anchor=14 pid=806 instance=6 group=3 observations=4/4 evidence=0x7 outcome=0x2 boundary=0x0
+    fact line=14 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=14 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=14 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+    fact line=13 code=SupportingEvidenceRecorded rule=KernelOomKillV1 role=Supporting format=KernelShapedText provenance=Known(Kernel)
+group id=2 kind=KernelOomKill fingerprint_version=1 fingerprint=f88beb74b2aba7bf2c55f5ef568fd62c quality=StructuredFields/KnownProcess process="com.example.kernel.constraint.memcg" signature="memcg" count=1/1/0 first=11 last=11 first_ts=21668405002 last_ts=21668405002
+  event id=4 kind=KernelOomKill range=10..=11 anchor=11 pid=805 instance=5 group=2 observations=4/4 evidence=0x7 outcome=0x2 boundary=0x0
+    fact line=11 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=11 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=11 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+    fact line=10 code=SupportingEvidenceRecorded rule=KernelOomKillV1 role=Supporting format=KernelShapedText provenance=Known(Kernel)
+group id=6 kind=KernelOomKill fingerprint_version=1 fingerprint=2fc7906afae504f73676158f3cf66afe quality=StructuredFields/KnownProcess process="com.example.kernel.dashed-process" signature="memcg" count=1/1/0 first=21 last=21 first_ts=21668409001 last_ts=21668409001
+  event id=8 kind=KernelOomKill range=21..=21 anchor=21 pid=809 instance=9 group=6 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=21 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=21 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=21 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+group id=4 kind=KernelOomKill fingerprint_version=1 fingerprint=0f05e4656267b80679397173e9185765 quality=StructuredFields/KnownProcess process="com.example.kernel.invoked" signature="global" count=1/1/0 first=17 last=17 first_ts=21668407002 last_ts=21668407002
+  event id=6 kind=KernelOomKill range=16..=17 anchor=17 pid=807 instance=7 group=4 observations=4/4 evidence=0x7 outcome=0x2 boundary=0x0
+    fact line=17 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=17 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=17 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+    fact line=16 code=SupportingEvidenceRecorded rule=KernelOomKillV1 role=Supporting format=KernelShapedText provenance=Known(Kernel)
+group id=5 kind=KernelOomKill fingerprint_version=1 fingerprint=ca81baead2e6a5b066e054d31b616374 quality=StructuredFields/KnownProcess process="com.example.kernel.remote:worker" signature="global" count=1/1/0 first=19 last=19 first_ts=21668408001 last_ts=21668408001
+  event id=7 kind=KernelOomKill range=19..=19 anchor=19 pid=808 instance=8 group=5 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=19 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=19 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=19 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+group id=0 kind=KernelOomKill fingerprint_version=1 fingerprint=2e77af37cae9e7a75e1ce28244f15544 quality=StructuredFields/KnownProcess process="com.example.kernel.same" signature="global" count=2/2/0 first=2 last=4 first_ts=21668401001 last_ts=21668402001
+  event id=0 kind=KernelOomKill range=2..=2 anchor=2 pid=801 instance=1 group=0 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=2 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=2 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=2 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+  event id=1 kind=KernelOomKill range=4..=4 anchor=4 pid=802 instance=2 group=0 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=4 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=4 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=4 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+group id=1 kind=KernelOomKill fingerprint_version=1 fingerprint=4c7436bfff25014b10766462d02fe34a quality=StructuredFields/KnownProcess process="com.example.kernel.same" signature="memcg" count=2/2/0 first=6 last=8 first_ts=21668403001 last_ts=21668404001
+  event id=2 kind=KernelOomKill range=6..=6 anchor=6 pid=803 instance=3 group=1 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=6 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=6 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=6 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)
+  event id=3 kind=KernelOomKill range=8..=8 anchor=8 pid=804 instance=4 group=1 observations=3/3 evidence=0x3 outcome=0x2 boundary=0x0
+    fact line=8 code=KernelOomKillIssued rule=KernelOomKillV1 role=Primary format=KernelShapedText provenance=Known(Kernel)
+    fact line=8 code=ProcessIdentityRecorded rule=KernelOomKillV1 role=ProcessIdentity format=KernelShapedText provenance=Known(Kernel)
+    fact line=8 code=KernelOomKillIssued rule=KernelOomKillV1 role=KillIssued format=KernelShapedText provenance=Known(Kernel)

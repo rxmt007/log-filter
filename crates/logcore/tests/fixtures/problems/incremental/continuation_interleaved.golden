@@ -1,0 +1,36 @@
+stats observed=6 stored=6 groups=6 dropped=0 correlation_limited=false identity_limited=false
+group id=5 kind=JavaCrash fingerprint_version=1 fingerprint=413835d1e67a1756d03484810aa4a820 quality=FullStack/KnownProcess process="com.example.incremental.cross" signature="java.lang.SecurityException" count=1/1/0 first=21 last=21 first_ts=21672004001 last_ts=21672004001
+  event id=5 kind=JavaCrash range=21..=27 anchor=21 pid=101 instance=0 group=5 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x1
+    fact line=21 code=JavaUncaughtException rule=JavaUncaughtV1 role=Primary format=AospText provenance=Unknown
+    fact line=23 code=ProcessIdentityRecorded rule=JavaUncaughtV1 role=ProcessIdentity format=AospText provenance=Unknown
+    fact line=25 code=ExceptionTypeRecorded rule=JavaUncaughtV1 role=ExceptionType format=AospText provenance=Unknown
+    fact line=27 code=StackFrameRecorded rule=JavaUncaughtV1 role=StackFrame format=AospText provenance=Unknown
+group id=2 kind=JavaCrash fingerprint_version=1 fingerprint=65f3230997c1991f7608ddf410f81f6d quality=FullStack/KnownProcess process="com.example.incremental.first" signature="java.lang.IllegalStateException" count=1/1/0 first=12 last=12 first_ts=21672003001 last_ts=21672003001
+  event id=2 kind=JavaCrash range=12..=18 anchor=12 pid=101 instance=0 group=2 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x0
+    fact line=12 code=JavaUncaughtException rule=JavaUncaughtV1 role=Primary format=AospText provenance=Unknown
+    fact line=14 code=ProcessIdentityRecorded rule=JavaUncaughtV1 role=ProcessIdentity format=AospText provenance=Unknown
+    fact line=17 code=ExceptionTypeRecorded rule=JavaUncaughtV1 role=ExceptionType format=AospText provenance=Unknown
+    fact line=18 code=StackFrameRecorded rule=JavaUncaughtV1 role=StackFrame format=AospText provenance=Unknown
+group id=1 kind=JavaCrash fingerprint_version=1 fingerprint=f9d0e3ac71e5214b842cfdbff86809ce quality=FullStack/KnownProcess process="com.example.incremental.prefixed" signature="java.lang.IllegalArgumentException" count=1/1/0 first=7 last=7 first_ts=21672002001 last_ts=21672002001
+  event id=1 kind=JavaCrash range=7..=10 anchor=7 pid=101 instance=0 group=1 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x0
+    fact line=7 code=JavaUncaughtException rule=JavaUncaughtV1 role=Primary format=AospText provenance=Unknown
+    fact line=8 code=ProcessIdentityRecorded rule=JavaUncaughtV1 role=ProcessIdentity format=AospText provenance=Unknown
+    fact line=9 code=ExceptionTypeRecorded rule=JavaUncaughtV1 role=ExceptionType format=AospText provenance=Unknown
+    fact line=10 code=StackFrameRecorded rule=JavaUncaughtV1 role=StackFrame format=AospText provenance=Unknown
+group id=0 kind=JavaCrash fingerprint_version=1 fingerprint=a6d3e4e6bdc6a90227f90b5ffc79b9e7 quality=FullStack/KnownProcess process="com.example.incremental.raw" signature="java.lang.IllegalStateException" count=1/1/0 first=2 last=2 first_ts=21672001001 last_ts=21672001001
+  event id=0 kind=JavaCrash range=2..=5 anchor=2 pid=101 instance=1 group=0 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x0
+    fact line=2 code=JavaUncaughtException rule=JavaUncaughtV1 role=Primary format=AospText provenance=Unknown
+    fact line=3 code=ProcessIdentityRecorded rule=JavaUncaughtV1 role=ProcessIdentity format=AospText provenance=Unknown
+    fact line=4 code=ExceptionTypeRecorded rule=JavaUncaughtV1 role=ExceptionType format=AospText provenance=Unknown
+    fact line=5 code=StackFrameRecorded rule=JavaUncaughtV1 role=StackFrame format=AospText provenance=Unknown
+group id=3 kind=JavaCrash fingerprint_version=1 fingerprint=342762cc29ad03a2ef566b9c5bcbbe75 quality=FullStack/KnownProcess process="com.example.incremental.second" signature="java.lang.UnsupportedOperationException" count=1/1/0 first=13 last=13 first_ts=21672003001 last_ts=21672003001
+  event id=3 kind=JavaCrash range=13..=19 anchor=13 pid=202 instance=2 group=3 observations=4/4 evidence=0x5 outcome=0x0 boundary=0x1
+    fact line=13 code=JavaUncaughtException rule=JavaUncaughtV1 role=Primary format=AospText provenance=Unknown
+    fact line=15 code=ProcessIdentityRecorded rule=JavaUncaughtV1 role=ProcessIdentity format=AospText provenance=Unknown
+    fact line=16 code=ExceptionTypeRecorded rule=JavaUncaughtV1 role=ExceptionType format=AospText provenance=Unknown
+    fact line=19 code=StackFrameRecorded rule=JavaUncaughtV1 role=StackFrame format=AospText provenance=Unknown
+group id=4 kind=Anr fingerprint_version=1 fingerprint=e42f3b87e84a818bb02893233fe333ac quality=StructuredFields/KnownProcess process="com.example.incremental.anr" signature="input-dispatch-timeout" count=1/1/0 first=22 last=22 first_ts=21672004001 last_ts=21672004001
+  event id=4 kind=Anr range=22..=26 anchor=22 pid=303 instance=3 group=4 observations=3/3 evidence=0x5 outcome=0x0 boundary=0x1
+    fact line=22 code=AnrDetected rule=AnrActivityManagerV1 role=Primary format=AospText provenance=Unknown
+    fact line=24 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=AospText provenance=Unknown
+    fact line=26 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=AospText provenance=Unknown

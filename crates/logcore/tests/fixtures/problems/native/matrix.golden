@@ -1,2 +1,40 @@
-observed=10 stored=10 kind=NativeCrash
-snapshot-blake3=9a3762bd0fe34c356e0ad998770a199066c0ba92e722890d419810fa0de2f8e9
+stats observed=10 stored=10 groups=9 dropped=0 correlation_limited=false identity_limited=false
+group id=7 kind=NativeCrash fingerprint_version=1 fingerprint=f1e7bef473b3b1d659eb0c37e1eea5b5 quality=Minimal/KnownProcess process="com.example.native.commas" signature="Native crash" count=1/1/0 first=18 last=18 first_ts=21657609001 last_ts=21657609001
+  event id=8 kind=NativeCrash range=18..=18 anchor=18 pid=309 instance=9 group=7 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=18 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=18 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=6 kind=NativeCrash fingerprint_version=1 fingerprint=9c6dda26f4cfea4c819784dcac9fd721 quality=Minimal/KnownProcess process="com.example.native.dashed-process" signature="Native crash" count=1/1/0 first=16 last=16 first_ts=21657608001 last_ts=21657608001
+  event id=7 kind=NativeCrash range=16..=16 anchor=16 pid=308 instance=8 group=6 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=16 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=16 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=1 kind=NativeCrash fingerprint_version=1 fingerprint=d1cf85ee0d2b1b276790403d51fa2a0d quality=Minimal/KnownProcess process="com.example.native.distinct" signature="Native crash" count=1/1/0 first=6 last=6 first_ts=21657603001 last_ts=21657603001
+  event id=2 kind=NativeCrash range=6..=6 anchor=6 pid=303 instance=3 group=1 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=6 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=6 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=8 kind=NativeCrash fingerprint_version=1 fingerprint=2017d8022b9c2573a7c6f454f98f8552 quality=Minimal/KnownProcess process="com.example.native.final" signature="Native crash" count=1/1/0 first=20 last=20 first_ts=21657610001 last_ts=21657610001
+  event id=9 kind=NativeCrash range=20..=20 anchor=20 pid=310 instance=10 group=8 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=20 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=20 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=3 kind=NativeCrash fingerprint_version=1 fingerprint=37b21e7660c625882d7e2b69b21aa676 quality=Minimal/KnownProcess process="com.example.native.modern" signature="Native crash" count=1/1/0 first=10 last=10 first_ts=21657605001 last_ts=21657605001
+  event id=4 kind=NativeCrash range=10..=10 anchor=10 pid=305 instance=5 group=3 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=10 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=10 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=4 kind=NativeCrash fingerprint_version=1 fingerprint=9b21d4d9c6fadb144b0fb06302ef008b quality=Minimal/KnownProcess process="com.example.native.recoverable" signature="Native crash" count=1/1/0 first=12 last=12 first_ts=21657606001 last_ts=21657606001
+  event id=5 kind=NativeCrash range=12..=12 anchor=12 pid=306 instance=6 group=4 observations=2/2 evidence=0x3 outcome=0x10 boundary=0x0
+    fact line=12 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=12 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=5 kind=NativeCrash fingerprint_version=1 fingerprint=a44656519b90d18b99daf42d0a791bee quality=Minimal/KnownProcess process="com.example.native.remote:worker" signature="Native crash" count=1/1/0 first=14 last=14 first_ts=21657607001 last_ts=21657607001
+  event id=6 kind=NativeCrash range=14..=14 anchor=14 pid=307 instance=7 group=5 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=14 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=14 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=0 kind=NativeCrash fingerprint_version=1 fingerprint=91f9f4a6be65e45d955737b34e30853e quality=Minimal/KnownProcess process="com.example.native.same" signature="Native crash" count=2/2/0 first=2 last=4 first_ts=21657601001 last_ts=21657602001
+  event id=0 kind=NativeCrash range=2..=2 anchor=2 pid=301 instance=1 group=0 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=2 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=2 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+  event id=1 kind=NativeCrash range=4..=4 anchor=4 pid=302 instance=2 group=0 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=4 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=4 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
+group id=2 kind=NativeCrash fingerprint_version=1 fingerprint=0e7f97f22796da64602c98316ead1681 quality=Minimal/KnownProcess process="com.example.native.user" signature="Native crash" count=1/1/0 first=8 last=8 first_ts=21657604001 last_ts=21657604001
+  event id=3 kind=NativeCrash range=8..=8 anchor=8 pid=304 instance=4 group=2 observations=2/2 evidence=0x3 outcome=0x0 boundary=0x0
+    fact line=8 code=ManagedCrashRecord rule=ManagedAmCrashV1 role=Primary format=EventLogShapedText provenance=Known(Events)
+    fact line=8 code=ProcessIdentityRecorded rule=ManagedAmCrashV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
