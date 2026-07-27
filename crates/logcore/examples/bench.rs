@@ -18,7 +18,7 @@
 //! 取输出里的 "maximum resident set size"。
 
 use logcore::filter::{FilterField, FilterMatcher, FilterSpec, LevelMask};
-use logcore::problems::DEFAULT_PROBLEM_MEMORY_BUDGET_BYTES;
+use logcore::problems::{LogBuffer, SourceSpan, DEFAULT_PROBLEM_MEMORY_BUDGET_BYTES};
 use logcore::search::{SearchMatcher, SearchSpec};
 use logcore::session::{RowsView, Session};
 use std::fmt::Write as _;
@@ -33,14 +33,15 @@ use std::time::{Duration, Instant};
 
 // 架构铁律:UI 窗口只取可见窗口。基准沿用应用中的口径。
 const INDEX_BUDGET: usize = 1024 * 1024; // 后台索引步进预算,与应用一致
+const INDEX_COOPERATIVE_QUANTUM: usize = 64 * 1024; // 有前台窗口排队时的最早让锁点
 const FILTER_CHUNK: usize = 4096; // 分块扫描步长,与应用一致
 const PROBLEMS_CHUNK: usize = 4096; // Problems 每次持锁扫描上限,与应用一致
 const PROBLEM_CATCH_UP_STEPS_PER_INDEX: usize = 32; // 与桌面端核心交错节奏一致
 const WINDOW_ROWS: usize = 200; // UI 交互窗口一次取的行数
 const WINDOW_SAMPLES: usize = 100; // 随机窗口读取采样次数
 const MIN_CONCURRENT_WINDOW_SAMPLES: usize = 90;
-const WINDOW_SAMPLE_MIN_INTERVAL_MS: u64 = 200;
-const WINDOW_SAMPLE_JITTER_MS: usize = 201;
+const WINDOW_SAMPLE_MIN_INTERVAL_MS: u64 = 100;
+const WINDOW_SAMPLE_JITTER_MS: usize = 101;
 
 const MIN_PROBLEMS_LINES_PER_SECOND: f64 = 5_000_000.0;
 const MAX_INDEX_AND_PROBLEMS_SECONDS: f64 = 37.0;
@@ -294,17 +295,17 @@ impl BenchPhase {
 
 #[derive(Debug, Default)]
 struct WindowLatencySamples {
-    indexing: Vec<u128>,
-    catching_up: Vec<u128>,
-    finish_pending: Vec<u128>,
+    indexing: Vec<WindowLatencySample>,
+    catching_up: Vec<WindowLatencySample>,
+    finish_pending: Vec<WindowLatencySample>,
 }
 
 impl WindowLatencySamples {
-    fn record(&mut self, phase: BenchPhase, micros: u128) {
+    fn record(&mut self, phase: BenchPhase, sample: WindowLatencySample) {
         match phase {
-            BenchPhase::Indexing => self.indexing.push(micros),
-            BenchPhase::CatchingUpProblems => self.catching_up.push(micros),
-            BenchPhase::FinishPending => self.finish_pending.push(micros),
+            BenchPhase::Indexing => self.indexing.push(sample),
+            BenchPhase::CatchingUpProblems => self.catching_up.push(sample),
+            BenchPhase::FinishPending => self.finish_pending.push(sample),
             BenchPhase::Initializing | BenchPhase::Done => {}
         }
     }
@@ -323,12 +324,35 @@ impl WindowLatencySamples {
     }
 
     fn active_summary(&self) -> Option<LatencySummary> {
-        let mut samples = Vec::with_capacity(self.active_count());
-        samples.extend_from_slice(&self.indexing);
-        samples.extend_from_slice(&self.catching_up);
-        samples.extend_from_slice(&self.finish_pending);
+        self.summary_by(|sample| sample.total_micros)
+    }
+
+    fn lock_wait_summary(&self) -> Option<LatencySummary> {
+        self.summary_by(|sample| sample.lock_wait_micros)
+    }
+
+    fn service_summary(&self) -> Option<LatencySummary> {
+        self.summary_by(|sample| sample.service_micros)
+    }
+
+    fn summary_by(&self, project: impl Fn(WindowLatencySample) -> u128) -> Option<LatencySummary> {
+        let samples = self
+            .indexing
+            .iter()
+            .chain(&self.catching_up)
+            .chain(&self.finish_pending)
+            .copied()
+            .map(project)
+            .collect();
         LatencySummary::from_samples(samples)
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct WindowLatencySample {
+    total_micros: u128,
+    lock_wait_micros: u128,
+    service_micros: u128,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -403,6 +427,14 @@ fn main() {
     // Phase 1/2:按选择的调度口径执行索引与 Problems。
     let mut session =
         Session::open(&options.path).unwrap_or_else(|e| fail(&format!("打开失败: {e}")));
+    if options.corpus == CorpusKind::Storm {
+        session
+            .add_problem_source_span(
+                SourceSpan::new(0, u32::MAX, LogBuffer::Events)
+                    .expect("storm source span is valid"),
+            )
+            .unwrap_or_else(|error| fail(&format!("设置 storm events 来源失败: {error:?}")));
+    }
     let (total_lines, index_result, problems_result) = match options.schedule {
         BenchSchedule::Production => phase_interleaved(&mut session, actual_bytes, &mut metrics),
         BenchSchedule::Sequential => {
@@ -874,6 +906,7 @@ fn sample_windows_until_done(
     shared: &Mutex<&mut Session>,
     done: &AtomicBool,
     phase: &AtomicUsize,
+    foreground_waiters: &AtomicUsize,
     seed: u64,
     max_samples: usize,
 ) -> WindowLatencySamples {
@@ -896,18 +929,30 @@ fn sample_windows_until_done(
         // that occupied the Session lock at request time.
         let request_phase = BenchPhase::load(phase);
         let sample_started = Instant::now();
-        let rows = {
-            let guard = shared
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let stable = guard.stable_lines();
-            let span = stable.saturating_sub(WINDOW_ROWS).max(1);
-            let start = rng.below(span);
-            guard.get_rows_for_view(RowsView::All, start, WINDOW_ROWS)
-        };
-        let elapsed = sample_started.elapsed().as_micros();
+        let lock_started = Instant::now();
+        foreground_waiters.fetch_add(1, Ordering::AcqRel);
+        let guard = shared
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        foreground_waiters.fetch_sub(1, Ordering::AcqRel);
+        let lock_wait_micros = lock_started.elapsed().as_micros();
+        let service_started = Instant::now();
+        let stable = guard.stable_lines();
+        let span = stable.saturating_sub(WINDOW_ROWS).max(1);
+        let start = rng.below(span);
+        let rows = guard.get_rows_for_view(RowsView::All, start, WINDOW_ROWS);
+        let service_micros = service_started.elapsed().as_micros();
+        drop(guard);
+        let total_micros = sample_started.elapsed().as_micros();
         std::hint::black_box(rows.len());
-        samples.record(request_phase, elapsed);
+        samples.record(
+            request_phase,
+            WindowLatencySample {
+                total_micros,
+                lock_wait_micros,
+                service_micros,
+            },
+        );
         next_sample = Instant::now()
             + Duration::from_millis(
                 WINDOW_SAMPLE_MIN_INTERVAL_MS
@@ -915,6 +960,17 @@ fn sample_windows_until_done(
             );
     }
     samples
+}
+
+fn yield_to_foreground_waiter(foreground_waiters: &AtomicUsize) {
+    if foreground_waiters.load(Ordering::Acquire) > 0 {
+        // `std::sync::Mutex` does not promise fair hand-off. A bounded park only
+        // when a visible-window request is already queued prevents the worker
+        // from immediately reacquiring the Session across many short slices.
+        std::thread::park_timeout(Duration::from_micros(500));
+    } else {
+        std::thread::yield_now();
+    }
 }
 
 fn format_latency_summary(summary: Option<LatencySummary>) -> String {
@@ -937,10 +993,16 @@ fn print_window_phase_coverage(samples: &WindowLatencySamples) {
     if samples.finish_pending.is_empty() {
         println!("  FinishPending 短于本次有界周期采样窗口,没有命中;不以结束后空闲读取补样。");
     }
+    println!(
+        "  窗口拆分: lock wait {}; service {}",
+        format_latency_summary(samples.lock_wait_summary()),
+        format_latency_summary(samples.service_summary())
+    );
 }
 
-/// 模拟桌面端静态文件 worker 的核心交错节奏：每个 8MiB index 临界区后,
+/// 模拟桌面端静态文件 worker 的核心交错节奏：每个 1MiB index 宏步后,
 /// 用最多 32 个独立 4096-line Problems 临界区追赶刚发布的稳定前沿。
+/// 若可见窗口已排队，index 宏步会在 64KiB 安全点提前释放 Session 锁。
 ///
 /// 这里不包含 Tauri generation 校验、状态 DTO 和事件发送开销，因此锁计时仅代表
 /// logcore 核心调用。读取线程贯穿 Indexing、Problems catch-up 与最终 finish,
@@ -957,6 +1019,7 @@ fn phase_interleaved(
     let shared = Mutex::new(session);
     let done = AtomicBool::new(false);
     let phase = AtomicUsize::new(BenchPhase::Initializing as usize);
+    let foreground_waiters = AtomicUsize::new(0);
     let start = Barrier::new(2);
 
     let (
@@ -964,6 +1027,7 @@ fn phase_interleaved(
         index_duration,
         index_max_stall,
         index_steps,
+        cooperative_index_pauses,
         problems_duration,
         problems_max_stall,
         problem_steps,
@@ -977,6 +1041,7 @@ fn phase_interleaved(
             let mut index_duration = Duration::ZERO;
             let mut index_max_stall = Duration::ZERO;
             let mut index_steps = 0u64;
+            let mut cooperative_index_pauses = 0u64;
             let mut problems_duration = Duration::ZERO;
             let mut problems_max_stall = Duration::ZERO;
             let mut problem_steps = 0u64;
@@ -988,7 +1053,17 @@ fn phase_interleaved(
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                     let started = Instant::now();
-                    let index_done = guard.index_step(INDEX_BUDGET);
+                    let indexed_before = guard.indexed_bytes();
+                    let index_done = guard.index_step_cooperatively(
+                        INDEX_BUDGET,
+                        INDEX_COOPERATIVE_QUANTUM,
+                        || foreground_waiters.load(Ordering::Acquire) > 0,
+                    );
+                    if !index_done
+                        && guard.indexed_bytes().saturating_sub(indexed_before) < INDEX_BUDGET
+                    {
+                        cooperative_index_pauses += 1;
+                    }
                     drop(guard);
                     let elapsed = started.elapsed();
                     index_duration += elapsed;
@@ -1009,6 +1084,14 @@ fn phase_interleaved(
                         let mut guard = shared
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        if let Some(plan) = guard.take_problem_read_ahead_plan() {
+                            drop(guard);
+                            yield_to_foreground_waiter(&foreground_waiters);
+                            let _ = plan.execute();
+                            guard = shared
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        }
                         let started = Instant::now();
                         let step = guard.scan_problems_step(PROBLEMS_CHUNK);
                         drop(guard);
@@ -1022,7 +1105,7 @@ fn phase_interleaved(
                     if caught_up {
                         break;
                     }
-                    std::thread::yield_now();
+                    yield_to_foreground_waiter(&foreground_waiters);
                 }
 
                 if index_done && caught_up {
@@ -1046,7 +1129,7 @@ fn phase_interleaved(
                     };
                     break total_lines;
                 }
-                std::thread::yield_now();
+                yield_to_foreground_waiter(&foreground_waiters);
             };
             BenchPhase::Done.store(&phase);
             done.store(true, Ordering::Release);
@@ -1055,6 +1138,7 @@ fn phase_interleaved(
                 index_duration,
                 index_max_stall,
                 index_steps,
+                cooperative_index_pauses,
                 problems_duration,
                 problems_max_stall,
                 problem_steps,
@@ -1063,13 +1147,20 @@ fn phase_interleaved(
         });
 
         start.wait();
-        let window_samples =
-            sample_windows_until_done(&shared, &done, &phase, 0xA0761D6478BD642F, WINDOW_SAMPLES);
+        let window_samples = sample_windows_until_done(
+            &shared,
+            &done,
+            &phase,
+            &foreground_waiters,
+            0xA0761D6478BD642F,
+            WINDOW_SAMPLES,
+        );
         let (
             total_lines,
             index_duration,
             index_max_stall,
             index_steps,
+            cooperative_index_pauses,
             problems_duration,
             problems_max_stall,
             problem_steps,
@@ -1081,6 +1172,7 @@ fn phase_interleaved(
             index_duration,
             index_max_stall,
             index_steps,
+            cooperative_index_pauses,
             problems_duration,
             problems_max_stall,
             problem_steps,
@@ -1109,7 +1201,7 @@ fn phase_interleaved(
 
     println!(
         "  索引: {total_lines} 行, {:.2}s, {index_mb_s:.0} MB/s, \
-         单步 avg {index_avg_stall_ms:.2}ms / max {:.2}ms",
+         单步 avg {index_avg_stall_ms:.2}ms / max {:.2}ms, 前台提前让锁 {cooperative_index_pauses} 次",
         index_duration.as_secs_f64(),
         index_max_stall.as_secs_f64() * 1_000.0
     );
@@ -1233,6 +1325,7 @@ fn phase_index(
     let shared = Mutex::new(session);
     let done = AtomicBool::new(false);
     let phase = AtomicUsize::new(BenchPhase::Initializing as usize);
+    let foreground_waiters = AtomicUsize::new(0);
     let start = Barrier::new(2);
     let (total_lines, elapsed, max_stall, sum_stall, steps, window_samples) =
         std::thread::scope(|scope| {
@@ -1250,7 +1343,11 @@ fn phase_index(
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
                         let step_start = Instant::now();
-                        let index_done = guard.index_step(INDEX_BUDGET);
+                        let index_done = guard.index_step_cooperatively(
+                            INDEX_BUDGET,
+                            INDEX_COOPERATIVE_QUANTUM,
+                            || foreground_waiters.load(Ordering::Acquire) > 0,
+                        );
                         let indexed = guard.indexed_bytes();
                         let total_lines = guard.total_lines();
                         drop(guard);
@@ -1272,7 +1369,7 @@ fn phase_index(
                     if index_done {
                         break total_lines;
                     }
-                    std::thread::yield_now();
+                    yield_to_foreground_waiter(&foreground_waiters);
                 };
                 let elapsed = t0.elapsed();
                 BenchPhase::Done.store(&phase);
@@ -1284,6 +1381,7 @@ fn phase_index(
                 &shared,
                 &done,
                 &phase,
+                &foreground_waiters,
                 0x94D049BB133111EB,
                 WINDOW_SAMPLES / 2,
             );
@@ -1338,6 +1436,7 @@ fn phase_problems(
     let shared = Mutex::new(session);
     let done = AtomicBool::new(false);
     let phase = AtomicUsize::new(BenchPhase::Initializing as usize);
+    let foreground_waiters = AtomicUsize::new(0);
     let start = Barrier::new(2);
     std::thread::scope(|scope| {
         let worker = scope.spawn(|| {
@@ -1347,10 +1446,24 @@ fn phase_problems(
             let mut max_stall = Duration::ZERO;
             let mut scan_duration = Duration::ZERO;
             let mut steps = 0u64;
+            let mut read_ahead_plans = 0u64;
+            let mut read_ahead_bytes = 0u64;
+            let mut read_ahead_failures = 0u64;
             loop {
                 let mut guard = shared
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if let Some(plan) = guard.take_problem_read_ahead_plan() {
+                    drop(guard);
+                    yield_to_foreground_waiter(&foreground_waiters);
+                    read_ahead_plans += 1;
+                    read_ahead_bytes =
+                        read_ahead_bytes.saturating_add(plan.requested_bytes() as u64);
+                    read_ahead_failures += u64::from(!plan.execute());
+                    guard = shared
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
                 let step_started = Instant::now();
                 let step = guard.scan_problems_step(PROBLEMS_CHUNK);
                 drop(guard);
@@ -1361,7 +1474,7 @@ fn phase_problems(
                 if step.caught_up {
                     break;
                 }
-                std::thread::yield_now();
+                yield_to_foreground_waiter(&foreground_waiters);
             }
             BenchPhase::FinishPending.store(&phase);
             let mut guard = shared
@@ -1382,6 +1495,9 @@ fn phase_problems(
                 scan_duration,
                 scan_duration.as_secs_f64() * 1000.0 / steps as f64,
                 final_step.finished,
+                read_ahead_plans,
+                read_ahead_bytes,
+                read_ahead_failures,
             )
         });
 
@@ -1390,12 +1506,21 @@ fn phase_problems(
             &shared,
             &done,
             &phase,
+            &foreground_waiters,
             0xA0761D6478BD642F,
             WINDOW_SAMPLES / 2,
         );
 
-        let (elapsed, max_stall, scan_duration, avg_stall_ms, finished) =
-            worker.join().expect("Problems benchmark worker panicked");
+        let (
+            elapsed,
+            max_stall,
+            scan_duration,
+            avg_stall_ms,
+            finished,
+            read_ahead_plans,
+            read_ahead_bytes,
+            read_ahead_failures,
+        ) = worker.join().expect("Problems benchmark worker panicked");
         if !finished {
             fail("Problems 未在稳定输入末尾完成封口");
         }
@@ -1425,6 +1550,10 @@ fn phase_problems(
             "  锁内 core-call CPU/热页诊断: {:.2}s, {:.1} M行/s",
             scan_duration.as_secs_f64(),
             cpu_lines_s / 1_000_000.0
+        );
+        println!(
+            "  有界预取: {read_ahead_plans} 次 / {:.2}GiB 请求 / {read_ahead_failures} 次失败",
+            read_ahead_bytes as f64 / GIB
         );
         println!(
             "  Problems core 锁段: 平均 {avg_stall_ms:.2}ms, 最大 {:.2}ms",

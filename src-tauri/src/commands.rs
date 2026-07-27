@@ -26,6 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
 const INDEX_BUDGET: usize = 1024 * 1024; // 控制大文件索引期的 Session 锁尾延迟
+const INDEX_COOPERATIVE_QUANTUM: usize = 64 * 1024; // 可见窗口排队时提前释放锁
 const INDEX_PROGRESS_STRIDE: usize = 8 * 1024 * 1024; // 保持既有 UI 进度事件频率
 const SCAN_CHUNK_LINES: usize = 4096;
 const SEARCH_PROGRESS_STRIDE: usize = 65_536; // 搜索进度事件节流阈值(约 16 个扫描块)
@@ -1133,7 +1134,11 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
                 match guard.as_mut() {
                     Some(session) => {
                         let previous_stable = session.stable_lines();
-                        let done = session.index_step(INDEX_BUDGET);
+                        let done = session.index_step_cooperatively(
+                            INDEX_BUDGET,
+                            INDEX_COOPERATIVE_QUANTUM,
+                            || app_state.has_foreground_session_reader_waiting(),
+                        );
                         if session.stable_lines() != previous_stable {
                             app_state.bump_source_data_revision();
                         }
@@ -1152,6 +1157,7 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
             let Some((status, indexed_bytes, index_done)) = snapshot else {
                 break;
             };
+            app_state.cooperate_with_foreground_session_reader();
             if let Some(status) = status {
                 last_index_progress_bytes = indexed_bytes;
                 let _ = app.emit("index:progress", status);
@@ -1173,6 +1179,7 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
                 else {
                     break;
                 };
+                app_state.cooperate_with_foreground_session_reader();
                 let caught_up = progress.scanned_lines >= progress.stable_lines;
                 if problem_progress_gate.should_emit(&progress) {
                     let _ = app.emit("problems:progress", progress);
@@ -1180,7 +1187,6 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
                 if caught_up {
                     break;
                 }
-                std::thread::yield_now();
             }
 
             if index_done {
@@ -1196,9 +1202,10 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
                     let Some(progress) =
                         step_problem_analysis(&app_state, my_gen, analysis_generation, true)
                     else {
-                        std::thread::yield_now();
+                        app_state.cooperate_with_foreground_session_reader();
                         continue;
                     };
+                    app_state.cooperate_with_foreground_session_reader();
                     let finished = progress.done;
                     if problem_progress_gate.should_emit(&progress) {
                         let _ = app.emit("problems:progress", progress);
@@ -1207,10 +1214,9 @@ fn open_file_blocking(path: String, state: &AppState, app: AppHandle) -> Result<
                         rerun_scans_after_index_done(&app_state, &app, my_gen);
                         break 'indexing;
                     }
-                    std::thread::yield_now();
                 }
             }
-            std::thread::yield_now(); // 让出,减少与 get_rows 的锁争用
+            app_state.cooperate_with_foreground_session_reader();
         }
     });
 
@@ -1732,7 +1738,7 @@ pub fn get_rows(view: String, start: usize, count: usize, state: State<AppState>
         return Vec::new();
     };
     let count = clamp_row_count(count);
-    let guard = state.lock_session();
+    let guard = state.lock_session_for_foreground();
     match guard.as_ref() {
         Some(s) => s
             .get_rows_for_view(view, start, count)
@@ -1770,9 +1776,10 @@ fn get_rows_checked_for_state(
     }
     let view = rows_view_from_str(&request.view).ok_or_else(|| "unknown-rows-view".to_string())?;
     let token = request.expected_analysis_token;
-    let Some(guard) =
-        state.lock_analysis_if_current(token.session_generation, token.analysis_generation)
-    else {
+    let Some(guard) = state.lock_analysis_if_current_for_foreground(
+        token.session_generation,
+        token.analysis_generation,
+    ) else {
         return Err("stale-analysis-token".to_string());
     };
     let session = guard
@@ -1826,9 +1833,10 @@ fn map_source_line_for_state(
     state: &AppState,
 ) -> Result<LineMappingResponseDto, String> {
     let token = request.expected_analysis_token;
-    let Some(guard) =
-        state.lock_analysis_if_current(token.session_generation, token.analysis_generation)
-    else {
+    let Some(guard) = state.lock_analysis_if_current_for_foreground(
+        token.session_generation,
+        token.analysis_generation,
+    ) else {
         return Err("stale-analysis-token".to_string());
     };
     let session = guard
@@ -3526,6 +3534,62 @@ mod tests {
             !out_path.exists(),
             "stale Problems exports must not leave a partial file"
         );
+    }
+
+    #[test]
+    fn problem_export_pipeline_rejects_an_event_range_from_a_replaced_analysis() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_source = dir.path().join("first.log");
+        std::fs::write(
+            &first_source,
+            "07-26 18:00:01.000  900  900 I lmkd: Kill 'com.example.stale' (601), uid 10601, oom_score_adj 900 to free 1000kB rss, 0kB swap; reason: low watermark\n",
+        )
+        .unwrap();
+        let mut first_session = logcore::session::Session::open(&first_source).unwrap();
+        first_session.index_all();
+        while !first_session.scan_problems_step(4_096).caught_up {}
+        assert!(first_session.finish_problem_input().finished);
+        let old_event = first_session
+            .problem_event(logcore::problems::ProblemEventId(0))
+            .unwrap();
+        let (start_line, end_line) =
+            problem_export_range(old_event, false, 50, first_session.stable_lines() as u64);
+
+        let state = AppState::new();
+        let (session_generation, analysis_generation) = state.replace_session(first_session);
+        let old_token = AnalysisTokenDto {
+            session_generation,
+            analysis_generation,
+        };
+        let replacement_source = dir.path().join("replacement.log");
+        std::fs::write(
+            &replacement_source,
+            "07-26 18:00:02.000  900  900 I Example: replacement session\n",
+        )
+        .unwrap();
+        let mut replacement = logcore::session::Session::open(&replacement_source).unwrap();
+        replacement.index_all();
+        state.replace_session(replacement);
+
+        let output = dir.path().join("stale-export.log");
+        let request = ExportRequest {
+            mode: "range".to_string(),
+            view: None,
+            start_line: Some(start_line),
+            end_line: Some(end_line),
+            path: output.to_string_lossy().to_string(),
+        };
+        let export_generation = state.next_export_generation();
+        let error = run_chunked_export_for_analysis(
+            &state,
+            old_token,
+            export_generation,
+            &request,
+            &mut |_, _, _| {},
+        )
+        .unwrap_err();
+        assert_eq!(error, "session changed during export");
+        assert!(!output.exists());
     }
 
     #[test]

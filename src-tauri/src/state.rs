@@ -653,6 +653,7 @@ fn constant_time_eq(left: &[u64; 2], right: &[u64; 2]) -> bool {
 #[derive(Clone)]
 pub struct AppState {
     pub session: Arc<Mutex<Option<Session>>>,
+    foreground_session_readers: Arc<AtomicU64>,
     pub generation: Arc<AtomicU64>,
     pub analysis_generation: Arc<AtomicU64>,
     pub filter_input_revision: Arc<AtomicU64>,
@@ -670,6 +671,17 @@ pub struct AppState {
     pub stream_control: Arc<Mutex<()>>,
     pub config_control: Arc<Mutex<()>>,
     pub problem_cursors: Arc<ProblemCursorRegistry>,
+}
+
+pub(crate) struct ForegroundSessionRead {
+    readers: Arc<AtomicU64>,
+}
+
+impl Drop for ForegroundSessionRead {
+    fn drop(&mut self) {
+        let previous = self.readers.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "foreground Session reader count underflowed");
+    }
 }
 
 #[derive(Default)]
@@ -717,6 +729,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             session: Arc::new(Mutex::new(None)),
+            foreground_session_readers: Arc::new(AtomicU64::new(0)),
             generation: Arc::new(AtomicU64::new(0)),
             analysis_generation: Arc::new(AtomicU64::new(0)),
             filter_input_revision: Arc::new(AtomicU64::new(0)),
@@ -739,6 +752,42 @@ impl AppState {
 
     pub fn lock_session(&self) -> MutexGuard<'_, Option<Session>> {
         Self::lock_session_arc(&self.session)
+    }
+
+    pub(crate) fn lock_session_for_foreground(&self) -> MutexGuard<'_, Option<Session>> {
+        let waiter = self.begin_foreground_session_read();
+        let guard = self.lock_session();
+        drop(waiter);
+        guard
+    }
+
+    pub(crate) fn begin_foreground_session_read(&self) -> ForegroundSessionRead {
+        let previous = self
+            .foreground_session_readers
+            .fetch_add(1, Ordering::AcqRel);
+        debug_assert_ne!(
+            previous,
+            u64::MAX,
+            "foreground Session reader count overflowed"
+        );
+        ForegroundSessionRead {
+            readers: self.foreground_session_readers.clone(),
+        }
+    }
+
+    pub(crate) fn has_foreground_session_reader_waiting(&self) -> bool {
+        self.foreground_session_readers.load(Ordering::Acquire) > 0
+    }
+
+    pub(crate) fn cooperate_with_foreground_session_reader(&self) {
+        if self.has_foreground_session_reader_waiting() {
+            // `std::sync::Mutex` does not guarantee fair hand-off. Park only
+            // when a visible read is already queued so the background worker
+            // cannot immediately reacquire across many short scan slices.
+            std::thread::park_timeout(Duration::from_micros(500));
+        } else {
+            std::thread::yield_now();
+        }
     }
 
     pub fn lock_config_control(&self) -> MutexGuard<'_, ()> {
@@ -979,6 +1028,17 @@ impl AppState {
             None
         }
     }
+
+    pub(crate) fn lock_analysis_if_current_for_foreground(
+        &self,
+        session_generation: u64,
+        analysis_generation: u64,
+    ) -> Option<MutexGuard<'_, Option<Session>>> {
+        let waiter = self.begin_foreground_session_read();
+        let guard = self.lock_analysis_if_current(session_generation, analysis_generation);
+        drop(waiter);
+        guard
+    }
 }
 
 impl Default for AppState {
@@ -1044,6 +1104,37 @@ mod tests {
         drop(first_transaction);
         acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn foreground_read_waiter_is_visible_only_until_the_session_lock_is_acquired() {
+        let state = AppState::new();
+        let session_lock = state.lock_session();
+        let contender = state.clone();
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let waiter = contender.begin_foreground_session_read();
+            waiting_tx.send(()).unwrap();
+            let guard = contender.lock_session();
+            drop(waiter);
+            acquired_tx
+                .send(contender.has_foreground_session_reader_waiting())
+                .unwrap();
+            drop(guard);
+        });
+
+        waiting_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(state.has_foreground_session_reader_waiting());
+        assert!(
+            acquired_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "the foreground read acquired a Session lock which was still held"
+        );
+
+        drop(session_lock);
+        assert!(!acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+        handle.join().unwrap();
+        assert!(!state.has_foreground_session_reader_waiting());
     }
 
     #[test]

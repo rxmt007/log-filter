@@ -3,7 +3,7 @@ use crate::encoding::{ResolvedTextEncoding, TextEncoding};
 use crate::export::ExportSummary;
 use crate::filter::{FilterError, FilterMatcher, FilterSpec};
 use crate::indexer::Indexer;
-use crate::mmap_source::MmapSource;
+use crate::mmap_source::{next_read_ahead_range, MmapSource, ReadAheadPlan};
 use crate::model::LogEntry;
 use crate::parser::parse_line_ref;
 use crate::problems::{
@@ -27,6 +27,8 @@ const EXPORT_CHUNK_LINES: usize = 4096;
 const PROBLEM_SCAN_MAX_LINES: usize = 4096;
 const PROBLEM_SCAN_MAX_BYTES: usize = 512 * 1024;
 const PROBLEM_SCAN_MAX_DETAIL_LINES: usize = 128;
+const PROBLEM_READ_AHEAD_HORIZON: usize = 8 * 1024 * 1024;
+const PROBLEM_READ_AHEAD_LOW_WATER: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowsView {
@@ -146,6 +148,8 @@ pub struct Session {
     encoding: ResolvedTextEncoding,
     problem_engine: ProblemEngine,
     problem_scan_lines: usize,
+    problem_scan_byte_cursor: usize,
+    problem_read_ahead_until: usize,
     problem_finished: bool,
     problem_coverage: InputCoverage,
     problem_source_spans: SourceSpanIndex,
@@ -205,6 +209,8 @@ impl Session {
             encoding: encoding.resolve(),
             problem_engine: ProblemEngine::new(),
             problem_scan_lines: 0,
+            problem_scan_byte_cursor: 0,
+            problem_read_ahead_until: 0,
             problem_finished: false,
             problem_coverage,
             problem_source_spans: SourceSpanIndex::new(),
@@ -383,6 +389,8 @@ impl Session {
     fn reset_problem_analysis(&mut self) {
         self.problem_engine.reset();
         self.problem_scan_lines = 0;
+        self.problem_scan_byte_cursor = 0;
+        self.problem_read_ahead_until = 0;
         self.problem_finished = false;
         self.problem_buffer_tracker = BufferProvenanceTracker::new();
     }
@@ -395,7 +403,29 @@ impl Session {
 
     /// 后台按预算步进索引;返回是否已完成。
     pub fn index_step(&mut self, budget: usize) -> bool {
-        self.indexer.step(self.source.bytes(), budget);
+        self.index_step_cooperatively(budget, budget.max(1), || false)
+    }
+
+    /// Index up to `budget` bytes, checking for a cooperative pause after each
+    /// `quantum`. The first quantum always makes progress when input remains, so
+    /// a caller cannot accidentally livelock by keeping the pause flag set.
+    pub fn index_step_cooperatively(
+        &mut self,
+        budget: usize,
+        quantum: usize,
+        mut should_pause: impl FnMut() -> bool,
+    ) -> bool {
+        let mut remaining = budget;
+        let quantum = quantum.max(1);
+        while remaining > 0 && !self.is_indexing_done() {
+            let processed = self
+                .indexer
+                .step(self.source.bytes(), remaining.min(quantum));
+            remaining = remaining.saturating_sub(processed);
+            if processed == 0 || remaining == 0 || self.is_indexing_done() || should_pause() {
+                break;
+            }
+        }
         self.refresh_error_lines();
         self.is_indexing_done()
     }
@@ -464,6 +494,7 @@ impl Session {
             let mut detail_lines = 0usize;
             let mut first_span_start = None;
             let mut stop_before_next = false;
+            let mut scanned_byte_end = self.problem_scan_byte_cursor;
             scanned_end = indexer.for_each_line_span_prefix(
                 source_bytes,
                 start,
@@ -480,6 +511,7 @@ impl Session {
                         return false;
                     }
                     first_span_start = Some(step_start);
+                    scanned_byte_end = span_end;
                     let Ok(line) = u32::try_from(line) else {
                         failed_commits = failed_commits.saturating_add(1);
                         return true;
@@ -513,6 +545,7 @@ impl Session {
                     true
                 },
             );
+            self.problem_scan_byte_cursor = scanned_byte_end;
         }
         self.problem_scan_lines = scanned_end;
         ProblemScanStep {
@@ -525,6 +558,31 @@ impl Session {
             caught_up: scanned_end >= stable_lines,
             finished: false,
         }
+    }
+
+    /// Build a bounded best-effort read-ahead request for a completed index.
+    /// The scheduler executes the returned plan after releasing its Session
+    /// lock; the hint never participates in event semantics.
+    pub fn take_problem_read_ahead_plan(&mut self) -> Option<ReadAheadPlan> {
+        if !self.is_indexing_done() || self.problem_finished {
+            return None;
+        }
+        // Production open-file analysis follows the index frontier and already
+        // consumes hot pages. Enable read-ahead only when the first plan is
+        // requested for a from-zero rescan after indexing has completed.
+        if self.problem_read_ahead_until == 0 && self.problem_scan_byte_cursor != 0 {
+            return None;
+        }
+        let (offset, len, advised_until) = next_read_ahead_range(
+            self.problem_scan_byte_cursor,
+            self.problem_read_ahead_until,
+            self.source.len(),
+            PROBLEM_READ_AHEAD_HORIZON,
+            PROBLEM_READ_AHEAD_LOW_WATER,
+        )?;
+        let plan = self.source.read_ahead_plan(offset, len)?;
+        self.problem_read_ahead_until = advised_until;
+        Some(plan)
     }
 
     pub fn finish_problem_input(&mut self) -> ProblemScanStep {
@@ -1569,6 +1627,93 @@ mod tests {
         assert_eq!(rows[0].1.tag, "BatteryService");
         assert_eq!(rows[1].1.tag, "LightsService");
         assert_eq!(rows[2].1.message, "--------- beginning of main");
+    }
+
+    #[test]
+    fn cooperative_index_step_stops_at_a_quantum_when_requested() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            "04-20 12:06:02.125   146   179 E Crash: {}",
+            "x".repeat(128)
+        )
+        .unwrap();
+        f.flush().unwrap();
+        let mut session = Session::open(f.path()).unwrap();
+        let mut checks = 0;
+
+        let done = session.index_step_cooperatively(64, 8, || {
+            checks += 1;
+            true
+        });
+
+        assert!(!done);
+        assert_eq!(session.indexed_bytes(), 8);
+        assert_eq!(checks, 1);
+    }
+
+    #[test]
+    fn cooperative_index_step_uses_the_full_budget_without_a_pause() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            "04-20 12:06:02.125   146   179 E Crash: {}",
+            "x".repeat(128)
+        )
+        .unwrap();
+        f.flush().unwrap();
+        let mut session = Session::open(f.path()).unwrap();
+
+        let done = session.index_step_cooperatively(64, 8, || false);
+
+        assert!(!done);
+        assert_eq!(session.indexed_bytes(), 64);
+    }
+
+    #[test]
+    fn cooperative_indexing_matches_eager_indexing_across_long_lines_and_eof() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            "04-20 12:06:02.125   146   179 E Crash: {}",
+            "x".repeat(97)
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "04-20 12:06:02.225   146   179 I Crash: {}",
+            "y".repeat(65)
+        )
+        .unwrap();
+        write!(f, "04-20 12:06:02.325   146   179 F Crash: unterminated").unwrap();
+        f.flush().unwrap();
+
+        let mut eager = Session::open(f.path()).unwrap();
+        eager.index_all();
+        let mut cooperative = Session::open(f.path()).unwrap();
+        while !cooperative.index_step_cooperatively(64, 7, || true) {}
+
+        assert_eq!(cooperative.indexed_bytes(), eager.indexed_bytes());
+        assert_eq!(cooperative.stable_lines(), eager.stable_lines());
+        assert_eq!(cooperative.error_count(), eager.error_count());
+        assert_eq!(
+            cooperative.get_rows(0, 16),
+            eager.get_rows(0, 16),
+            "checkpoint and EOF semantics must not depend on cooperative pauses"
+        );
+    }
+
+    #[test]
+    fn problem_read_ahead_only_starts_for_a_from_zero_rescan() {
+        let f = temp_log();
+        let mut rescan = Session::open(f.path()).unwrap();
+        rescan.index_all();
+        assert!(rescan.take_problem_read_ahead_plan().is_some());
+
+        let mut production_catch_up = Session::open(f.path()).unwrap();
+        production_catch_up.index_all();
+        production_catch_up.scan_problems_step(1);
+        assert!(production_catch_up.take_problem_read_ahead_plan().is_none());
     }
 
     #[test]
