@@ -727,7 +727,7 @@ fn parse_fatal_signal(message: &str) -> Option<FatalSignalRecord<'_>> {
             return None;
         }
         let syscall_end = after_syscall.find(" in tid ")?;
-        parse_nonnegative_i32(&after_syscall[..syscall_end])?;
+        parse_signed_decimal(&after_syscall[..syscall_end])?;
         rest = &after_syscall[syscall_end..];
     }
 
@@ -793,11 +793,6 @@ fn parse_unsigned_decimal(value: &str) -> Option<u32> {
         return None;
     }
     value.parse().ok()
-}
-
-fn parse_nonnegative_i32(value: &str) -> Option<i32> {
-    let value = parse_unsigned_decimal(value)?;
-    i32::try_from(value).ok()
 }
 
 fn signal_code_matches_number(token: &str, code: i32) -> bool {
@@ -1132,6 +1127,18 @@ mod tests {
                 Some("com.example.seccomp"),
             ),
             (
+                "07-26 12:00:00.001  901  902 F libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall -2147483648 in tid 902 (seccomp-worker), pid 901 (com.example.seccomp)",
+                Some("com.example.seccomp"),
+            ),
+            (
+                "07-26 12:00:00.001  901  902 F libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 0 in tid 902 (seccomp-worker), pid 901 (com.example.seccomp)",
+                Some("com.example.seccomp"),
+            ),
+            (
+                "07-26 12:00:00.001  901  902 F libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 2147483647 in tid 902 (seccomp-worker), pid 901 (com.example.seccomp)",
+                Some("com.example.seccomp"),
+            ),
+            (
                 "07-26 12:00:00.001  902  902 F libc: Fatal signal 7 (SIGBUS), code 1 (BUS_ADRALN), fault addr 00000000",
                 None,
             ),
@@ -1179,7 +1186,7 @@ mod tests {
             "Fatal signal 11 (SIGSEGV), code 1 (SI_TKILL)",
             "Fatal signal 31 (SIGSYS), code 2 (SYS_SECCOMP), syscall 172 in tid 322 (worker)",
             "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall",
-            "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall -1 in tid 322 (worker)",
+            "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall -2147483649 in tid 322 (worker)",
             "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 2147483648 in tid 322 (worker)",
             "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 172",
             "Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP), syscall 172 in tid 322 (worker) junk",
