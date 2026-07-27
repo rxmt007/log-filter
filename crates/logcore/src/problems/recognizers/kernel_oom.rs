@@ -5,6 +5,8 @@ pub const MAX_KERNEL_OOM_INPUT_BYTES: usize = 64 * 1024;
 pub const MAX_KERNEL_PROCESS_NAME_BYTES: usize = 256;
 pub const MAX_PENDING_KERNEL_OOM: usize = 8;
 pub const MAX_KERNEL_OOM_SPAN_LINES: u32 = 512;
+pub const MAX_KERNEL_OOM_SPAN_BYTES: usize = 512 * 1024;
+pub const MAX_KERNEL_OOM_UNMATCHED: u8 = 16;
 
 const OPENER_INVOKED: u8 = 1 << 0;
 const OPENER_CONSTRAINT: u8 = 1 << 1;
@@ -91,6 +93,8 @@ struct PendingKernelOom {
     last_opener_line: u32,
     mechanism: KernelOomMechanism,
     opener_kinds: u8,
+    bytes_seen: usize,
+    unmatched: u8,
 }
 
 #[derive(Debug)]
@@ -115,6 +119,7 @@ impl KernelOomRecognizer {
         }
     }
 
+    #[cfg(test)]
     pub fn observe(
         &mut self,
         line: u32,
@@ -122,14 +127,25 @@ impl KernelOomRecognizer {
         message: &[u8],
         provenance: LineProvenance,
     ) -> Option<KernelOomOccurrence> {
-        if provenance != LineProvenance::Known(LogBuffer::Kernel)
-            || !matches!(tag, "kernel" | "")
-            || message.len() > MAX_KERNEL_OOM_INPUT_BYTES
-            || str::from_utf8(message).is_err()
-        {
+        self.observe_line(line, message.len(), tag, message, provenance)
+    }
+
+    pub fn observe_line(
+        &mut self,
+        line: u32,
+        raw_len: usize,
+        tag: &str,
+        message: &[u8],
+        provenance: LineProvenance,
+    ) -> Option<KernelOomOccurrence> {
+        self.advance_pending(line, raw_len);
+        if provenance != LineProvenance::Known(LogBuffer::Kernel) || !matches!(tag, "kernel" | "") {
             return None;
         }
-        self.expire_pending(line);
+        if message.len() > MAX_KERNEL_OOM_INPUT_BYTES || str::from_utf8(message).is_err() {
+            self.mark_unmatched();
+            return None;
+        }
         let message = normalize_kernel_message(tag, message);
 
         if let Some(victim) =
@@ -148,6 +164,8 @@ impl KernelOomRecognizer {
                 last_opener_line: line,
                 mechanism,
                 opener_kinds: OPENER_CONSTRAINT,
+                bytes_seen: raw_len,
+                unmatched: 0,
             });
             return None;
         }
@@ -157,6 +175,8 @@ impl KernelOomRecognizer {
                 last_opener_line: line,
                 mechanism: KernelOomMechanism::Global,
                 opener_kinds: OPENER_INVOKED,
+                bytes_seen: raw_len,
+                unmatched: 0,
             });
             return None;
         }
@@ -175,6 +195,7 @@ impl KernelOomRecognizer {
                 candidate.mechanism,
             ));
         }
+        self.mark_unmatched();
         None
     }
 
@@ -210,8 +231,12 @@ impl KernelOomRecognizer {
                 invoked.last_opener_line = pending.last_opener_line;
                 invoked.mechanism = pending.mechanism;
                 invoked.opener_kinds |= OPENER_CONSTRAINT;
+                invoked.unmatched = 0;
                 return;
             }
+        }
+        if pending.bytes_seen > MAX_KERNEL_OOM_SPAN_BYTES {
+            return;
         }
         if let Some(slot) = self.pending.iter_mut().find(|slot| slot.is_none()) {
             *slot = Some(pending);
@@ -232,11 +257,34 @@ impl KernelOomRecognizer {
         self.pending_eviction_count = self.pending_eviction_count.saturating_add(1);
     }
 
-    fn expire_pending(&mut self, line: u32) {
+    fn advance_pending(&mut self, line: u32, raw_len: usize) {
+        // The byte contract follows the physical source span, so interleaved
+        // lines from other buffers/tags cannot bypass the candidate budget.
         for pending in &mut self.pending {
             if pending.is_some_and(|candidate| {
                 line.saturating_sub(candidate.start_line) > MAX_KERNEL_OOM_SPAN_LINES
+                    || candidate
+                        .bytes_seen
+                        .checked_add(raw_len)
+                        .is_none_or(|bytes| bytes > MAX_KERNEL_OOM_SPAN_BYTES)
             }) {
+                *pending = None;
+            } else if let Some(candidate) = pending {
+                candidate.bytes_seen += raw_len;
+            }
+        }
+    }
+
+    fn mark_unmatched(&mut self) {
+        // Callers reach this only for a Known(kernel) line with a compatible
+        // tag that yielded no kernel OOM grammar, including bounded parse
+        // rejection. Other provenance advances bytes but not this counter.
+        for pending in &mut self.pending {
+            let Some(candidate) = pending else {
+                continue;
+            };
+            candidate.unmatched = candidate.unmatched.saturating_add(1);
+            if candidate.unmatched > MAX_KERNEL_OOM_UNMATCHED {
                 *pending = None;
             }
         }
@@ -659,6 +707,11 @@ mod tests {
 
     #[test]
     fn pending_state_is_fixed_capacity_fifo_and_expires_by_source_line() {
+        assert!(!needs_drop::<PendingKernelOom>());
+        assert!(size_of::<PendingKernelOom>() < 128);
+        assert_eq!(MAX_KERNEL_OOM_SPAN_LINES, 512);
+        assert_eq!(MAX_KERNEL_OOM_SPAN_BYTES, 512 * 1024);
+        assert_eq!(MAX_KERNEL_OOM_UNMATCHED, 16);
         let mut recognizer = KernelOomRecognizer::new();
         for line in 1..=MAX_PENDING_KERNEL_OOM as u32 + 1 {
             recognizer.observe(

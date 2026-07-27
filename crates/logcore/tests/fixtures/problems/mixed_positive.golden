@@ -24,7 +24,7 @@ group id=2 kind=Anr fingerprint_version=1 fingerprint=5c5bc20954636bad0d8a02a2f4
     fact line=24 code=ProcessIdentityRecorded rule=AnrActivityManagerV1 role=ProcessIdentity format=EventLogShapedText provenance=Known(Events)
     fact line=21 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=AospText provenance=Known(System)
     fact line=24 code=AnrReasonRecorded rule=AnrActivityManagerV1 role=Reason format=EventLogShapedText provenance=Known(Events)
-group id=5 kind=NativeCrash fingerprint_version=1 fingerprint=c3b1d33caa330d080a43930fd77545e7 quality=FullStack/KnownProcess process="com.example.native" signature="SIGSEGV" count=1/1/0 first=33 last=33 first_ts=0 last_ts=0
+group id=5 kind=NativeCrash fingerprint_version=1 fingerprint=e1b37a1c7a08d5ea407147438941c4b6 quality=FullStack/KnownProcess process="com.example.native" signature="SIGSEGV" count=1/1/0 first=33 last=33 first_ts=0 last_ts=0
   event id=6 kind=NativeCrash range=31..=37 anchor=33 pid=501 instance=5 group=5 observations=6/6 evidence=0xf outcome=0x0 boundary=0x0
     fact line=31 code=NativeCrashDetected rule=NativeTombstoneV1 role=Primary format=TombstoneShapedText provenance=Known(Crash)
     fact line=32 code=ProcessIdentityRecorded rule=NativeTombstoneV1 role=ProcessIdentity format=TombstoneShapedText provenance=Known(Crash)

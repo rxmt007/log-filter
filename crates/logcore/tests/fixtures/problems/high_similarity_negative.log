@@ -16,6 +16,14 @@
 07-26 13:00:00.014  100  100 I am_proc_start: [0,555,10555,com.example.nearmiss,activity,com.example/.Main]
 07-26 13:00:00.015  100  100 I am_proc_died: [0,555,com.example.nearmiss]
 07-26 13:00:00.016  100  100 I am_kill: [555,com.example.nearmiss,900,synthetic request only]
+07-26 13:00:00.017  777  778 F libc: Fatal signal 11 (SIGSEGV)
+07-26 13:00:00.018  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1
+07-26 13:00:00.019  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 SEGV_MAPERR
+07-26 13:00:00.020  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) arbitrary garbage
+07-26 13:00:00.021  777  778 F libc: Fatal signal 11 (SIGABRT), code 1 (SEGV_MAPERR)
+07-26 13:00:00.022  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (BUS_ADRALN)
+07-26 13:00:00.023  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid nope (worker)
+07-26 13:00:00.024  777  778 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid 778 (worker), pid 999 (com.example.nearmiss)
 --------- beginning of kernel
 07-26 13:00:01.000    0    0 W kernel: Out of memory pressure is rising
 07-26 13:00:01.001    0    0 W kernel: Killed process is a phrase in documentation

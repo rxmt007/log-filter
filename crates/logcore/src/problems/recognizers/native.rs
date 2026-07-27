@@ -15,6 +15,7 @@ pub(crate) const MAX_NATIVE_LINE_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_NATIVE_FRAMES: usize = 3;
 const MAX_PROCESS_NAME: usize = 256;
 const MAX_FRAME_TOKEN: usize = 256;
+const MAX_SIGNAL_CODE_TOKEN: usize = 32;
 const MAX_UNMATCHED: u8 = 8;
 const FINGERPRINT_VERSION: u16 = 1;
 const TOMBSTONE_SEPARATOR: &str = "*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***";
@@ -31,6 +32,7 @@ pub(crate) struct LibcSignalObservation {
     anchor_timestamp: PackedLogTimestamp,
     pid: u32,
     signal: FatalSignal,
+    signal_code: FixedText<MAX_SIGNAL_CODE_TOKEN>,
     explicit_process: FixedText<MAX_PROCESS_NAME>,
 }
 
@@ -58,6 +60,10 @@ impl LibcSignalObservation {
             process,
         );
         fingerprint.token(FingerprintTokenKind::Signal, self.signal.canonical());
+        fingerprint.token(
+            FingerprintTokenKind::StructuredField,
+            self.signal_code.as_str().as_bytes(),
+        );
         let group_key = GroupKey::new(
             ProblemKind::NativeCrash,
             FINGERPRINT_VERSION,
@@ -142,6 +148,7 @@ struct NativePending {
     identity_point: Option<EvidencePoint>,
     process_name: FixedText<MAX_PROCESS_NAME>,
     signal: Option<FatalSignal>,
+    signal_code: FixedText<MAX_SIGNAL_CODE_TOKEN>,
     signal_point: Option<EvidencePoint>,
     frames: [FixedText<MAX_FRAME_TOKEN>; MAX_NATIVE_FRAMES],
     frame_points: [Option<EvidencePoint>; MAX_NATIVE_FRAMES],
@@ -169,6 +176,7 @@ impl NativePending {
             identity_point: None,
             process_name: FixedText::default(),
             signal: None,
+            signal_code: FixedText::default(),
             signal_point: None,
             frames: [FixedText::default(); MAX_NATIVE_FRAMES],
             frame_points: [None; MAX_NATIVE_FRAMES],
@@ -187,6 +195,7 @@ impl NativePending {
             && self.identity_point.is_some()
             && !self.process_name.is_empty()
             && self.signal.is_some()
+            && !self.signal_code.is_empty()
             && self.signal_point.is_some()
     }
 
@@ -222,11 +231,12 @@ impl NativePending {
         }
         if message.starts_with("signal ") {
             match parse_fatal_signal(message) {
-                Some(signal) => {
-                    self.signal = Some(signal);
+                Some(record) if self.signal_code.set(record.code_token) => {
+                    self.signal = Some(record.signal);
                     self.signal_point = Some(point);
                 }
                 None => self.forbidden = true,
+                Some(_) => self.forbidden = true,
             }
             matched = true;
         }
@@ -280,6 +290,10 @@ impl NativePending {
             &process,
         );
         fingerprint.token(FingerprintTokenKind::Signal, signal.canonical());
+        fingerprint.token(
+            FingerprintTokenKind::StructuredField,
+            self.signal_code.as_str().as_bytes(),
+        );
         for frame in self.frames.iter().take(usize::from(self.frame_count)) {
             fingerprint.token(FingerprintTokenKind::Frame, frame.as_str().as_bytes());
         }
@@ -484,13 +498,17 @@ fn recognize_libc_signal(line: &ObservedLine<'_>) -> Option<LibcSignalObservatio
         return None;
     }
     let message = trim_ascii(line.parsed.message);
-    let signal = parse_fatal_signal(message.strip_prefix("Fatal ")?)?;
+    let record = parse_fatal_signal(message.strip_prefix("Fatal ")?)?;
     let pid = parse_pid(line.parsed.pid)?;
-    let explicit_process = parse_libc_process(message, pid)?;
+    if record.explicit_pid.is_some_and(|explicit| explicit != pid) {
+        return None;
+    }
     let mut process = FixedText::default();
-    if let Some(explicit_process) = explicit_process {
+    if let Some(explicit_process) = record.explicit_process {
         process.set(explicit_process).then_some(())?;
     }
+    let mut signal_code = FixedText::default();
+    signal_code.set(record.code_token).then_some(())?;
     Some(LibcSignalObservation {
         point: EvidencePoint {
             line: line.line,
@@ -499,7 +517,8 @@ fn recognize_libc_signal(line: &ObservedLine<'_>) -> Option<LibcSignalObservatio
         anchor_timestamp: parse_log_timestamp(line.parsed.date, line.parsed.time)
             .unwrap_or_default(),
         pid,
-        signal,
+        signal: record.signal,
+        signal_code,
         explicit_process: process,
     })
 }
@@ -662,13 +681,22 @@ fn valid_process_name(value: &str) -> bool {
         })
 }
 
-fn parse_fatal_signal(message: &str) -> Option<FatalSignal> {
+#[derive(Debug, Clone, Copy)]
+struct FatalSignalRecord<'a> {
+    signal: FatalSignal,
+    code_token: &'a str,
+    explicit_pid: Option<u32>,
+    explicit_process: Option<&'a str>,
+}
+
+fn parse_fatal_signal(message: &str) -> Option<FatalSignalRecord<'_>> {
+    // AOSP bionic emits these fields in a fixed order. Optional facets are
+    // parsed below as complete shapes so a valid prefix never admits junk.
     let rest = message.strip_prefix("signal ")?;
-    let number_end = rest.find(' ')?;
-    let number = rest[..number_end].parse::<u8>().ok()?;
-    let rest = rest[number_end..].trim_start();
-    let name = rest.strip_prefix('(')?.split_once(')')?.0;
-    match (number, name) {
+    let (number, rest) = rest.split_once(" (")?;
+    let number = number.parse::<u8>().ok()?;
+    let (name, rest) = rest.split_once("), code ")?;
+    let signal = match (number, name) {
         (4, "SIGILL") => Some(FatalSignal::Ill),
         (5, "SIGTRAP") => Some(FatalSignal::Trap),
         (6, "SIGABRT") => Some(FatalSignal::Abrt),
@@ -678,19 +706,223 @@ fn parse_fatal_signal(message: &str) -> Option<FatalSignal> {
         (16, "SIGSTKFLT") => Some(FatalSignal::StkFlt),
         (31, "SIGSYS") => Some(FatalSignal::Sys),
         _ => None,
+    }?;
+
+    let (code, rest) = rest.split_once(" (")?;
+    let code = parse_signed_decimal(code)?;
+    let (code_description, mut rest) = rest.split_once(')')?;
+    let code_token = parse_signal_code(signal, code, code_description)?;
+
+    if let Some(after_address) = rest.strip_prefix(", fault addr ") {
+        let address_end = after_address
+            .find(" in tid ")
+            .unwrap_or(after_address.len());
+        let address = &after_address[..address_end];
+        if !valid_fault_address(address) {
+            return None;
+        }
+        rest = &after_address[address_end..];
+    };
+
+    let (explicit_pid, explicit_process) = if rest.is_empty() {
+        (None, None)
+    } else {
+        parse_signal_thread_suffix(rest)?
+    };
+    Some(FatalSignalRecord {
+        signal,
+        code_token,
+        explicit_pid,
+        explicit_process,
+    })
+}
+
+fn parse_signed_decimal(value: &str) -> Option<i32> {
+    if value.is_empty()
+        || value.starts_with('+')
+        || value == "-"
+        || !value
+            .strip_prefix('-')
+            .unwrap_or(value)
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    value.parse::<i32>().ok()
+}
+
+fn parse_signal_code(signal: FatalSignal, _code: i32, description: &str) -> Option<&str> {
+    let (token, sender) = match description.split_once(" from pid ") {
+        Some((token, sender)) => (token, Some(sender)),
+        None => (description, None),
+    };
+    if !valid_signal_code_token(signal, token) {
+        return None;
+    }
+    if let Some(sender) = sender {
+        if !matches!(
+            token,
+            "SI_USER"
+                | "SI_QUEUE"
+                | "SI_TIMER"
+                | "SI_MESGQ"
+                | "SI_ASYNCIO"
+                | "SI_SIGIO"
+                | "SI_TKILL"
+                | "SI_DETHREAD"
+        ) {
+            return None;
+        }
+        let (pid, uid) = sender.split_once(", uid ")?;
+        parse_pid(pid)?;
+        parse_unsigned_decimal(uid)?;
+    }
+    Some(token)
+}
+
+fn parse_unsigned_decimal(value: &str) -> Option<u32> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
+}
+
+fn valid_signal_code_token(signal: FatalSignal, token: &str) -> bool {
+    // Frozen names emitted by AOSP debuggerd's get_sigcode implementation.
+    // Unknown platform codes use the exact token "?", not arbitrary text.
+    if token == "?" {
+        return true;
+    }
+    if matches!(
+        token,
+        "SI_USER"
+            | "SI_KERNEL"
+            | "SI_QUEUE"
+            | "SI_TIMER"
+            | "SI_MESGQ"
+            | "SI_ASYNCIO"
+            | "SI_SIGIO"
+            | "SI_TKILL"
+            | "SI_DETHREAD"
+    ) {
+        return true;
+    }
+    match signal {
+        FatalSignal::Ill => matches!(
+            token,
+            "ILL_ILLOPC"
+                | "ILL_ILLOPN"
+                | "ILL_ILLADR"
+                | "ILL_ILLTRP"
+                | "ILL_PRVOPC"
+                | "ILL_PRVREG"
+                | "ILL_COPROC"
+                | "ILL_BADSTK"
+                | "ILL_BADIADDR"
+                | "ILL_BREAK"
+                | "ILL_BNDMOD"
+        ),
+        FatalSignal::Trap => matches!(
+            token,
+            "TRAP_BRKPT"
+                | "TRAP_TRACE"
+                | "TRAP_BRANCH"
+                | "TRAP_HWBKPT"
+                | "TRAP_UNDIAGNOSED"
+                | "TRAP_PERF"
+                | "PTRACE_EVENT_FORK"
+                | "PTRACE_EVENT_VFORK"
+                | "PTRACE_EVENT_CLONE"
+                | "PTRACE_EVENT_EXEC"
+                | "PTRACE_EVENT_VFORK_DONE"
+                | "PTRACE_EVENT_EXIT"
+                | "PTRACE_EVENT_SECCOMP"
+                | "PTRACE_EVENT_STOP"
+        ),
+        FatalSignal::Abrt | FatalSignal::StkFlt => false,
+        FatalSignal::Bus => matches!(
+            token,
+            "BUS_ADRALN" | "BUS_ADRERR" | "BUS_OBJERR" | "BUS_MCEERR_AR" | "BUS_MCEERR_AO"
+        ),
+        FatalSignal::Fpe => matches!(
+            token,
+            "FPE_INTDIV"
+                | "FPE_INTOVF"
+                | "FPE_FLTDIV"
+                | "FPE_FLTOVF"
+                | "FPE_FLTUND"
+                | "FPE_FLTRES"
+                | "FPE_FLTINV"
+                | "FPE_FLTSUB"
+                | "FPE_DECOVF"
+                | "FPE_DECDIV"
+                | "FPE_DECERR"
+                | "FPE_INVASC"
+                | "FPE_INVDEC"
+                | "FPE_FLTUNK"
+                | "FPE_CONDTRAP"
+        ),
+        FatalSignal::Segv => matches!(
+            token,
+            "SEGV_MAPERR"
+                | "SEGV_ACCERR"
+                | "SEGV_BNDERR"
+                | "SEGV_PKUERR"
+                | "SEGV_ACCADI"
+                | "SEGV_ADIDERR"
+                | "SEGV_ADIPERR"
+                | "SEGV_MTEAERR"
+                | "SEGV_MTESERR"
+                | "SEGV_CPERR"
+        ),
+        FatalSignal::Sys => matches!(token, "SYS_SECCOMP" | "SYS_USER_DISPATCH"),
     }
 }
 
-fn parse_libc_process(message: &str, expected_pid: u32) -> Option<Option<&str>> {
-    let Some((_, rest)) = message.rsplit_once(", pid ") else {
-        return Some(None);
-    };
-    let (pid, process) = rest.split_once(" (")?;
-    if parse_pid(pid)? != expected_pid {
-        return None;
+fn valid_fault_address(address: &str) -> bool {
+    if address == "--------" {
+        return true;
     }
+    let digits = address.strip_prefix("0x").unwrap_or(address);
+    !digits.is_empty()
+        && digits.len() <= 16
+        && (address.starts_with("0x") || matches!(digits.len(), 8 | 16))
+        && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn parse_signal_thread_suffix(rest: &str) -> Option<(Option<u32>, Option<&str>)> {
+    let rest = rest.strip_prefix(" in tid ")?;
+    let (tid, rest) = rest.split_once(" (")?;
+    parse_pid(tid)?;
+
+    let (thread_name, pid_and_process) = match rest.split_once("), pid ") {
+        Some((thread_name, pid_and_process)) => (thread_name, Some(pid_and_process)),
+        None => (rest.strip_suffix(')')?, None),
+    };
+    valid_task_name(thread_name).then_some(())?;
+
+    let Some(pid_and_process) = pid_and_process else {
+        return Some((None, None));
+    };
+    let (pid, process) = pid_and_process.split_once(" (")?;
+    let pid = parse_pid(pid)?;
     let process = process.strip_suffix(')')?;
-    valid_process_name(process).then_some(Some(process))
+    valid_parenthesized_name(process, MAX_PROCESS_NAME).then_some(())?;
+    let process = valid_process_name(process).then_some(process);
+    Some((Some(pid), process))
+}
+
+fn valid_task_name(value: &str) -> bool {
+    valid_parenthesized_name(value, 16)
+}
+
+fn valid_parenthesized_name(value: &str, max_len: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_len
+        && value
+            .chars()
+            .all(|character| !character.is_control() && character != '(' && character != ')')
 }
 
 fn normalize_native_frame(message: &str) -> Option<FixedText<MAX_FRAME_TOKEN>> {
@@ -821,6 +1053,110 @@ mod tests {
     fn finish(recognizer: &mut NativeRecognizer) -> Option<RecognizedProblem> {
         recognizer.finish_input();
         recognizer.pop_ready()
+    }
+
+    #[test]
+    fn libc_signal_accepts_only_enumerated_aosp_suffix_shapes() {
+        let cases = [
+            (
+                "07-26 12:00:00.001  321  322 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0 in tid 322 (RenderThread)",
+                None,
+            ),
+            (
+                "07-26 12:00:00.001  777  778 F libc: Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 778 (worker)",
+                None,
+            ),
+            (
+                "07-26 12:00:00.001  777  778 F libc: Fatal signal 6 (SIGABRT), code -6 (SI_TKILL from pid 42, uid 0) in tid 778 (worker), pid 777 (com.example.native)",
+                Some("com.example.native"),
+            ),
+            (
+                "07-26 12:00:00.001  901  901 F libc: Fatal signal 31 (SIGSYS), code 1 (SYS_SECCOMP)",
+                None,
+            ),
+            (
+                "07-26 12:00:00.001  902  902 F libc: Fatal signal 7 (SIGBUS), code 1 (BUS_ADRALN), fault addr 00000000",
+                None,
+            ),
+            (
+                "07-26 12:00:00.001  903  904 F libc: Fatal signal 8 (SIGFPE), code 1 (FPE_INTDIV) in tid 904 (math-worker), pid 903 (com.example.math)",
+                Some("com.example.math"),
+            ),
+            (
+                "07-26 12:00:00.001  905  906 F libc: Fatal signal 4 (SIGILL), code 1 (ILL_ILLOPC), fault addr 0x1234 in tid 906 (Jit thread pool), pid 905 (com.example.jit)",
+                Some("com.example.jit"),
+            ),
+        ];
+
+        for (raw, expected_process) in cases {
+            let signal = recognize_libc_signal(&observed(0, raw))
+                .unwrap_or_else(|| panic!("expected strict AOSP libc signal: {raw}"));
+            assert_eq!(signal.explicit_process_ref(), expected_process);
+        }
+    }
+
+    #[test]
+    fn libc_signal_rejects_incomplete_or_unconsumed_suffixes() {
+        let malformed = [
+            "Fatal signal 11 (SIGSEGV)",
+            "Fatal signal 11 (SIGSEGV), code 1",
+            "Fatal signal 11 (SIGSEGV), code 1 SEGV_MAPERR",
+            "Fatal signal 11 (SIGSEGV), code nope (SEGV_MAPERR)",
+            "Fatal signal 11 (SIGSEGV), code 2147483648 (SEGV_MAPERR)",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) arbitrary garbage",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x1 trailing",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid nope (worker)",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid 322",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid 322 (worker) junk",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), pid 321 (com.example)",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid 322 (worker), pid 321",
+            "Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid 322 (worker), pid 321 (com.example) junk",
+            "Fatal signal 11 (SIGABRT), code 1 (SEGV_MAPERR)",
+            "Fatal signal 11 (SIGSEGV), code 1 (BUS_ADRALN)",
+            "Fatal signal 6 (SIGABRT), code -6 (SI_TKILL from pid nope, uid 1000)",
+            "Fatal signal 6 (SIGABRT), code -6 (SI_TKILL from pid 42, uid nope)",
+            "Fatal signal 6 (SIGABRT), code -6 (anything goes)",
+        ];
+
+        for message in malformed {
+            let raw = format!("07-26 12:00:00.001  321  322 F libc: {message}");
+            assert!(
+                recognize_libc_signal(&observed(0, &raw)).is_none(),
+                "malformed suffix must not be partially accepted: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn libc_signal_rejects_explicit_pid_that_disagrees_with_header() {
+        let raw = "07-26 12:00:00.001  321  322 F libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR) in tid 322 (worker), pid 999 (com.example)";
+        assert!(recognize_libc_signal(&observed(0, raw)).is_none());
+    }
+
+    #[test]
+    fn libc_signal_fingerprint_includes_si_code_but_not_dynamic_suffix_fields() {
+        let process = ProcessFingerprintKey::new(Some("com.example.native"));
+        let fingerprint = |raw: &str| {
+            recognize_libc_signal(&observed(0, raw))
+                .expect("valid libc fatal signal")
+                .into_problem(&process, ProcessInstanceKey(1))
+                .group_key
+                .fingerprint()
+        };
+        let base = fingerprint(
+            "07-26 12:00:00.001  777  778 F libc: Fatal signal 6 (SIGABRT), code -6 (SI_TKILL) in tid 778 (worker)",
+        );
+        let same_code_different_facets = fingerprint(
+            "07-26 12:00:00.001  777  779 F libc: Fatal signal 6 (SIGABRT), code -6 (SI_TKILL from pid 42, uid 1000) in tid 779 (other), pid 777 (com.example.native)",
+        );
+        let different_code = fingerprint(
+            "07-26 12:00:00.001  777  778 F libc: Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 778 (worker)",
+        );
+
+        assert_eq!(base, same_code_different_facets);
+        assert_ne!(base, different_code);
     }
 
     fn complete_raw(

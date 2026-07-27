@@ -833,8 +833,9 @@ impl ProblemEngine {
                 self.recognizer_observe_counts[4] =
                     self.recognizer_observe_counts[4].saturating_add(1);
             }
-            self.kernel_oom.observe(
+            self.kernel_oom.observe_line(
                 line.line,
+                line.raw.len(),
                 line.parsed.tag,
                 line.parsed.message.as_bytes(),
                 line.provenance,
@@ -1008,6 +1009,26 @@ impl ProblemEngine {
     }
 
     fn advance_correlation(&mut self, watermark: u64, delta: &mut ProblemDelta) {
+        let recent_expired = self
+            .recent
+            .next_expiry_line()
+            .is_some_and(|expiry| watermark > expiry);
+        // A lifecycle observation and its provisional target can share the same
+        // deadline. Claim the observation first, but retain it as a start barrier
+        // until fault pairing and immutable finalization have completed.
+        if recent_expired {
+            let expiring_recent = self
+                .recent
+                .iter()
+                .take_while(|observation| watermark > observation.expiry_line())
+                .take_while(|_| self.consume_correlation_work())
+                .filter(|observation| observation.payload().claimed_by.is_none())
+                .map(|observation| observation.sequence())
+                .collect::<Vec<_>>();
+            for sequence in expiring_recent {
+                self.attach_recent_observation(sequence);
+            }
+        }
         if self
             .provisional
             .next_finalize_after_line()
@@ -1024,22 +1045,7 @@ impl ProblemEngine {
                 }
             }
         }
-        if self
-            .recent
-            .next_expiry_line()
-            .is_some_and(|expiry| watermark > expiry)
-        {
-            let expiring_recent = self
-                .recent
-                .iter()
-                .take_while(|observation| watermark > observation.expiry_line())
-                .take_while(|_| self.consume_correlation_work())
-                .filter(|observation| observation.payload().claimed_by.is_none())
-                .map(|observation| observation.sequence())
-                .collect::<Vec<_>>();
-            for sequence in expiring_recent {
-                self.attach_recent_observation(sequence);
-            }
+        if recent_expired {
             self.recent.advance_watermark(watermark);
         }
     }
@@ -2741,6 +2747,169 @@ mod tests {
             .collect()
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct FinalizedProblemSnapshot {
+        stats: ProblemStats,
+        event: ProblemEvent,
+        observations: Vec<ObservationRef>,
+        group: ProblemGroupSummary,
+    }
+
+    fn finalized_problem_snapshot(engine: &ProblemEngine) -> FinalizedProblemSnapshot {
+        assert_eq!(engine.stats().stored_occurrence_count, 1);
+        let event = engine.event(ProblemEventId(0)).unwrap();
+        FinalizedProblemSnapshot {
+            stats: engine.stats(),
+            event,
+            observations: engine
+                .event_observations(ProblemEventId(0))
+                .unwrap()
+                .to_vec(),
+            group: engine
+                .group(GroupId::from_raw(event.group_id_raw()))
+                .unwrap(),
+        }
+    }
+
+    fn recoverable_native_crash_then_death(cross_natural_watermark: bool) -> ProblemEngine {
+        let events = LineProvenance::Known(crate::problems::LogBuffer::Events);
+        let mut engine = ProblemEngine::new();
+        for (line, raw) in [
+            (
+                0,
+                "07-26 12:00:00.000  100  100 I am_proc_start: [321,10321,com.example.native,activity,com.example/.Main]",
+            ),
+            (
+                1,
+                "07-26 12:00:00.001  100  100 I am_crash: [321,com.example.native,0,Native crash,signal 11,libexample.so,60,1]",
+            ),
+            (
+                2,
+                "07-26 12:00:00.002  100  100 I am_proc_died: [321,com.example.native]",
+            ),
+        ] {
+            feed_with_provenance(&mut engine, line, raw, events);
+        }
+        if cross_natural_watermark {
+            for line in 3..=FAULT_OUTCOME_WINDOW_LINES + 3 {
+                feed_with_provenance(
+                    &mut engine,
+                    line,
+                    "07-26 12:00:00.003    7    7 I Other: ordinary trailing line",
+                    LineProvenance::Unknown,
+                );
+            }
+            assert_eq!(engine.stats().stored_occurrence_count, 1);
+            assert_eq!(engine.stats().provisional_occurrence_count, 0);
+        }
+        engine.finish_input();
+        engine
+    }
+
+    fn java_death_then_late_am_crash(cross_natural_watermark: bool) -> ProblemEngine {
+        let events = LineProvenance::Known(crate::problems::LogBuffer::Events);
+        let mut engine = ProblemEngine::new();
+        for (line, raw, provenance) in [
+            (
+                0,
+                "07-26 12:00:00.000  100  100 I am_proc_start: [0,111,10123,com.example.app,activity,com.example/.Main]",
+                events,
+            ),
+            (
+                1,
+                "07-26 12:00:00.001  111  111 E AndroidRuntime: FATAL EXCEPTION: main",
+                LineProvenance::Unknown,
+            ),
+            (
+                2,
+                "07-26 12:00:00.002  111  111 E AndroidRuntime: Process: com.example.app, PID: 111",
+                LineProvenance::Unknown,
+            ),
+            (
+                3,
+                "07-26 12:00:00.003  111  111 E AndroidRuntime: java.lang.RuntimeException: boom",
+                LineProvenance::Unknown,
+            ),
+            (
+                4,
+                "07-26 12:00:00.004  111  111 E AndroidRuntime: FATAL EXCEPTION: next",
+                LineProvenance::Unknown,
+            ),
+            (
+                5,
+                "07-26 12:00:00.005  100  100 I am_proc_died: [0,111,com.example.app]",
+                events,
+            ),
+            (
+                6,
+                "07-26 12:00:00.006  100  100 I am_crash: [111,com.example.app,0,java.lang.RuntimeException,boom,Example.kt,42]",
+                events,
+            ),
+        ] {
+            feed_with_provenance(&mut engine, line, raw, provenance);
+        }
+        if cross_natural_watermark {
+            for line in 7..=FAULT_OUTCOME_WINDOW_LINES + 7 {
+                feed_with_provenance(
+                    &mut engine,
+                    line,
+                    "07-26 12:00:00.007    7    7 I Other: ordinary trailing line",
+                    LineProvenance::Unknown,
+                );
+            }
+            assert_eq!(engine.stats().stored_occurrence_count, 1);
+            assert_eq!(engine.stats().provisional_occurrence_count, 0);
+        }
+        engine.finish_input();
+        engine
+    }
+
+    #[test]
+    fn expiring_death_attaches_before_the_same_watermark_finalizes_its_crash() {
+        let natural = finalized_problem_snapshot(&recoverable_native_crash_then_death(true));
+        let eof = finalized_problem_snapshot(&recoverable_native_crash_then_death(false));
+
+        assert_eq!(natural, eof);
+        assert_eq!(
+            (natural.event.start_line(), natural.event.end_line()),
+            (1, 2)
+        );
+        assert!(natural
+            .event
+            .outcome()
+            .contains(OutcomeFlags::DEATH_OBSERVED));
+        assert!(natural.event.outcome().contains(OutcomeFlags::CONFLICT));
+        assert!(natural
+            .observations
+            .iter()
+            .any(|observation| observation.role() == ObservationRole::Death));
+    }
+
+    #[test]
+    fn death_before_late_am_crash_is_stable_at_natural_watermark_and_eof() {
+        let natural = finalized_problem_snapshot(&java_death_then_late_am_crash(true));
+        let eof = finalized_problem_snapshot(&java_death_then_late_am_crash(false));
+
+        assert_eq!(natural, eof);
+        assert_eq!(
+            (natural.event.start_line(), natural.event.end_line()),
+            (1, 6)
+        );
+        assert_eq!(natural.event.anchor_line(), 6);
+        assert!(natural
+            .event
+            .outcome()
+            .contains(OutcomeFlags::DEATH_OBSERVED));
+        assert!(natural
+            .observations
+            .iter()
+            .any(|observation| observation.rule() == RuleId::ManagedAmCrashV1));
+        assert!(natural
+            .observations
+            .iter()
+            .any(|observation| observation.role() == ObservationRole::Death));
+    }
+
     #[test]
     fn engine_commits_strict_restart_and_signal_exit_without_ordinary_death_noise() {
         let mut engine = ProblemEngine::new();
@@ -2919,6 +3088,123 @@ mod tests {
                 && fact.rule() == RuleId::KernelOomKillV1
                 && fact.role() == ObservationRole::Supporting
         }));
+    }
+
+    #[test]
+    fn kernel_oom_unmatched_budget_allows_sixteen_kernel_lines_but_not_seventeen() {
+        let kernel = LineProvenance::Known(crate::problems::LogBuffer::Kernel);
+        for (unmatched, expected_occurrences) in [(15, 1), (16, 1), (17, 0)] {
+            let mut engine = ProblemEngine::new();
+            feed_with_provenance(
+                &mut engine,
+                0,
+                "07-26 12:00:00.000  0  0 E kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null)",
+                kernel,
+            );
+            for line in 1..=unmatched {
+                feed_with_provenance(
+                    &mut engine,
+                    line,
+                    "07-26 12:00:00.001  0  0 I kernel: ordinary kernel diagnostic",
+                    kernel,
+                );
+            }
+            feed_with_provenance(
+                &mut engine,
+                unmatched + 1,
+                "07-26 12:00:00.002  0  0 E kernel: Killed process 333 (com.example.kernel) total-vm:42kB",
+                kernel,
+            );
+            engine.finish_input();
+
+            assert_eq!(
+                engine.stats().stored_occurrence_count,
+                expected_occurrences,
+                "{unmatched} unmatched compatible kernel lines"
+            );
+        }
+    }
+
+    #[test]
+    fn kernel_oom_byte_budget_counts_the_raw_physical_span_inclusively() {
+        const MAX_BYTES: usize = 512 * 1024;
+        for (total_bytes, expected_occurrences) in
+            [(MAX_BYTES - 1, 1), (MAX_BYTES, 1), (MAX_BYTES + 1, 0)]
+        {
+            let mut engine = ProblemEngine::new();
+            let openers = [
+                "07-26 12:00:00.000  0  0 E kernel: synthetic-worker invoked oom-killer: gfp_mask=0x0",
+                "07-26 12:00:00.001  0  0 E kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null)",
+            ];
+            let victim = "07-26 12:00:00.010  0  0 E kernel: Killed process 333 (com.example.kernel) total-vm:42kB";
+            for (line, opener) in openers.iter().enumerate() {
+                feed_with_provenance(
+                    &mut engine,
+                    line as u32,
+                    opener,
+                    LineProvenance::Known(crate::problems::LogBuffer::Kernel),
+                );
+            }
+
+            let opener_bytes = openers.iter().map(|opener| opener.len()).sum::<usize>();
+            let filler_bytes = total_bytes - opener_bytes - victim.len();
+            let full_filler_lines = 7;
+            let full_filler_bytes = 64 * 1024;
+            assert!(filler_bytes > full_filler_lines * full_filler_bytes);
+            for line in 1..=full_filler_lines {
+                let raw = padded_log_line(
+                    "07-26 12:00:00.001  7  7 I Other: ordinary interleaved output ",
+                    full_filler_bytes,
+                );
+                feed_with_provenance(
+                    &mut engine,
+                    openers.len() as u32 + line as u32 - 1,
+                    &raw,
+                    LineProvenance::Unknown,
+                );
+            }
+            let final_filler_bytes = filler_bytes - full_filler_lines * full_filler_bytes;
+            let raw = padded_log_line(
+                "07-26 12:00:00.009  7  7 I Other: ordinary interleaved output ",
+                final_filler_bytes,
+            );
+            feed_with_provenance(
+                &mut engine,
+                openers.len() as u32 + full_filler_lines as u32,
+                &raw,
+                LineProvenance::Unknown,
+            );
+            feed_with_provenance(
+                &mut engine,
+                openers.len() as u32 + full_filler_lines as u32 + 1,
+                victim,
+                LineProvenance::Known(crate::problems::LogBuffer::Kernel),
+            );
+            engine.finish_input();
+
+            assert_eq!(
+                engine.stats().stored_occurrence_count,
+                expected_occurrences,
+                "candidate raw span of {total_bytes} bytes"
+            );
+            if expected_occurrences == 1 {
+                let event = engine.event(ProblemEventId(0)).unwrap();
+                assert_eq!(event.start_line(), 0);
+                assert_eq!(
+                    event.anchor_line(),
+                    openers.len() as u32 + full_filler_lines as u32 + 1
+                );
+            }
+        }
+    }
+
+    fn padded_log_line(prefix: &str, total_bytes: usize) -> String {
+        assert!(total_bytes >= prefix.len());
+        let mut raw = String::with_capacity(total_bytes);
+        raw.push_str(prefix);
+        raw.extend(std::iter::repeat_n('x', total_bytes - prefix.len()));
+        assert_eq!(raw.len(), total_bytes);
+        raw
     }
 
     #[test]
