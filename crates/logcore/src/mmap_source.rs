@@ -3,6 +3,41 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(windows)]
+fn prefetch_virtual_memory(
+    process: windows_sys::Win32::Foundation::HANDLE,
+    range: &windows_sys::Win32::System::Memory::WIN32_MEMORY_RANGE_ENTRY,
+) -> bool {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+    use windows_sys::Win32::System::Memory::WIN32_MEMORY_RANGE_ENTRY;
+
+    type PrefetchVirtualMemoryFn =
+        unsafe extern "system" fn(HANDLE, usize, *const WIN32_MEMORY_RANGE_ENTRY, u32) -> i32;
+
+    static PREFETCH_VIRTUAL_MEMORY: OnceLock<Option<PrefetchVirtualMemoryFn>> = OnceLock::new();
+    let function = PREFETCH_VIRTUAL_MEMORY.get_or_init(|| {
+        // PrefetchVirtualMemory is a best-effort optimization introduced in
+        // Windows 8. Resolve it lazily so an unavailable export cannot prevent
+        // LogFilter (or its test binary) from starting.
+        let module = unsafe { GetModuleHandleA(c"kernel32.dll".as_ptr().cast()) };
+        if module.is_null() {
+            return None;
+        }
+        let address = unsafe { GetProcAddress(module, c"PrefetchVirtualMemory".as_ptr().cast()) }?;
+        // SAFETY: GetProcAddress returned the documented system-ABI export
+        // with this exact signature.
+        Some(unsafe {
+            std::mem::transmute::<unsafe extern "system" fn() -> isize, PrefetchVirtualMemoryFn>(
+                address,
+            )
+        })
+    });
+
+    function.is_some_and(|prefetch| unsafe { prefetch(process, 1, range, 0) != 0 })
+}
+
 #[derive(Clone)]
 pub struct ReadAheadPlan {
     mmap: Arc<Mmap>,
@@ -47,9 +82,7 @@ impl ReadAheadPlan {
         }
         #[cfg(windows)]
         {
-            use windows_sys::Win32::System::Memory::{
-                PrefetchVirtualMemory, WIN32_MEMORY_RANGE_ENTRY,
-            };
+            use windows_sys::Win32::System::Memory::WIN32_MEMORY_RANGE_ENTRY;
             use windows_sys::Win32::System::Threading::GetCurrentProcess;
             let range = WIN32_MEMORY_RANGE_ENTRY {
                 VirtualAddress: self
@@ -63,7 +96,7 @@ impl ReadAheadPlan {
             let _ = &self.file;
             // SAFETY: the Arc keeps this immutable mapping alive for the call,
             // and the planned range is clamped to that mapping.
-            unsafe { PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0) != 0 }
+            prefetch_virtual_memory(unsafe { GetCurrentProcess() }, &range)
         }
         #[cfg(not(any(unix, windows)))]
         {
@@ -178,5 +211,16 @@ mod tests {
             next_read_ahead_range(usize::MAX - 4, 0, usize::MAX, 64, 32),
             Some((usize::MAX - 4, 4, usize::MAX))
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_read_ahead_hint_is_safe_to_execute() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"hello\nworld").unwrap();
+        let source = MmapSource::open(file.path()).unwrap();
+        let plan = source.read_ahead_plan(0, source.len()).unwrap();
+
+        let _ = plan.execute();
     }
 }
