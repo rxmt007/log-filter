@@ -8,6 +8,13 @@ import { useSession } from "@/store/session";
 const HIGHLIGHT_COLORS = ["yellow", "green", "blue", "purple"] as const;
 const FILTER_CONTENT_ID = "lf-filter-panel-content";
 const EMPTY_SUMMARY = "未启用过滤或高亮条件";
+const FILTER_TEXT_INPUT_PROPS = {
+  autoCapitalize: "none",
+  autoComplete: "off",
+  autoCorrect: "off",
+  spellCheck: false,
+  writingsuggestions: "false",
+} as const;
 
 export function FilterBar() {
   const [collapsed, setCollapsed] = useState(false);
@@ -71,6 +78,7 @@ export function FilterBar() {
                     </span>
                     <span className="lf-filter-label">{field.label}</span>
                     <input
+                      {...FILTER_TEXT_INPUT_PROPS}
                       value={value.pattern}
                       placeholder={field.placeholder}
                       onChange={(event) =>
@@ -119,6 +127,7 @@ export function FilterBar() {
                   </button>
                   <span className="lf-filter-label">高亮 {index + 1}</span>
                   <input
+                    {...FILTER_TEXT_INPUT_PROPS}
                     value={rule.pattern}
                     placeholder="keyword"
                     onChange={(event) => setHighlightRule(index, { pattern: event.target.value })}
