@@ -1139,10 +1139,7 @@ footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px
 <!-- ================================================================ 9 -->
 <section id="sec-9">
   <h2><span class="no">9.</span>测试地图</h2>
-  <p>本地全套验证(dev 分支日常依赖本地验证,不跑 CI):</p>
-  <pre><code>cargo test -p logcore &amp;&amp; cargo test -p log-filter &amp;&amp; \
-cargo clippy --workspace --all-targets &amp;&amp; cargo fmt --all -- --check &amp;&amp; \
-pnpm typecheck &amp;&amp; pnpm lint &amp;&amp; pnpm test</code></pre>
+  <p>验证范围与完整命令统一见<a href="../CONTRIBUTING.md#验证">贡献指南·验证</a>。下列测试地图用于定位受影响检查；<code>dev</code> 不跑 CI，代码集成前仍需本地完整验证。</p>
 
   <h3 id="sec-9-1"><span class="no">9.1</span>logcore 单测(与实现同文件,<code>#[cfg(test)]</code>,约 100 个)</h3>
   <div class="table-wrap">
@@ -1175,7 +1172,7 @@ pnpm typecheck &amp;&amp; pnpm lint &amp;&amp; pnpm test</code></pre>
 <section id="sec-10">
   <h2><span class="no">10.</span>分支与 CI(工程约定)</h2>
   <ul>
-    <li><strong>分支</strong>:<code>main</code> 为主干;<code>dev</code> 为维护者使用的长期缓冲分支——维护者的日常工作可 rebase 合入 dev(不跑 CI,依赖 <a href="#sec-9">§9</a> 的本地全套验证),并按批次提交 dev→main PR。外部贡献请直接向 main 提交 PR;合并方式一律 rebase。main 合并后,维护者将 dev 执行 <code>reset --hard main</code> 并通过 <code>--force-with-lease</code> 推送对齐。</li>
+    <li><strong>分支</strong>:<code>main</code> 为主干;<code>dev</code> 为维护者使用的长期缓冲分支——维护者的日常工作可 rebase 合入 dev(代码集成前按贡献指南完成本地完整验证),并按批次提交 dev→main PR。外部贡献请直接向 main 提交 PR;合并方式一律 rebase。合并后对齐 dev 属于单独的维护操作，授权与本地工作保护要求见<a href="../AGENTS.md#常用命令与交付">工程指南</a>。</li>
     <li><strong>CI</strong>(<code>.github/workflows/ci.yml</code>):任何目标为 main 的 pull_request 都会触发完整三系统矩阵(ubuntu-latest / macos-latest / windows-latest),内容为 <code>pnpm typecheck/lint/test</code>、<code>cargo fmt --all -- --check</code>、<code>cargo test -p logcore</code>、<code>cargo test -p log-filter</code>、<code>cargo clippy --workspace --all-targets -- -D warnings</code>。纯文档改动(<code>docs/**</code>、<code>**.md</code>)不触发;main push 不触发;也可通过 <code>workflow_dispatch</code> 手动触发。</li>
     <li><strong>打包</strong>(<code>.github/workflows/desktop-build.yml</code>,"Desktop Build"):仅 <code>workflow_dispatch</code> 或 <code>v*</code> tag 触发,tauri-action 三平台产出 msi/nsis/dmg/deb;workspace 布局下产物在仓库根 <code>target/release/bundle/</code>(<strong>不在</strong> <code>src-tauri/target/</code>),artifact 上传设 <code>if-no-files-found: error</code>。</li>
   </ul>
