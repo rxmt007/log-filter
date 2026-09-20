@@ -70,14 +70,7 @@ pnpm tauri build
 
 ## 验证
 
-提交改动前，请运行与 CI 对应的完整验证命令：
-
-```bash
-cargo test -p logcore && cargo test -p log-filter \
-  && cargo clippy --workspace --all-targets -- -D warnings \
-  && cargo fmt --all -- --check \
-  && pnpm typecheck && pnpm lint && pnpm test
-```
+按[贡献指南中的验证规则](CONTRIBUTING.md#验证)选择检查范围；其中保留了代码集成前的完整验证命令。纯文档改动检查内容、链接与差异。
 
 ## 文档
 

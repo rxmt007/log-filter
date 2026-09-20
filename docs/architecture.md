@@ -762,13 +762,7 @@ cache 的三轮中位数达到数值门槛，但仍保留单轮 OS 调度/I/O �
 
 ## 9. 测试地图
 
-本地全套验证(dev 分支日常依赖本地验证,不跑 CI):
-
-```
-cargo test -p logcore && cargo test -p log-filter && \
-cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && \
-pnpm typecheck && pnpm lint && pnpm test
-```
+验证范围与完整命令统一见[贡献指南·验证](../CONTRIBUTING.md#验证)。下列测试地图用于定位受影响检查；`dev` 不跑 CI，代码集成前仍需本地完整验证。
 
 ### 9.1 logcore 单测(与实现同文件的 `#[cfg(test)]` + golden integration fixtures)
 
@@ -810,9 +804,9 @@ pnpm typecheck && pnpm lint && pnpm test
 ## 10. 分支与 CI(工程约定)
 
 - **分支**:`main` 为主干;`dev` 为维护者使用的长期缓冲分支——维护者的日常工作可
-  rebase 合入 dev(不跑 CI,依赖 §9 的本地全套验证),并按批次提交 dev→main PR。
-  外部贡献请直接向 main 提交 PR;合并方式一律 rebase。main 合并后,维护者将 dev
-  执行 `reset --hard main` 并通过 `--force-with-lease` 推送对齐。
+  rebase 合入 dev(代码集成前按贡献指南完成本地完整验证),并按批次提交 dev→main PR。
+  外部贡献请直接向 main 提交 PR;合并方式一律 rebase。合并后对齐 dev 属于单独的维护操作，
+  授权与本地工作保护要求见[工程指南](../AGENTS.md#常用命令与交付)。
 - **CI**(`.github/workflows/ci.yml`):任何目标为 main 的 pull_request 都会触发完整三系统矩阵
   (ubuntu-latest / macos-latest / windows-latest),内容为 `pnpm typecheck/lint/test`、
   `cargo fmt --all -- --check`、`cargo test -p logcore`、`cargo test -p log-filter`、
