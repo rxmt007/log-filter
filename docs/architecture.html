@@ -1075,13 +1075,13 @@ footer { margin-top: 60px; color: var(--muted); font-size: 13px; border-top: 1px
   </ul>
 
   <h3 id="sec-7-2"><span class="no">7.2</span>RowBlockCache(<code>lib/rowCache.ts</code>)</h3>
-  <p>以 200 行(<code>WINDOW</code>)为块的行缓存,<strong>64 块 LRU</strong> 上限(约 12 800 行常驻)。用 Map 插入序表达最近使用(命中/写入时 delete 再 set,超限逐出最旧)。<strong>纪元(epoch)防闪烁</strong>:换过滤条件时只递增纪元、<strong>不清缓存</strong>——<code>get</code> 仍返回旧行避免白屏,<code>isFresh</code> 因纪元不匹配返回 false 触发重拉,新数据到位后整块替换。<code>updateRows</code> 供书签切换时原位更新驻留行。只有换会话(sessionId)才真正 <code>clear()</code>。</p>
+  <p>以 200 行(<code>WINDOW</code>)为块的行缓存,<strong>64 块 LRU</strong> 上限(约 12 800 行常驻)。用 Map 插入序表达最近使用(命中/写入时 delete 再 set,超限逐出最旧)。<strong>纪元(epoch)防闪烁</strong>:同一已应用筛选下追加日志时只递增纪元、<strong>不清缓存</strong>——<code>get</code> 仍返回已显示的行避免白屏,<code>isFresh</code> 因纪元不匹配返回 false 触发重拉,新数据到位后整块替换。会话 / analysis generation、decodeRevision、rows view 或已应用的 filter input revision 变化时，在绘制前清空缓存，避免显示另一数据集的行；完整请求身份仍校验 filterResultRevision。<code>updateRows</code> 供书签切换时原位更新驻留行。</p>
 
   <h3 id="sec-7-3"><span class="no">7.3</span>虚拟列表分块拉取(<code>components/LogTable.tsx</code>)</h3>
   <ul>
     <li>TanStack Virtual(<code>useVirtualizer</code>,overscan 24,行高来自配置)驱动;行数 = <code>status.filteredLines</code>。</li>
     <li><strong>统一请求 <code>filtered</code> 视图</strong>(引擎在过滤未激活时自动退化为 All),块大小 200 = <code>get_rows("filtered", blockStart, 200)</code>,远低于 512 上限。</li>
-    <li><code>ensureBlock</code>:块未 fresh 才拉;in-flight Map 去重并发请求;响应回来先校验纪元再写缓存。可见区间只保证首、尾两块(200 行块 + 24 overscan 下最多跨两块)。</li>
+    <li><code>ensureBlock</code>:块未 fresh 才拉;in-flight Map 去重并发请求;响应回来先校验纪元再写缓存，旧纪元请求结束时不能删除新纪元同块的 in-flight 登记。可见区间只保证首、尾两块(200 行块 + 24 overscan 下最多跨两块)。</li>
     <li>缓存未命中的行渲染 "..." 占位,数据到位后 <code>force</code> 重渲。</li>
     <li>滚动语义:程序化滚动(搜索定位/书签跳转/尾随)前 <code>markProgrammaticScroll</code>(160ms 窗口),scroll 事件里据此区分用户/程序,只有用户滚动影响尾随开关;滚轮向上立即暂停尾随;尾随的滚动请求(reason:"tail")先 <code>ensureBlock</code> 末块再滚到底。</li>
     <li>其他:列宽拖拽/列显隐(持久化进配置)、按选区复制(按可见列拼 tab 文本)、双击切书签、右键范围标记菜单、搜索命中与关键词高亮(<code>lib/highlight.ts</code> 分词,search 命中优先于 highlight 规则)。</li>

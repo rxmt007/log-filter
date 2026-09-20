@@ -643,9 +643,11 @@ Problems 命令包括 `get_problems_status`、`get_problem_groups`、
 
 以 200 行(`WINDOW`)为块的行缓存,**64 块 LRU** 上限(约 12 800 行常驻)。
 用 Map 插入序表达最近使用(命中/写入时 delete 再 set,超限逐出最旧)。
-**纪元(epoch)防闪烁**:换过滤条件时只递增纪元、**不清缓存**——`get` 仍返回旧行避免白屏,
+**纪元(epoch)防闪烁**:同一已应用筛选下追加日志时只递增纪元、**不清缓存**——`get` 仍返回已显示的行避免白屏,
 `isFresh` 因纪元不匹配返回 false 触发重拉,新数据到位后整块替换。
-`updateRows` 供书签切换时原位更新驻留行。只有换会话(sessionId)才真正 `clear()`。
+会话 / analysis generation、decodeRevision、rows view 或已应用的 filter input revision
+变化时，在绘制前清空缓存，避免显示另一数据集的行；完整请求身份仍校验 filterResultRevision。
+`updateRows` 供书签切换时原位更新驻留行。
 
 ### 7.3 虚拟列表分块拉取(`components/LogTable.tsx`)
 
@@ -653,7 +655,8 @@ Problems 命令包括 `get_problems_status`、`get_problem_groups`、
   `status.filteredLines`。
 - **统一请求 `filtered` 视图**(引擎在过滤未激活时自动退化为 All),块大小 200 =
   `get_rows("filtered", blockStart, 200)`,远低于 512 上限。
-- `ensureBlock`:块未 fresh 才拉;in-flight Map 去重并发请求;响应回来先校验纪元再写缓存。
+- `ensureBlock`:块未 fresh 才拉;in-flight Map 去重并发请求;响应回来先校验纪元再写缓存，
+  旧纪元请求结束时不能删除新纪元同块的 in-flight 登记。
   可见区间只保证首、尾两块(200 行块 + 24 overscan 下最多跨两块)。
 - 缓存未命中的行渲染 "..." 占位,数据到位后 `force` 重渲。
 - 滚动语义:程序化滚动(搜索定位/书签跳转/尾随)前 `markProgrammaticScroll`(160ms 窗口),
