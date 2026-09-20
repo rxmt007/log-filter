@@ -9,9 +9,9 @@ interface Block {
 /**
  * 以块(block)为粒度的行缓存,带 LRU 上限。用插入序(Map 的天然顺序)
  * 表示最近使用:命中或写入时先 delete 再 set,把块提到最新;超出上限时
- * 逐出最旧的块。纪元(epoch)语义与 LogTable 一致——换过滤条件时只递增
- * 纪元、不清缓存,`get` 仍返回旧行避免闪烁,`isFresh` 因纪元不匹配返回
- * false 触发重拉。
+ * 逐出最旧的块。同一数据身份的追加刷新只递增纪元、不清缓存,`get` 仍返回
+ * 已显示的行避免闪烁,`isFresh` 因纪元不匹配返回 false 触发重拉。
+ * 调用方在会话、分析、编码、视图或已应用筛选变化时清空缓存。
  */
 export class RowBlockCache {
   private readonly blocks = new Map<number, Block>();

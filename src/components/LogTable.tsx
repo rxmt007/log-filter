@@ -186,6 +186,16 @@ export function LogTable({ onReturnToResults, onFollowLatest }: LogTableProps) {
     [filterResultRevision, status, tableScope],
   );
   const total = dataset.rowCount;
+  // Append revisions need fresh rows, but can keep the same history on screen.
+  // A different source, decoding, view or applied filter cannot reuse those rows.
+  const cacheIdentity = [
+    dataset.rowsView,
+    status.generation,
+    status.analysisGeneration,
+    status.decodeRevision,
+    dataset.rowsView === "filtered" ? status.appliedFilterInputRevision : "",
+  ].join(":");
+  const previousCacheIdentity = useRef(cacheIdentity);
   const columns = useMemo(
     () => normalizeColumns(appConfig.table.columns),
     [appConfig.table.columns],
@@ -436,14 +446,17 @@ export function LogTable({ onReturnToResults, onFollowLatest }: LogTableProps) {
     [clearProgrammaticScroll, pauseTailFollowing],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     cacheEpoch.current += 1;
-    cache.current.clear();
+    if (previousCacheIdentity.current !== cacheIdentity) {
+      cache.current.clear();
+      previousCacheIdentity.current = cacheIdentity;
+      setBookmarkMenu(null);
+      setSelectionRange(null);
+    }
     inflight.current.clear();
-    setBookmarkMenu(null);
-    setSelectionRange(null);
     force((x) => x + 1);
-  }, [dataset.cacheKey]);
+  }, [cacheIdentity, dataset.cacheKey]);
 
   useEffect(() => {
     document.addEventListener("selectionchange", refreshCopySelection);
@@ -504,7 +517,8 @@ export function LogTable({ onReturnToResults, onFollowLatest }: LogTableProps) {
             console.error("get_rows_checked failed", error);
           }
         } finally {
-          inflight.current.delete(block);
+          // An older epoch may finish after a replacement load for this block.
+          if (cacheEpoch.current === epoch) inflight.current.delete(block);
         }
       })();
       inflight.current.set(block, load);
