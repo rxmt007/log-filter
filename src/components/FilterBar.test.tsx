@@ -9,6 +9,21 @@ beforeEach(() => {
 });
 
 describe("FilterBar", () => {
+  it("adds WebView text-assistance opt-out attributes to log filter patterns", () => {
+    render(<FilterBar />);
+
+    const patternInputs = screen.getAllByRole("textbox");
+    expect(patternInputs.length).toBeGreaterThan(0);
+
+    for (const input of patternInputs) {
+      expect(input).toHaveAttribute("autocapitalize", "none");
+      expect(input).toHaveAttribute("autocomplete", "off");
+      expect(input).toHaveAttribute("autocorrect", "off");
+      expect(input).toHaveAttribute("spellcheck", "false");
+      expect(input).toHaveAttribute("writingsuggestions", "false");
+    }
+  });
+
   it("starts expanded and collapses to a single empty-state summary row", async () => {
     const user = userEvent.setup();
     render(<FilterBar />);
